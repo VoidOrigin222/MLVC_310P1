@@ -1,0 +1,21 @@
+mode = "decode"
+device = 0
+frame_num = 537
+format = "none"
+input_transport_port = 39089
+output_transport_host = "10.195.62.208"
+output_transport_port = 50000
+output_transport_mode = "dvpp_jpeg_async"
+output_transport_queue_capacity = 3
+output_transport_jpeg_quality = 75
+execution_profile = "pipeline-v1"
+
+[pipeline]
+stream_workers = 1
+queue_capacity = 3
+frame_buffer_slots = 3
+entropy_workers = 2
+graph_packet_capacity = 2
+
+[model]
+manifest = "../mlvc1080p/manifest_decoder_310P1.json"

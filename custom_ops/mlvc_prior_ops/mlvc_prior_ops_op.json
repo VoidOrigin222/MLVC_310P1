@@ -1,0 +1,253 @@
+[
+  {
+    "op": "MlvcBuildIndexEncode",
+    "input_desc": [
+      {
+        "name": "symbols",
+        "param_type": "required",
+        "format": ["ND", "ND"],
+        "type": ["fp16", "int8"]
+      },
+      {
+        "name": "scales",
+        "param_type": "required",
+        "format": ["ND", "ND"],
+        "type": ["fp16", "fp16"]
+      },
+      {
+        "name": "fp16_scale_index_lookup",
+        "param_type": "required",
+        "format": ["ND", "ND"],
+        "type": ["uint8", "uint8"]
+      }
+    ],
+    "output_desc": [
+      {
+        "name": "combined",
+        "param_type": "required",
+        "format": ["ND", "ND"],
+        "type": ["int16", "int16"]
+      },
+      {
+        "name": "keep_mask",
+        "param_type": "required",
+        "format": ["ND", "ND"],
+        "type": ["uint8", "uint8"]
+      }
+    ],
+    "attr": [
+      {
+        "name": "force_zero_thres",
+        "param_type": "optional",
+        "type": "float",
+        "default_value": -1.0
+      },
+      {
+        "name": "tile_elements",
+        "param_type": "optional",
+        "type": "int",
+        "default_value": 1024
+      },
+      {
+        "name": "block_dim",
+        "param_type": "optional",
+        "type": "int",
+        "default_value": 8
+      }
+    ]
+  },
+  {
+    "op": "MlvcSinglePart",
+    "input_desc": [
+      {
+        "name": "full",
+        "param_type": "required",
+        "format": ["ND", "ND"],
+        "type": ["fp16", "fp32"]
+      }
+    ],
+    "output_desc": [
+      {
+        "name": "part",
+        "param_type": "required",
+        "format": ["ND", "ND"],
+        "type": ["fp16", "fp32"]
+      }
+    ],
+    "attr": [
+      {
+        "name": "mask_index",
+        "param_type": "optional",
+        "type": "int",
+        "default_value": 0
+      },
+      {
+        "name": "parts",
+        "param_type": "optional",
+        "type": "int",
+        "default_value": 4
+      },
+      {
+        "name": "tile_elements",
+        "param_type": "optional",
+        "type": "int",
+        "default_value": 1024
+      },
+      {
+        "name": "block_dim",
+        "param_type": "optional",
+        "type": "int",
+        "default_value": 1
+      }
+    ]
+  },
+  {
+    "op": "MlvcRestoreY",
+    "input_desc": [
+      {
+        "name": "y_symbols",
+        "param_type": "required",
+        "format": ["ND"],
+        "type": ["int8"]
+      },
+      {
+        "name": "means",
+        "param_type": "required",
+        "format": ["ND"],
+        "type": ["fp16"]
+      }
+    ],
+    "output_desc": [
+      {
+        "name": "output",
+        "param_type": "required",
+        "format": ["ND"],
+        "type": ["fp16"]
+      }
+    ],
+    "attr": [
+      {
+        "name": "mask_index",
+        "param_type": "optional",
+        "type": "int",
+        "default_value": 0
+      },
+      {
+        "name": "parts",
+        "param_type": "optional",
+        "type": "int",
+        "default_value": 4
+      },
+      {
+        "name": "tile_elements",
+        "param_type": "optional",
+        "type": "int",
+        "default_value": 1024
+      },
+      {
+        "name": "block_dim",
+        "param_type": "optional",
+        "type": "int",
+        "default_value": 1
+      }
+    ]
+  },
+  {
+    "op": "MlvcApplyChannelQuantStep",
+    "input_desc": [
+      {
+        "name": "quant_step",
+        "param_type": "required",
+        "format": ["ND"],
+        "type": ["fp16"]
+      },
+      {
+        "name": "values",
+        "param_type": "required",
+        "format": ["ND"],
+        "type": ["fp16"]
+      }
+    ],
+    "output_desc": [
+      {
+        "name": "values_out",
+        "param_type": "required",
+        "format": ["ND"],
+        "type": ["fp16"]
+      }
+    ],
+    "attr": [
+      {
+        "name": "tile_elements",
+        "param_type": "optional",
+        "type": "int",
+        "default_value": 1024
+      },
+      {
+        "name": "block_dim",
+        "param_type": "optional",
+        "type": "int",
+        "default_value": 1
+      }
+    ]
+  },
+  {
+    "op": "MlvcInt8ToFp16",
+    "input_desc": [
+      {
+        "name": "symbols",
+        "param_type": "required",
+        "format": ["ND"],
+        "type": ["int8"]
+      }
+    ],
+    "output_desc": [
+      {
+        "name": "output",
+        "param_type": "required",
+        "format": ["ND"],
+        "type": ["fp16"]
+      }
+    ],
+    "attr": [
+      {
+        "name": "tile_elements",
+        "param_type": "optional",
+        "type": "int",
+        "default_value": 1024
+      },
+      {
+        "name": "block_dim",
+        "param_type": "optional",
+        "type": "int",
+        "default_value": 1
+      }
+    ]
+  },
+  {
+    "op": "MlvcFp16Yuv444ToNv12",
+    "input_desc": [
+      {
+        "name": "input",
+        "param_type": "required",
+        "format": ["ND"],
+        "type": ["fp16"]
+      }
+    ],
+    "output_desc": [
+      {
+        "name": "output",
+        "param_type": "required",
+        "format": ["ND"],
+        "type": ["uint8"]
+      }
+    ],
+    "attr": [
+      {"name": "width", "param_type": "required", "type": "int"},
+      {"name": "height", "param_type": "required", "type": "int"},
+      {"name": "width_stride", "param_type": "required", "type": "int"},
+      {"name": "height_stride", "param_type": "required", "type": "int"},
+      {"name": "block_dim", "param_type": "optional", "type": "int", "default_value": 32}
+    ]
+  }
+]

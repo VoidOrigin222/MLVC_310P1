@@ -1,0 +1,23 @@
+mode = "encode"
+input_frame_dir = "../data/preprocessed_frames/614lab_1080p_fp16"
+device = 0
+frame_num = 537
+qp = 2
+gop = 96
+reset_interval = 32
+ltr_start_idx = 8
+ltr_period = 0
+ltr_qp_shift = 8
+execution_profile = "pipeline-v1"
+output_transport_host = "10.195.177.115"
+output_transport_port = 39089
+
+[pipeline]
+stream_workers = 1
+queue_capacity = 3
+frame_buffer_slots = 3
+entropy_workers = 1
+graph_packet_capacity = 2
+
+[model]
+manifest = "../mlvc1080p/manifest_310P1.json"

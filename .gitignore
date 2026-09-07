@@ -1,0 +1,34 @@
+build/
+build-*/
+build_prod/
+__pycache__/
+*.pyc
+testdata/
+test_video/
+3rdparty/
+ckpt
+aoe_workspace
+kernel_meta
+output
+aoe*
+model
+custom_ops/**/build_out/
+goal/
+.venv/
+.deps/
+models/*
+logs/
+reports/
+artifacts/
+output/
+.agents/
+ref
+.codex*
+codex*
+
+# Historical experiment configurations and local backup files are not part of
+# the runnable public configuration.
+configs/archive/
+configs/quality/
+*.before-*.bak
+.vscode/
