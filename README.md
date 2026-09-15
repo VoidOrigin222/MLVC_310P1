@@ -1,40 +1,47 @@
 # MLVC 310P1
 
-MLVC deployment sources for Ascend 310P1, split into two independent directories.
+MLVC deployment sources for Ascend 310P1. Encoder and decoder share one unified source tree and are built as two executables from the same CMake project.
+
+## Layout
 
 ```text
-encoder/   Encoder application and its sources
-decoder/   Decoder application and its sources
+common/       Shared runtime, transport, and framework code
+mlvc/         MLVC codec, entropy, I/O, and ACL runtime
+application/  Pipeline and command-line configuration code
+apps/         encode_main.cc and decode_main.cc
+configs/      Encoder and decoder TOML configurations
+custom_ops/   Ascend custom operators
+tools/        Tests, benchmarks, and utilities
 ```
 
-Each directory is self-contained at the source level and can be copied to its target P1 device. Shared codec, transport, runtime, tests, and custom operators are kept in both directories so the two deployments can be built independently. The official rANS package and toml++ remain external dependencies; pass their parent directory with `-DMLVC_EXTERNAL_ROOT`.
-
-## Build the encoder
+## Build
 
 ```bash
-cd encoder
 source scripts/env.sh
 ./scripts/configure.sh
 cmake --build build -j4
-./build/mlvc_encode --config configs/p1/encoder_1080p.toml
 ```
 
-## Build the decoder
+The official rANS package and toml++ are external dependencies. By default CMake looks for `third_party/` and `mlvc-main/` beside this source directory. Override the location when needed:
 
 ```bash
-cd decoder
-source scripts/env.sh
-./scripts/configure.sh
-cmake --build build -j4
-./build/mlvc_decode --config configs/p1/decoder_1080p.toml
+cmake -S . -B build \
+  -DMLVC_EXTERNAL_ROOT=/root/workplace/mlvc_20260903
 ```
 
-When the source directory is placed beside `third_party/` and `mlvc-main/`, the default CMake paths work automatically. Otherwise configure with, for example:
+## Run
 
 ```bash
-cmake -S . -B build -DMLVC_EXTERNAL_ROOT=/root/workplace/mlvc_20260903
+./build/mlvc_encode --config configs/encoder.toml
+./build/mlvc_decode --config configs/decoder.toml
 ```
 
-RTP and RTSP examples are included in the corresponding endpoint configuration directories.
+The canonical configurations use RTP input/output and the no-output decode path. Change the transport fields in these two files when another mode is required.
 
-The project uses the repository `.clang-format` (Google C++ style, C++17).
+## Tests
+
+```bash
+ctest --test-dir build --output-on-failure
+```
+
+The project uses Google C++ style through `.clang-format`.

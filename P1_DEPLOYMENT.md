@@ -1,31 +1,30 @@
 # P1 deployment
 
-Deploy the two endpoints separately. Copy `encoder/` to the encoding device and `decoder/` to the decoding device; do not build both applications from one shared endpoint directory.
-
-## Encoder device
+Use one unified source directory on either device. The same build produces both `mlvc_encode` and `mlvc_decode`; select the executable and configuration appropriate for the device role.
 
 ```bash
-cd encoder
-source /usr/local/Ascend/cann-9.1.0/set_env.sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
-  -DASCEND_CANN_PACKAGE_PATH=/usr/local/Ascend/cann-9.1.0 \
-  -DOpenCV_DIR=/opt/opencv/lib64/cmake/opencv4 \
-  -DMLVC_EXTERNAL_ROOT=/root/workplace/mlvc_20260903
+source /usr/local/Ascend/cann/set_env.sh
+source scripts/env.sh
+./scripts/configure.sh
 cmake --build build -j4
-./build/mlvc_encode --config configs/p1/encoder_1080p.toml
 ```
 
-## Decoder device
+If the source directory is placed at `/root/workplace/mlvc_20260903/mlvc_acl_cpp`, the default external dependency paths resolve automatically. Otherwise set the dependency root explicitly:
 
 ```bash
-cd decoder
-source /usr/local/Ascend/cann-9.1.0/set_env.sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
-  -DASCEND_CANN_PACKAGE_PATH=/usr/local/Ascend/cann-9.1.0 \
-  -DOpenCV_DIR=/opt/opencv/lib64/cmake/opencv4 \
-  -DMLVC_EXTERNAL_ROOT=/root/workplace/mlvc_20260903
-cmake --build build -j4
-./build/mlvc_decode --config configs/p1/decoder_1080p.toml
+cmake -S . -B build -DMLVC_EXTERNAL_ROOT=/root/workplace/mlvc_20260903
 ```
 
-The endpoint configuration files contain device addresses, ports, model manifests, and frame paths used during P1 validation. Adjust those deployment-specific values before running on another pair of devices.
+## Encoder
+
+```bash
+./build/mlvc_encode --config configs/encoder.toml
+```
+
+## Decoder
+
+```bash
+./build/mlvc_decode --config configs/decoder.toml
+```
+
+The configuration files contain deployment-specific model, input, output, address, and port values. Update those values for a different P1 pair.
