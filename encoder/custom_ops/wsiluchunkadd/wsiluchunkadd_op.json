@@ -1,0 +1,131 @@
+[
+  {
+    "op": "PostSigmoidChunkAdd",
+    "input_desc": [
+      {
+        "name": "x",
+        "param_type": "required",
+        "format": ["NC1HWC0", "NCHW", "NC1HWC0", "NCHW"],
+        "type": ["fp16", "fp16", "fp32", "fp32"]
+      },
+      {
+        "name": "sigmoid_out",
+        "param_type": "required",
+        "format": ["NC1HWC0", "NCHW", "NC1HWC0", "NCHW"],
+        "type": ["fp16", "fp16", "fp32", "fp32"]
+      }
+    ],
+    "output_desc": [
+      {
+        "name": "y",
+        "param_type": "required",
+        "format": ["NC1HWC0", "NCHW", "NC1HWC0", "NCHW"],
+        "type": ["fp16", "fp16", "fp32", "fp32"]
+      }
+    ],
+    "attr": [
+      {
+        "name": "axis",
+        "param_type": "optional",
+        "type": "int",
+        "default_value": 1
+      },
+      {
+        "name": "tile_elements",
+        "param_type": "optional",
+        "type": "int",
+        "default_value": 4096
+      },
+      {
+        "name": "block_dim",
+        "param_type": "optional",
+        "type": "int",
+        "default_value": 8
+      },
+      {
+        "name": "barrier_mode",
+        "param_type": "optional",
+        "type": "int",
+        "default_value": 0
+      }
+    ]
+  },
+  {
+    "op": "PostSigmoidMul",
+    "input_desc": [
+      {
+        "name": "x",
+        "param_type": "required",
+        "format": ["NC1HWC0", "NCHW", "NC1HWC0", "NCHW"],
+        "type": ["fp16", "fp16", "fp32", "fp32"]
+      },
+      {
+        "name": "sigmoid_out",
+        "param_type": "required",
+        "format": ["NC1HWC0", "NCHW", "NC1HWC0", "NCHW"],
+        "type": ["fp16", "fp16", "fp32", "fp32"]
+      }
+    ],
+    "output_desc": [
+      {
+        "name": "y",
+        "param_type": "required",
+        "format": ["NC1HWC0", "NCHW", "NC1HWC0", "NCHW"],
+        "type": ["fp16", "fp16", "fp32", "fp32"]
+      }
+    ],
+    "attr": [
+      {
+        "name": "tile_elements",
+        "param_type": "optional",
+        "type": "int",
+        "default_value": 8192
+      },
+      {
+        "name": "block_dim",
+        "param_type": "optional",
+        "type": "int",
+        "default_value": 8
+      }
+    ]
+  },
+  {
+    "op": "ScaledSiLUMul",
+    "input_desc": [
+      {
+        "name": "x",
+        "param_type": "required",
+        "format": ["NC1HWC0", "NCHW", "NC1HWC0", "NCHW"],
+        "type": ["fp16", "fp16", "fp32", "fp32"]
+      }
+    ],
+    "output_desc": [
+      {
+        "name": "y",
+        "param_type": "required",
+        "format": ["NC1HWC0", "NCHW", "NC1HWC0", "NCHW"],
+        "type": ["fp16", "fp16", "fp32", "fp32"]
+      }
+    ],
+    "attr": [
+      {
+        "name": "tile_elements",
+        "param_type": "optional",
+        "type": "int",
+        "default_value": 2048
+      },
+      {
+        "name": "block_dim",
+        "param_type": "optional",
+        "type": "int",
+        "default_value": 8
+      },
+      {
+        "name": "compute_mode",
+        "param_type": "optional",
+        "type": "int",
+        "default_value": 0
+      }
+    ]
+  }
+]
