@@ -4,8 +4,7 @@
 
 namespace mlvc {
 
-DataConsumer::DataConsumer(StreamingPipeline& pipeline,
-                           std::atomic<bool>& running)
+DataConsumer::DataConsumer(StreamingPipeline& pipeline, std::atomic<bool>& running)
     : pipeline_(pipeline), running_(running) {}
 
 DataConsumer::~DataConsumer() {

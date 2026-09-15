@@ -12,10 +12,9 @@
 namespace mlvc::codec {
 
 DecodedEntropyFrame DecodeMlvcEntropyFrame(mlvc::MlvcOfficialEntropyDecoder* decoder,
-                                           const mlvc::ModelRecord& decoder_record,
-                                           int frame_index, MlvcFrameType frame_type, int q_index,
-                                           std::vector<uint8_t> payload,
-                                           mlvc::Profiler* profiler);
+                                           const mlvc::ModelRecord& decoder_record, int frame_index,
+                                           MlvcFrameType frame_type, int q_index,
+                                           std::vector<uint8_t> payload, mlvc::Profiler* profiler);
 
 }  // namespace mlvc::codec
 

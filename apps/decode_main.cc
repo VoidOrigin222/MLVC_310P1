@@ -12,12 +12,14 @@ int main(int argc, char** argv) {
     mlvc::PrepareAscendRuntimeEnvironment(argv);
     const std::filesystem::path config_path = mlvc::ParseConfigPath(argc, argv);
     const mlvc::DecoderApplicationConfig config = mlvc::LoadDecoderConfig(config_path);
-    const bool device_dvpp_mode = config.stream.forward_port > 0 &&
-                                  config.stream.forward_mode == "dvpp_jpeg_device_async";
+    const bool device_resident_decode = config.stream.output_format == "none" &&
+                                        config.stream.output_transport_port == 0 &&
+                                        config.stream.output_transport_mode == "none";
+    const bool acl_decode_mode = device_resident_decode;
     auto codec_runtime = std::make_unique<mlvc::app::MlvcCodecRuntime>(
         config.stream.manifest_path, config.stream.device,
-        device_dvpp_mode ? mlvc::codec::StageOutputBindingMode::kAclMirror
-                         : mlvc::codec::StageOutputBindingMode::kCpu);
+        acl_decode_mode ? mlvc::codec::StageOutputBindingMode::kAclMirror
+                        : mlvc::codec::StageOutputBindingMode::kCpu);
     mlvc::Profiler profiler;
     mlvc::CodecGraphExecutor graph_executor(config.stream.pipeline.graph_packet_capacity);
     mlvc::EntropyWorker entropy_worker(config.stream.pipeline.entropy_workers);

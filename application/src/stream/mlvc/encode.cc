@@ -47,8 +47,7 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
     mlvc::StageRuntime& runtime = codec_runtime->runtime();
     mlvc::StageModelSet& models = codec_runtime->models();
     const mlvc::RuntimeSidecar& sidecar = codec_runtime->sidecar();
-    Check(HasMlvcModels(models.manifest()),
-          "manifest does not contain MLVCEncoder / MLVCDecoder");
+    Check(HasMlvcModels(models.manifest()), "manifest does not contain MLVCEncoder / MLVCDecoder");
     const mlvc::ModelRecord& encoder_record = models.manifest().GetModel("MLVCEncoder");
     ConfigureRuntimeState(&codec_runtime->stage_output_workspace(), runtime,
                           options.enable_stage_fusion);
@@ -86,8 +85,7 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
     g_codec_graph_executor = &graph_executor;
     g_codec_graph_executor->RecordTemplate(&profiler);
 
-    const mlvc::io::MlvcBitstreamHeader header =
-        BuildEncodeHeader(options, source_geometry, fps);
+    const mlvc::io::MlvcBitstreamHeader header = BuildEncodeHeader(options, source_geometry, fps);
     MlvcRateControlOptions rate_options;
     rate_options.width = source_geometry.width;
     rate_options.height = source_geometry.height;
@@ -99,9 +97,9 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
     EncodeOutput output(options, header, rate_options, &profiler);
     MlvcOfficialEntropyEncoder entropy_encoder(models.manifest().directory());
     EncodeState state(encoder_record.outputs.at(0).shape);
-    EncodeFrameProcessor frame_processor(
-        options, &models, &sidecar, &profiler, &entropy_worker, &state,
-        &output.rate_controller(), &entropy_encoder, dimensions, fps);
+    EncodeFrameProcessor frame_processor(options, &models, &sidecar, &profiler, &entropy_worker,
+                                         &state, &output.rate_controller(), &entropy_encoder,
+                                         dimensions, fps);
 
     const int frames_to_attempt =
         options.frame_num > 0 ? options.frame_num : std::numeric_limits<int>::max();
@@ -119,10 +117,11 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
     });
     frame_pipeline.Start();
     mlvc::app::PreparedFrameProducer frame_producer(frame_pipeline, frame_pipeline_running,
-                                                     prepare_queue);
+                                                    prepare_queue);
     frame_producer.Start();
 
-    const auto encode_start = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point encode_start = std::chrono::steady_clock::now();
+    bool timing_started = options.profile_warmup_frames == 0;
     std::deque<PendingEncodedFrame> pending_entropy;
     constexpr std::size_t kMaxPendingEntropyJobs = 2;
     int encoded_frames = 0;
@@ -150,9 +149,13 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
         output.Flush(std::move(pending_entropy.front()));
         pending_entropy.pop_front();
       }
+      if (!timing_started && encoded_frames >= options.profile_warmup_frames) {
+        encode_start = std::chrono::steady_clock::now();
+        timing_started = true;
+      }
     };
     mlvc::app::CallbackDataConsumer frame_consumer(frame_pipeline, frame_pipeline_running,
-                                                    consume_frame);
+                                                   consume_frame);
     frame_consumer.Start();
     frame_producer.Join();
     frame_producer.RethrowIfFailed();
@@ -167,8 +170,11 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
     output.Close();
 
     const auto encode_end = std::chrono::steady_clock::now();
-    if (!options.profile_output_path.empty()) profiler.WriteChromeTrace(options.profile_output_path);
-    const double seconds = std::chrono::duration<double>(encode_end - encode_start).count();
+    if (!options.profile_output_path.empty())
+      profiler.WriteChromeTrace(options.profile_output_path);
+    const int measured_frames = std::max(0, encoded_frames - options.profile_warmup_frames);
+    const double seconds =
+        timing_started ? std::chrono::duration<double>(encode_end - encode_start).count() : 0.0;
     std::cout << "mode=mlvc_encode\n";
     std::cout << "input_frame_dir=" << options.input_frame_dir << "\n";
     std::cout << "input_video=" << options.input_video_path << "\n";
@@ -184,10 +190,12 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
     std::cout << "forced_ltr_recovery_frame=" << options.forced_ltr_recovery_frame << "\n";
     std::cout << "forced_ltr_reference_frame=" << options.forced_ltr_reference_frame << "\n";
     std::cout << "frames=" << encoded_frames << "\n";
+    std::cout << "warmup_frames=" << options.profile_warmup_frames << "\n";
+    std::cout << "measured_frames=" << measured_frames << "\n";
     std::cout << "frame_counts=i:" << i_frames << ",p:" << p_frames << ",ltr:" << ltr_frames
               << "\n";
     std::cout << "encode_fps="
-              << (seconds > 0.0 ? static_cast<double>(encoded_frames) / seconds : 0.0) << "\n";
+              << (seconds > 0.0 ? static_cast<double>(measured_frames) / seconds : 0.0) << "\n";
     std::cout << "bitstream_bytes=" << output.file_bytes() << "\n";
     std::cout << "payload_bytes=" << output.payload_bytes() << "\n";
     std::cout << "q_index_min=" << (encoded_frames > 0 ? min_q_index_used : 0) << "\n";
@@ -196,11 +204,10 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
               << (encoded_frames > 0 ? static_cast<double>(q_index_sum) / encoded_frames : 0.0)
               << "\n";
     std::cout << "average_bpp="
-              << (encoded_frames > 0
-                      ? static_cast<double>(output.file_bytes()) * 8.0 /
-                            (static_cast<double>(source_geometry.width) * source_geometry.height *
-                             encoded_frames)
-                      : 0.0)
+              << (encoded_frames > 0 ? static_cast<double>(output.file_bytes()) * 8.0 /
+                                           (static_cast<double>(source_geometry.width) *
+                                            source_geometry.height * encoded_frames)
+                                     : 0.0)
               << "\n";
     std::cout << "encode=ok\n";
     return 0;

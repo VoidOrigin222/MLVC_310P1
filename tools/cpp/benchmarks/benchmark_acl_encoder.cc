@@ -16,8 +16,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
-#include <cstdlib>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <filesystem>
@@ -85,8 +85,7 @@ void ResetTensor(mlvc::codec::TensorData* tensor) {
 
 void DumpFeatureStats(const mlvc::codec::TensorData& tensor,
                       const std::filesystem::path& output_path) {
-  mlvc::Check(tensor.dtype == mlvc::DataType::kFloat16,
-              "feature dump requires an FP16 tensor");
+  mlvc::Check(tensor.dtype == mlvc::DataType::kFloat16, "feature dump requires an FP16 tensor");
   mlvc::codec::WriteTensorFile(output_path, tensor);
 
   const auto* bits = reinterpret_cast<const uint16_t*>(tensor.bytes.data());
@@ -125,8 +124,8 @@ void DumpFeatureStats(const mlvc::codec::TensorData& tensor,
   std::cout << "feature_bytes=" << tensor.bytes.size() << "\n";
   std::cout << "feature_min=" << min_value << "\n";
   std::cout << "feature_max=" << max_value << "\n";
-  std::cout << "feature_mean="
-            << (finite_count > 0 ? sum / static_cast<double>(finite_count) : 0.0) << "\n";
+  std::cout << "feature_mean=" << (finite_count > 0 ? sum / static_cast<double>(finite_count) : 0.0)
+            << "\n";
   std::cout << "feature_max_abs=" << max_abs << "\n";
   std::cout << "feature_nan=" << nan_count << "\n";
   std::cout << "feature_inf=" << inf_count << "\n";

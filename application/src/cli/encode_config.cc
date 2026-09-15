@@ -1,13 +1,15 @@
 #include <mlvc/application/cli/encoder_app.h>
-#include <mlvc/codec/execution_profile.h>
 #include <mlvc/application/stream/mlvc_stream.h>
 #include <mlvc/application/stream/stream_encoder.h>
+#include <mlvc/codec/execution_profile.h>
 #include <mlvc/io/video_io.h>
 #include <mlvc/runtime/model_manifest.h>
 #include <toml++/toml.h>
 
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <iostream>
 #include <limits>
 #include <optional>
 #include <string>
@@ -45,8 +47,8 @@ int GetInt(const toml::table& config, const std::string& key, int fallback) {
   return static_cast<int>(*value);
 }
 
-int GetNestedInt(const toml::table& config, const std::string& table_name,
-                const std::string& key, int fallback) {
+int GetNestedInt(const toml::table& config, const std::string& table_name, const std::string& key,
+                 int fallback) {
   const std::optional<int64_t> value = config[table_name][key].value<int64_t>();
   if (!value.has_value()) {
     return fallback;
@@ -58,8 +60,13 @@ int GetNestedInt(const toml::table& config, const std::string& table_name,
 }
 
 double GetDouble(const toml::table& config, const std::string& key, double fallback) {
-  const std::optional<double> value = config[key].value<double>();
-  return value.value_or(fallback);
+  if (const std::optional<double> value = config[key].value<double>(); value.has_value()) {
+    return *value;
+  }
+  if (const std::optional<int64_t> value = config[key].value<int64_t>(); value.has_value()) {
+    return static_cast<double>(*value);
+  }
+  return fallback;
 }
 
 bool GetBool(const toml::table& config, const std::string& key, bool fallback) {
@@ -82,6 +89,10 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
       GetString(config, "input_video", GetNestedString(config, "model", "input_video"));
   const std::string execution_profile =
       GetString(config, "execution_profile", std::string(mlvc::codec::kCodecExecutionProfile));
+  // Issue #7 fix: Validate execution_profile
+  Check(execution_profile == "pipeline-v1",
+        "only pipeline-v1 execution profile is supported, got: " + execution_profile);
+
   const std::string manifest_path =
       GetString(config, "manifest", GetNestedString(config, "model", "manifest"));
 
@@ -97,8 +108,11 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
   options.device = GetInt(config, "device", 0);
   options.frame_num = GetInt(config, "frame_num", -1);
   options.fps = GetDouble(config, "fps", 30.0);
-  Check(options.fps > 0.0, "fps must be positive");
+  Check(std::isfinite(options.fps) && options.fps > 0.0, "fps must be finite and positive");
   options.profile_warmup_frames = GetInt(config, "profile_warmup_frames", 0);
+  Check(options.profile_warmup_frames >= 0, "profile_warmup_frames must be non-negative");
+  Check(options.frame_num <= 0 || options.profile_warmup_frames < options.frame_num,
+        "profile_warmup_frames must be smaller than frame_num");
   options.profile_output_path = GetString(config, "profile_output");
   options.enable_stage_fusion = GetBool(config, "enable_stage_fusion", false);
   options.execution_profile = execution_profile;
@@ -125,24 +139,40 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
   options.target_bitrate_bps = GetDouble(config, "target_bitrate_bps", 0.0);
   options.min_qp = GetInt(config, "min_qp", 0);
   options.max_qp = GetInt(config, "max_qp", 63);
+  Check(options.ltr_qp_shift >= 0 && options.ltr_qp_shift <= 63, "ltr_qp_shift must be in [0, 63]");
+  Check(std::isfinite(options.target_bitrate_bps) && options.target_bitrate_bps >= 0.0,
+        "target_bitrate_bps must be finite and non-negative");
+  Check(options.min_qp >= 0 && options.min_qp <= 63, "min_qp must be in [0, 63]");
+  Check(options.max_qp >= 0 && options.max_qp <= 63, "max_qp must be in [0, 63]");
+  Check(options.min_qp <= options.max_qp, "min_qp must not exceed max_qp");
   options.forced_ltr_recovery_frame = GetInt(config, "forced_ltr_recovery_frame", -1);
   options.forced_ltr_reference_frame = GetInt(config, "forced_ltr_reference_frame", -1);
   Check(config["udp_host"].node() == nullptr && config["udp_port"].node() == nullptr,
-        "udp_host and udp_port are no longer supported; use output_transport_host and output_transport_port");
-  options.udp_host = GetString(config, "output_transport_host");
-  options.udp_port = GetInt(config, "output_transport_port", 0);
-  Check(options.udp_port >= 0 && options.udp_port <= 65535, "output_transport_port must be in [0, 65535]");
-  Check(options.udp_port == 0 || !options.udp_host.empty(),
+        "udp_host and udp_port are no longer supported; use output_transport_host and "
+        "output_transport_port");
+  options.output_transport_host = GetString(config, "output_transport_host");
+  options.output_transport_mode = GetString(config, "output_transport_mode", "udp");
+  Check(options.output_transport_mode == "udp" || options.output_transport_mode == "rtp",
+        "output_transport_mode must be udp or rtp");
+  options.output_transport_port = GetInt(config, "output_transport_port", 0);
+  const int pacing_rate_bps = GetInt(config, "output_transport_pacing_rate_bps", 0);
+  const int max_burst_bytes = GetInt(config, "output_transport_max_burst_bytes", 4096);
+  Check(pacing_rate_bps >= 0, "output_transport_pacing_rate_bps must be non-negative");
+  Check(max_burst_bytes > 0, "output_transport_max_burst_bytes must be positive");
+  options.output_transport_pacing_rate_bps = static_cast<uint64_t>(pacing_rate_bps);
+  options.output_transport_max_burst_bytes = static_cast<std::size_t>(max_burst_bytes);
+  Check(options.output_transport_port >= 0 && options.output_transport_port <= 65535,
+        "output_transport_port must be in [0, 65535]");
+  Check(options.output_transport_port == 0 || !options.output_transport_host.empty(),
         "output_transport_host is required when output_transport_port is set");
-  if (options.udp_port > 0) {
+  if (options.output_transport_port > 0) {
     options.output_bitstream_path.clear();
   }
   const int stream_workers = GetNestedInt(config, "pipeline", "stream_workers", 1);
   const int queue_capacity = GetNestedInt(config, "pipeline", "queue_capacity", 3);
   const int frame_buffer_slots = GetNestedInt(config, "pipeline", "frame_buffer_slots", 3);
   const int entropy_workers = GetNestedInt(config, "pipeline", "entropy_workers", 1);
-  const int graph_packet_capacity =
-      GetNestedInt(config, "pipeline", "graph_packet_capacity", 2);
+  const int graph_packet_capacity = GetNestedInt(config, "pipeline", "graph_packet_capacity", 2);
   Check(stream_workers > 0, "pipeline.stream_workers must be positive");
   Check(queue_capacity > 0, "pipeline.queue_capacity must be positive");
   Check(frame_buffer_slots > 0, "pipeline.frame_buffer_slots must be positive");

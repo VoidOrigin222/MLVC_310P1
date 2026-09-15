@@ -2,12 +2,12 @@
 #define MLVC_APPLICATION_PIPELINE_CODEC_FRAME_PIPELINE_H_
 
 #include <mlvc/application/input/frame_input_queue.h>
-#include <mlvc/io/mlvc_bitstream.h>
 #include <mlvc/codec/mlvc_entropy.h>
-#include <mlvc/framework/data_object.h>
 #include <mlvc/framework/data_consumer.h>
+#include <mlvc/framework/data_object.h>
 #include <mlvc/framework/data_producer.h>
 #include <mlvc/framework/streaming_pipeline.h>
+#include <mlvc/io/mlvc_bitstream.h>
 
 #include <atomic>
 #include <functional>

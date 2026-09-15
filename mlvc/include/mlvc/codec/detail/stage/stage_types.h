@@ -1,6 +1,7 @@
 #ifndef MLVC_CODEC_DETAIL_STAGE_TYPES_H_
 #define MLVC_CODEC_DETAIL_STAGE_TYPES_H_
 
+#include <mlvc/codec/detail/stage/constants.h>
 #include <mlvc/codec/tensor_data.h>
 #include <mlvc/core/status.h>
 #include <mlvc/core/tensor_handle.h>
@@ -10,8 +11,6 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
-
-#include <mlvc/codec/detail/stage/constants.h>
 
 namespace mlvc::codec {
 

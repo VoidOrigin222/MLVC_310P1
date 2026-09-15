@@ -9,16 +9,26 @@ namespace mlvc::codec {
 
 EncodeOutput::EncodeOutput(const EncodeStreamOptions& options,
                            const mlvc::io::MlvcBitstreamHeader& header,
-                           const MlvcRateControlOptions& rate_options,
-                           mlvc::Profiler* profiler)
-    : options_(options), profiler_(profiler), fps_(rate_options.fps), rate_controller_(rate_options) {
-  const bool udp_output = options_.udp_port > 0;
+                           const MlvcRateControlOptions& rate_options, mlvc::Profiler* profiler)
+    : options_(options),
+      profiler_(profiler),
+      fps_(rate_options.fps),
+      rate_controller_(rate_options) {
+  const bool udp_output = options_.output_transport_port > 0;
   Check(udp_output || !options_.output_bitstream_path.empty(),
         "encode requires output_bitstream_path or udp_port");
   if (udp_output) {
-    Check(!options_.udp_host.empty(), "udp_host is required when udp_port is set");
-    udp_sender_.emplace(options_.udp_host, static_cast<uint16_t>(options_.udp_port));
-    udp_sender_->SendHeader(header);
+    Check(!options_.output_transport_host.empty(), "udp_host is required when udp_port is set");
+    if (options_.output_transport_mode == "rtp") {
+      rtp_sender_.emplace(
+          options_.output_transport_host, static_cast<uint16_t>(options_.output_transport_port),
+          options_.output_transport_pacing_rate_bps, options_.output_transport_max_burst_bytes);
+      rtp_sender_->SendHeader(header);
+    } else {
+      udp_sender_.emplace(options_.output_transport_host,
+                          static_cast<uint16_t>(options_.output_transport_port));
+      udp_sender_->SendHeader(header);
+    }
   } else {
     writer_.emplace(options_.output_bitstream_path, header);
   }
@@ -37,6 +47,10 @@ void EncodeOutput::Flush(PendingEncodedFrame pending) {
       mlvc::ScopedCpuTimer udp_timer(profiler_, "udp.send_enqueue");
       udp_sender_->SendFrame(pending.frame_index, pending.frame_type, pending.q_index, payload);
     }
+    if (rtp_sender_.has_value()) {
+      mlvc::ScopedCpuTimer rtp_timer(profiler_, "rtp.send");
+      rtp_sender_->SendFrame(pending.frame_index, pending.frame_type, pending.q_index, payload);
+    }
   }
   payload_bytes_ += payload.size();
   rate_controller_.Update(static_cast<double>(pending.frame_index) / fps_, pending.frame_type,
@@ -50,6 +64,7 @@ void EncodeOutput::Close() {
 
 void EncodeOutput::SendEnd() {
   if (udp_sender_.has_value()) udp_sender_->SendEnd();
+  if (rtp_sender_.has_value()) rtp_sender_->SendEnd();
 }
 
 uint64_t EncodeOutput::file_bytes() const {

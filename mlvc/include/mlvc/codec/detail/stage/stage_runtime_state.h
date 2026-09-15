@@ -1,6 +1,8 @@
 #ifndef MLVC_CODEC_DETAIL_STAGE_RUNTIME_STATE_H_
 #define MLVC_CODEC_DETAIL_STAGE_RUNTIME_STATE_H_
 
+#include <mlvc/codec/detail/stage/stage_types.h>
+#include <mlvc/codec/detail/stage/stage_workspace.h>
 #include <mlvc/core/buffer.h>
 #include <mlvc/core/tensor_handle.h>
 #include <mlvc/framework/codec_graph_executor.h>
@@ -8,14 +10,12 @@
 
 #include <string_view>
 
-#include <mlvc/codec/detail/stage/stage_types.h>
-#include <mlvc/codec/detail/stage/stage_workspace.h>
-
 namespace mlvc::codec {
 
 extern bool g_skip_async_entropy_cpu_mirror;
 extern bool g_skip_async_encode_device_only_cpu_mirror;
 extern bool g_skip_async_decode_device_only_cpu_mirror;
+extern bool g_force_decode_video_output_cpu_mirror;
 extern mlvc::CodecGraphExecutor* g_codec_graph_executor;
 extern bool g_validate_acl_decode_prior;
 extern bool g_enable_stage_fusion;
@@ -51,12 +51,28 @@ class ScopedAsyncDecodeDeviceOnlyMirrorSkip {
   }
 
   ScopedAsyncDecodeDeviceOnlyMirrorSkip(const ScopedAsyncDecodeDeviceOnlyMirrorSkip&) = delete;
-  ScopedAsyncDecodeDeviceOnlyMirrorSkip& operator=(
-      const ScopedAsyncDecodeDeviceOnlyMirrorSkip&) = delete;
+  ScopedAsyncDecodeDeviceOnlyMirrorSkip& operator=(const ScopedAsyncDecodeDeviceOnlyMirrorSkip&) =
+      delete;
 
   ~ScopedAsyncDecodeDeviceOnlyMirrorSkip() {
     g_skip_async_decode_device_only_cpu_mirror = previous_;
   }
+
+ private:
+  bool previous_ = false;
+};
+
+class ScopedDecodeVideoOutputMirror {
+ public:
+  explicit ScopedDecodeVideoOutputMirror(bool enabled)
+      : previous_(g_force_decode_video_output_cpu_mirror) {
+    if (enabled) g_force_decode_video_output_cpu_mirror = true;
+  }
+
+  ScopedDecodeVideoOutputMirror(const ScopedDecodeVideoOutputMirror&) = delete;
+  ScopedDecodeVideoOutputMirror& operator=(const ScopedDecodeVideoOutputMirror&) = delete;
+
+  ~ScopedDecodeVideoOutputMirror() { g_force_decode_video_output_cpu_mirror = previous_; }
 
  private:
   bool previous_ = false;

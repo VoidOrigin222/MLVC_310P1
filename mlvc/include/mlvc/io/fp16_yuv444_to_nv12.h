@@ -17,11 +17,9 @@ struct Nv12Layout {
 
 std::size_t Nv12BufferSize(const Nv12Layout& layout);
 bool Fp16Yuv444ToNv12UsesNeon();
-void ConvertFp16Yuv444ToNv12Scalar(const codec::TensorData& input,
-                                   const Nv12Layout& layout,
+void ConvertFp16Yuv444ToNv12Scalar(const codec::TensorData& input, const Nv12Layout& layout,
                                    std::vector<uint8_t>* output);
-void ConvertFp16Yuv444ToNv12(const codec::TensorData& input,
-                             const Nv12Layout& layout,
+void ConvertFp16Yuv444ToNv12(const codec::TensorData& input, const Nv12Layout& layout,
                              std::vector<uint8_t>* output);
 
 }  // namespace mlvc::io

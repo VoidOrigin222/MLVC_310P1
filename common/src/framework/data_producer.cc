@@ -4,8 +4,7 @@
 
 namespace mlvc {
 
-DataProducer::DataProducer(StreamingPipeline& pipeline,
-                           std::atomic<bool>& running)
+DataProducer::DataProducer(StreamingPipeline& pipeline, std::atomic<bool>& running)
     : pipeline_(pipeline), running_(running) {}
 
 DataProducer::~DataProducer() {

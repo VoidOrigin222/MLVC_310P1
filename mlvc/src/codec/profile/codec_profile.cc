@@ -1,9 +1,9 @@
+#include <mlvc/codec/detail/profile/allocation_tracking.h>
 #include <mlvc/codec/detail/profile/codec_profile.h>
 
 #include <chrono>
 #include <utility>
 
-#include <mlvc/codec/detail/profile/allocation_tracking.h>
 #include "mlvc/core/status.h"
 
 namespace mlvc::codec {

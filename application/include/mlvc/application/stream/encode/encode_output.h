@@ -1,8 +1,8 @@
 #ifndef MLVC_APPLICATION_STREAM_ENCODE_ENCODE_OUTPUT_H_
 #define MLVC_APPLICATION_STREAM_ENCODE_ENCODE_OUTPUT_H_
 
-#include <mlvc/application/stream/mlvc_stream.h>
 #include <mlvc/application/stream/mlvc_internal.h>
+#include <mlvc/application/stream/mlvc_stream.h>
 #include <mlvc/codec/mlvc_rate_control.h>
 #include <mlvc/framework/profiler.h>
 #include <mlvc/io/mlvc_bitstream.h>
@@ -38,6 +38,7 @@ class EncodeOutput {
   double fps_ = 30.0;
   std::optional<mlvc::io::MlvcBitstreamWriter> writer_;
   std::optional<mlvc::io::UdpMlvcSender> udp_sender_;
+  std::optional<mlvc::io::RtpMlvcSender> rtp_sender_;
   MlvcRateController rate_controller_;
   uint64_t payload_bytes_ = 0;
 };

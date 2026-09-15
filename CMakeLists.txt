@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.22)
 project(mlvc_acl_cpp LANGUAGES CXX)
 
 option(MLVC_BUILD_APPS "Build MLVC command-line applications" ON)
+set(MLVC_APP_SUFFIX "" CACHE STRING "Suffix for isolated deployment executables")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -21,7 +22,8 @@ find_package(OpenCV REQUIRED)
 find_package(Threads REQUIRED)
 
 set(MLVC_MSRTC_RANS_DIR
-    "${CMAKE_CURRENT_SOURCE_DIR}/../mlvc-main/mlvc-main/packages/msrtc_rans")
+    "${CMAKE_CURRENT_SOURCE_DIR}/../mlvc-main/mlvc-main/packages/msrtc_rans"
+    CACHE PATH "Official MLVC rANS source directory")
 add_library(mlvc_msrtc_rans STATIC
   "${MLVC_MSRTC_RANS_DIR}/src/EntropyCoder.cpp"
 )
@@ -48,7 +50,33 @@ add_library(mlvc_common
   common/src/runtime/stage_runtime.cc
   common/src/entropy/rans_core.cc
   common/src/transport/udp_message_transport.cc
+  common/src/transport/udp_pacer.cc
+  common/src/transport/rtp_mlvc.cc
+  common/src/transport/rtp_message_receiver.cc
 )
+if(BUILD_TESTING)
+  add_executable(test_rtp_mlvc tools/cpp/tests/test_rtp_mlvc.cc)
+  target_link_libraries(test_rtp_mlvc PRIVATE mlvc_common)
+  target_include_directories(test_rtp_mlvc PRIVATE common/include)
+  add_test(NAME rtp_mlvc COMMAND test_rtp_mlvc)
+  add_executable(test_rtp_reassembler tools/cpp/tests/test_rtp_reassembler.cc)
+  target_link_libraries(test_rtp_reassembler PRIVATE mlvc_common)
+  add_test(NAME rtp_reassembler COMMAND test_rtp_reassembler)
+  add_executable(test_rtp_message_receiver_sequence
+    tools/cpp/tests/test_rtp_message_receiver_sequence.cc
+  )
+  target_link_libraries(test_rtp_message_receiver_sequence PRIVATE mlvc_common)
+  target_compile_options(test_rtp_message_receiver_sequence PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
+  )
+  add_test(NAME rtp_message_receiver_sequence
+    COMMAND test_rtp_message_receiver_sequence
+  )
+  add_executable(test_rtp_sender tools/cpp/tests/test_rtp_sender.cc)
+  target_link_libraries(test_rtp_sender PRIVATE mlvc_common)
+  target_include_directories(test_rtp_sender PRIVATE common/include)
+  add_test(NAME rtp_sender COMMAND test_rtp_sender)
+endif()
 
 target_include_directories(mlvc_common
   PUBLIC
@@ -103,7 +131,6 @@ add_library(mlvc_codec
   mlvc/src/entropy/mlvc_official_entropy.cc
   mlvc/src/entropy/sidecar.cc
   mlvc/src/io/bitstream_io.cc
-  mlvc/src/io/dvpp_jpeg_encoder.cc
   mlvc/src/io/frame_source.cc
   mlvc/src/io/fp16_yuv444_to_nv12.cc
   mlvc/src/io/mlvc_bitstream.cc
@@ -137,12 +164,6 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
     COMPILE_OPTIONS "-march=armv8.2-a+fp16"
   )
 endif()
-set_source_files_properties(mlvc/src/io/dvpp_jpeg_encoder.cc PROPERTIES
-  COMPILE_DEFINITIONS ENABLE_DVPP_INTERFACE
-)
-set_source_files_properties(mlvc/src/io/udp_frame_transport.cc PROPERTIES
-  COMPILE_DEFINITIONS ENABLE_DVPP_INTERFACE
-)
 
 add_library(mlvc_application STATIC
   application/src/pipeline/codec_frame_pipeline.cc
@@ -207,13 +228,6 @@ if(MLVC_BUILD_APPS)
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
   )
 
-  add_executable(benchmark_dvpp_jpeg tools/cpp/benchmarks/benchmark_dvpp_jpeg.cc)
-  target_link_libraries(benchmark_dvpp_jpeg PRIVATE mlvc_codec)
-  target_compile_options(benchmark_dvpp_jpeg PRIVATE
-    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
-  )
-  target_compile_definitions(benchmark_dvpp_jpeg PRIVATE ENABLE_DVPP_INTERFACE)
-
   add_executable(extract_acl_video_frames tools/data/extract_acl_video_frames.cc)
   target_link_libraries(extract_acl_video_frames PRIVATE mlvc_codec)
   target_compile_options(extract_acl_video_frames PRIVATE
@@ -221,26 +235,16 @@ if(MLVC_BUILD_APPS)
   )
 
   add_executable(mlvc_encode apps/encode_main.cc)
+  set_target_properties(mlvc_encode PROPERTIES OUTPUT_NAME "mlvc_encode${MLVC_APP_SUFFIX}")
   target_link_libraries(mlvc_encode PRIVATE mlvc_application)
   target_compile_options(mlvc_encode PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
   )
 
   add_executable(mlvc_decode apps/decode_main.cc)
+  set_target_properties(mlvc_decode PROPERTIES OUTPUT_NAME "mlvc_decode${MLVC_APP_SUFFIX}")
   target_link_libraries(mlvc_decode PRIVATE mlvc_application)
   target_compile_options(mlvc_decode PRIVATE
-    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
-  )
-
-  add_executable(mlvc_decode_dvpp_candidate apps/decode_main.cc)
-  target_link_libraries(mlvc_decode_dvpp_candidate PRIVATE mlvc_application)
-  target_compile_options(mlvc_decode_dvpp_candidate PRIVATE
-    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
-  )
-
-  add_executable(mlvc_decode_device_dvpp_candidate apps/decode_main.cc)
-  target_link_libraries(mlvc_decode_device_dvpp_candidate PRIVATE mlvc_application)
-  target_compile_options(mlvc_decode_device_dvpp_candidate PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
   )
 
@@ -251,6 +255,12 @@ if(MLVC_BUILD_APPS)
   )
 
   if(BUILD_TESTING)
+    add_executable(test_p1_model_loading tools/cpp/tests/test_p1_model_loading.cc)
+    target_link_libraries(test_p1_model_loading PRIVATE mlvc_common)
+    set(MLVC_TEST_MANIFEST "" CACHE FILEPATH "Manifest for optional on-device model tests")
+    if(MLVC_TEST_MANIFEST)
+      add_test(NAME p1_model_loading COMMAND test_p1_model_loading "${MLVC_TEST_MANIFEST}")
+    endif()
     add_executable(test_fp16_yuv444_to_nv12
       tools/cpp/tests/test_fp16_yuv444_to_nv12.cc
     )
@@ -268,14 +278,14 @@ if(MLVC_BUILD_APPS)
       $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
     )
 
-    add_executable(test_async_dvpp_sender
-      tools/cpp/tests/test_async_dvpp_sender.cc
+    add_executable(test_rtsp_video_publisher
+      tools/cpp/tests/test_rtsp_video_publisher.cc
     )
-    target_link_libraries(test_async_dvpp_sender PRIVATE mlvc_codec)
-    target_compile_options(test_async_dvpp_sender PRIVATE
+    target_link_libraries(test_rtsp_video_publisher PRIVATE mlvc_codec)
+    target_compile_options(test_rtsp_video_publisher PRIVATE
       $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
     )
-    add_test(NAME async_dvpp_sender COMMAND test_async_dvpp_sender)
+    add_test(NAME rtsp_video_publisher COMMAND test_rtsp_video_publisher)
 
     add_executable(test_udp_initial_wait
       tools/cpp/tests/test_udp_initial_wait.cc
@@ -286,14 +296,14 @@ if(MLVC_BUILD_APPS)
     )
     add_test(NAME udp_initial_wait COMMAND test_udp_initial_wait)
 
-    add_executable(test_device_dvpp_slot_queue
-      tools/cpp/tests/test_device_dvpp_slot_queue.cc
+    add_executable(test_udp_receiver_burst
+      tools/cpp/tests/test_udp_receiver_burst.cc
     )
-    target_link_libraries(test_device_dvpp_slot_queue PRIVATE mlvc_codec)
-    target_compile_options(test_device_dvpp_slot_queue PRIVATE
+    target_link_libraries(test_udp_receiver_burst PRIVATE mlvc_common)
+    target_compile_options(test_udp_receiver_burst PRIVATE
       $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
     )
-    add_test(NAME device_dvpp_slot_queue COMMAND test_device_dvpp_slot_queue)
+    add_test(NAME udp_receiver_burst COMMAND test_udp_receiver_burst)
 
     add_executable(test_stage_output_policy
       tools/cpp/validation/check_stage_output_policy.cc
@@ -330,6 +340,31 @@ if(MLVC_BUILD_APPS)
     )
     add_test(NAME reference_reset_schedule COMMAND test_reference_reset_schedule)
 
+    add_executable(test_streaming_pipeline_order
+      tools/cpp/tests/test_streaming_pipeline_order.cc
+    )
+    target_link_libraries(test_streaming_pipeline_order PRIVATE mlvc_common)
+    target_compile_options(test_streaming_pipeline_order PRIVATE
+      $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
+    )
+    add_test(NAME streaming_pipeline_order COMMAND test_streaming_pipeline_order)
+
+    add_executable(test_mlvc_bitstream_validation
+      tools/cpp/tests/test_mlvc_bitstream_validation.cc
+    )
+    target_link_libraries(test_mlvc_bitstream_validation PRIVATE mlvc_codec)
+    target_compile_options(test_mlvc_bitstream_validation PRIVATE
+      $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
+    )
+    add_test(NAME mlvc_bitstream_validation COMMAND test_mlvc_bitstream_validation)
+
+    add_executable(test_sidecar_validation tools/cpp/tests/test_sidecar_validation.cc)
+    target_link_libraries(test_sidecar_validation PRIVATE mlvc_codec)
+    target_compile_options(test_sidecar_validation PRIVATE
+      $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
+    )
+    add_test(NAME sidecar_validation COMMAND test_sidecar_validation)
+
     add_executable(test_entropy_decode_equivalence
       tools/cpp/tests/test_entropy_decode_equivalence.cc
     )
@@ -343,8 +378,19 @@ if(MLVC_BUILD_APPS)
     target_compile_options(test_decode_config PRIVATE
       $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
     )
-    add_test(NAME decode_config COMMAND test_decode_config
-      "${CMAKE_CURRENT_SOURCE_DIR}/../mlvc1080p/manifest_310P1.json")
+    if(MLVC_TEST_MANIFEST)
+      add_test(NAME decode_config COMMAND test_decode_config "${MLVC_TEST_MANIFEST}")
+    else()
+      add_test(NAME decode_config COMMAND test_decode_config
+        "${CMAKE_CURRENT_SOURCE_DIR}/../mlvc1080p/manifest_310P1.json")
+    endif()
+
+    add_executable(test_encode_config tools/cpp/tests/test_encode_config.cc)
+    target_link_libraries(test_encode_config PRIVATE mlvc_application)
+    target_compile_options(test_encode_config PRIVATE
+      $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
+    )
+    add_test(NAME encode_config COMMAND test_encode_config)
   endif()
 
 endif()

@@ -1,11 +1,11 @@
 #include <mlvc/codec/detail/entropy/entropy_buffers.h>
+#include <mlvc/codec/detail/profile/allocation_tracking.h>
+#include <mlvc/codec/detail/profile/codec_profile.h>
+#include <mlvc/codec/detail/stage/constants.h>
 
 #include <cstring>
 #include <string>
 
-#include <mlvc/codec/detail/profile/allocation_tracking.h>
-#include <mlvc/codec/detail/profile/codec_profile.h>
-#include <mlvc/codec/detail/stage/constants.h>
 #include "mlvc/core/status.h"
 #include "mlvc/framework/profile_range.h"
 

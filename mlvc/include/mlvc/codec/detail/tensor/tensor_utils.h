@@ -1,13 +1,12 @@
 #ifndef MLVC_CODEC_DETAIL_TENSOR_UTILS_H_
 #define MLVC_CODEC_DETAIL_TENSOR_UTILS_H_
 
+#include <mlvc/codec/detail/stage/stage_types.h>
 #include <mlvc/codec/tensor_data.h>
 #include <mlvc/core/tensor.h>
 
 #include <cstdint>
 #include <vector>
-
-#include <mlvc/codec/detail/stage/stage_types.h>
 
 namespace mlvc::codec {
 

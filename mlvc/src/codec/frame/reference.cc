@@ -1,9 +1,9 @@
 #include <mlvc/codec/detail/frame/reference.h>
+#include <mlvc/codec/detail/stage/stage_runner.h>
+#include <mlvc/codec/detail/stage/stage_runtime_state.h>
 
 #include <utility>
 
-#include <mlvc/codec/detail/stage/stage_runner.h>
-#include <mlvc/codec/detail/stage/stage_runtime_state.h>
 #include "mlvc/core/status.h"
 #include "mlvc/framework/profile_range.h"
 

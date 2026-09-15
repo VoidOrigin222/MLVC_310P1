@@ -1,6 +1,7 @@
 #ifndef MLVC_CODEC_DETAIL_ENTROPY_BUFFERS_H_
 #define MLVC_CODEC_DETAIL_ENTROPY_BUFFERS_H_
 
+#include <mlvc/codec/detail/stage/stage_types.h>
 #include <mlvc/codec/tensor_data.h>
 #include <mlvc/core/buffer.h>
 #include <mlvc/framework/async_plan.h>
@@ -8,8 +9,6 @@
 
 #include <cstddef>
 #include <string>
-
-#include <mlvc/codec/detail/stage/stage_types.h>
 
 namespace mlvc::codec {
 

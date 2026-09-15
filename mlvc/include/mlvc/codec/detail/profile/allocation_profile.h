@@ -1,9 +1,10 @@
 #ifndef MLVC_CODEC_DETAIL_ALLOCATION_PROFILE_H_
 #define MLVC_CODEC_DETAIL_ALLOCATION_PROFILE_H_
 
+#include <mlvc/codec/detail/profile/allocation_tracking.h>
+
 #include <string>
 
-#include <mlvc/codec/detail/profile/allocation_tracking.h>
 #include "mlvc/framework/profiler.h"
 
 namespace mlvc::codec {

@@ -7,8 +7,7 @@
 
 namespace mlvc {
 
-StreamingPipeline::StreamingPipeline(std::size_t worker_count,
-                                     std::size_t queue_capacity)
+StreamingPipeline::StreamingPipeline(std::size_t worker_count, std::size_t queue_capacity)
     : worker_count_(std::max<std::size_t>(1, worker_count)),
       queue_capacity_(std::max<std::size_t>(1, queue_capacity)),
       input_queue_(queue_capacity_),
@@ -33,6 +32,12 @@ void StreamingPipeline::Start() {
   output_queue_.Reset();
   processed_count_ = 0;
   error_count_ = 0;
+  next_sequence_ = 0;
+  {
+    std::lock_guard<std::mutex> lock(reorder_mutex_);
+    completed_results_.clear();
+    next_output_sequence_ = 0;
+  }
   active_workers_ = worker_count_;
   running_ = true;
   processing_threads_.reserve(worker_count_);
@@ -58,7 +63,8 @@ void StreamingPipeline::CloseInput() { input_queue_.Close(); }
 
 bool StreamingPipeline::AddInput(std::shared_ptr<DataObject> input) {
   if (!input || !running()) return false;
-  return input_queue_.Push(std::move(input));
+  const std::size_t sequence = next_sequence_.fetch_add(1);
+  return input_queue_.Push(WorkItem{sequence, std::move(input)});
 }
 
 bool StreamingPipeline::TryGetOutput(std::shared_ptr<DataObject>* output) {
@@ -70,22 +76,40 @@ bool StreamingPipeline::GetOutput(std::shared_ptr<DataObject>* output) {
 }
 
 void StreamingPipeline::ProcessingLoop() {
-  std::shared_ptr<DataObject> input;
-  while (input_queue_.Pop(&input)) {
+  WorkItem work;
+  while (input_queue_.Pop(&work)) {
+    std::shared_ptr<DataObject> output;
     try {
-      auto output = processor_(input);
-      if (output && output_queue_.Push(std::move(output))) {
-        ++processed_count_;
-      } else if (output) {
-        break;
-      }
+      output = processor_(work.input);
     } catch (...) {
       ++error_count_;
+    }
+    {
+      std::unique_lock<std::mutex> lock(reorder_mutex_);
+      completed_results_.emplace(work.sequence, std::move(output));
+      PublishReadyResults();
     }
   }
   if (active_workers_.fetch_sub(1) == 1) {
     running_ = false;
     output_queue_.Close();
+  }
+}
+
+void StreamingPipeline::PublishReadyResults() {
+  while (true) {
+    auto it = completed_results_.find(next_output_sequence_);
+    if (it == completed_results_.end()) return;
+    std::shared_ptr<DataObject> output = std::move(it->second);
+    completed_results_.erase(it);
+    ++next_output_sequence_;
+    if (output) {
+      if (output_queue_.Push(std::move(output))) {
+        ++processed_count_;
+      } else {
+        return;
+      }
+    }
   }
 }
 

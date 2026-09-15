@@ -1,4 +1,9 @@
+#include <mlvc/codec/detail/profile/allocation_tracking.h>
+#include <mlvc/codec/detail/profile/codec_profile.h>
+#include <mlvc/codec/detail/stage/constants.h>
 #include <mlvc/codec/detail/stage/stage_runner.h>
+#include <mlvc/codec/detail/stage/stage_runtime_state.h>
+#include <mlvc/codec/detail/stage/stage_workspace.h>
 
 #include <array>
 #include <chrono>
@@ -7,11 +12,6 @@
 #include <utility>
 #include <vector>
 
-#include <mlvc/codec/detail/profile/allocation_tracking.h>
-#include <mlvc/codec/detail/profile/codec_profile.h>
-#include <mlvc/codec/detail/stage/constants.h>
-#include <mlvc/codec/detail/stage/stage_runtime_state.h>
-#include <mlvc/codec/detail/stage/stage_workspace.h>
 #include "mlvc/core/status.h"
 #include "mlvc/framework/profile_range.h"
 

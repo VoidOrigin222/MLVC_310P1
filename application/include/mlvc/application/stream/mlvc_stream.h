@@ -1,8 +1,8 @@
 #ifndef MLVC_APPLICATION_STREAM_MLVC_STREAM_H_
 #define MLVC_APPLICATION_STREAM_MLVC_STREAM_H_
 
-#include <mlvc/application/stream/stream_encoder.h>
 #include <mlvc/application/runtime/mlvc_codec_runtime.h>
+#include <mlvc/application/stream/stream_encoder.h>
 #include <mlvc/framework/codec_graph_executor.h>
 #include <mlvc/framework/entropy_worker.h>
 #include <mlvc/framework/profiler.h>
@@ -23,8 +23,7 @@ struct EncodePipelineServices {
   mlvc::app::MlvcCodecRuntime* codec_runtime = nullptr;
 };
 
-int RunEncodeStream(const EncodeStreamOptions& options,
-                    EncodePipelineServices* services = nullptr);
+int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* services = nullptr);
 
 struct DecodePipelineServices {
   mlvc::Profiler* profiler = nullptr;
@@ -42,8 +41,12 @@ struct DecodeStreamOptions {
   std::string bitrate = "6500k";
   std::string preset = "medium";
   std::string execution_profile;
-  std::string forward_host;
-  std::string forward_mode = "jpeg";
+  std::string output_transport_host;
+  std::string output_transport_mode = "none";
+  std::string output_transport_rtsp_url;
+  std::string output_transport_rtsp_preset = "ultrafast";
+  std::string output_transport_rtsp_transport = "udp";
+  int output_transport_rtsp_crf = 0;
   double fps = 30.0;
   int crf = 23;
   int device = 0;
@@ -51,15 +54,14 @@ struct DecodeStreamOptions {
   int drop_frame_index = -1;
   int forced_ltr_reference_frame = -1;
   int forced_ltr_recovery_frame = -1;
-  int udp_port = 0;
-  int forward_port = 0;
-  int forward_queue_capacity = 3;
-  int forward_jpeg_quality = 75;
+  int input_transport_port = 0;
+  std::string input_transport_mode = "udp";
+  int output_transport_port = 0;
+  int output_transport_queue_capacity = 3;
   PipelineOptions pipeline;
 };
 
-int RunDecodeStream(const DecodeStreamOptions& options,
-                    DecodePipelineServices* services = nullptr);
+int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* services = nullptr);
 
 }  // namespace mlvc::codec
 

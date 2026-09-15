@@ -15,9 +15,9 @@ namespace mlvc::app {
 // contain device resources whose lifetime must remain tied to the ACL runtime.
 class MlvcCodecRuntime {
  public:
-  MlvcCodecRuntime(const std::filesystem::path& manifest_path, int device,
-                   mlvc::codec::StageOutputBindingMode binding_mode =
-                       mlvc::codec::StageOutputBindingMode::kCpu);
+  MlvcCodecRuntime(
+      const std::filesystem::path& manifest_path, int device,
+      mlvc::codec::StageOutputBindingMode binding_mode = mlvc::codec::StageOutputBindingMode::kCpu);
   ~MlvcCodecRuntime() = default;
 
   MlvcCodecRuntime(const MlvcCodecRuntime&) = delete;

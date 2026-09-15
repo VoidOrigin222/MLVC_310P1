@@ -35,6 +35,32 @@ std::vector<int64_t> DimsVector(const aclmdlIODims& dims) {
   return std::vector<int64_t>(dims.dims, dims.dims + dims.dimCount);
 }
 
+bool MatchesOmOutputName(const std::string& logical, const std::string& actual) {
+  if (logical == actual) return true;
+  // ATC may expose "<operator>:<output index>:<ONNX output name>".
+  // Preserve the logical name used by RunStage; do not accept arbitrary suffixes.
+  const std::string suffix = ":" + logical;
+  if (logical.empty() || actual.size() <= suffix.size() ||
+      actual.compare(actual.size() - suffix.size(), suffix.size(), suffix) != 0) {
+    return false;
+  }
+  const std::size_t index_end = actual.size() - suffix.size();
+  const std::size_t separator = actual.rfind(':', index_end - 1);
+  if (separator == std::string::npos || separator == 0 || separator + 1 == index_end) {
+    return false;
+  }
+  return std::all_of(actual.begin() + separator + 1, actual.begin() + index_end,
+                     [](char ch) { return ch >= '0' && ch <= '9'; });
+}
+
+void ValidateOmTensor(const TensorSpec& expected, const TensorSpec& actual,
+                      const std::string& context, bool output) {
+  Check(output ? MatchesOmOutputName(expected.name, actual.name) : expected.name == actual.name,
+        context + " name mismatch: manifest=" + expected.name + ", om=" + actual.name);
+  Check(expected.dtype == actual.dtype, context + " dtype mismatch");
+  Check(expected.shape == actual.shape, context + " shape mismatch");
+}
+
 aclrtMemcpyKind InputCopyKind(MemoryLocation location) {
   switch (location) {
     case MemoryLocation::kCpu:
@@ -253,6 +279,10 @@ AclStage::AclStage(AclRuntime* runtime, ModelRecord record, std::filesystem::pat
     } else {
       Check(record_.inputs.size() == om_input_count,
             "ACL manifest input count does not match OM desc: " + record_.name);
+      for (std::size_t index = 0; index < om_input_count; ++index) {
+        ValidateOmTensor(record_.inputs[index], ReadInputSpec(desc_, index),
+                         record_.name + " Input[" + std::to_string(index) + "]", false);
+      }
     }
     if (record_.outputs.empty()) {
       record_.outputs.reserve(om_output_count);
@@ -262,6 +292,10 @@ AclStage::AclStage(AclRuntime* runtime, ModelRecord record, std::filesystem::pat
     } else {
       Check(record_.outputs.size() == om_output_count,
             "ACL manifest output count does not match OM desc: " + record_.name);
+      for (std::size_t index = 0; index < om_output_count; ++index) {
+        ValidateOmTensor(record_.outputs[index], ReadOutputSpec(desc_, index),
+                         record_.name + " Output[" + std::to_string(index) + "]", true);
+      }
     }
     BuildDatasets();
   } catch (...) {

@@ -1,11 +1,11 @@
 #ifndef MLVC_APPLICATION_CLI_DECODER_APP_H_
 #define MLVC_APPLICATION_CLI_DECODER_APP_H_
 
-#include <filesystem>
-#include <string>
-
 #include <mlvc/application/cli/command_line.h>
 #include <mlvc/application/stream/mlvc_stream.h>
+
+#include <filesystem>
+#include <string>
 
 namespace mlvc {
 

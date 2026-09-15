@@ -17,8 +17,7 @@ using mlvc::codec::TensorData;
 using mlvc::io::Nv12Layout;
 
 TensorData MakeFrame(int padded_width, int padded_height, float y, float u, float v) {
-  TensorData frame = mlvc::codec::MakeFp16Tensor(
-      {1, 3, padded_height, padded_width}, 0.0F);
+  TensorData frame = mlvc::codec::MakeFp16Tensor({1, 3, padded_height, padded_width}, 0.0F);
   auto* data = reinterpret_cast<uint16_t*>(frame.bytes.data());
   const std::size_t plane = static_cast<std::size_t>(padded_width * padded_height);
   const uint16_t y_half = static_cast<uint16_t>(mlvc::codec::FloatToHalfBits(y));
@@ -36,8 +35,7 @@ void Expect(bool condition, const std::string& message) {
   }
 }
 
-void ExpectBytes(const std::vector<uint8_t>& actual,
-                 const std::vector<uint8_t>& expected,
+void ExpectBytes(const std::vector<uint8_t>& actual, const std::vector<uint8_t>& expected,
                  const std::string& label) {
   Expect(actual == expected, label + " byte mismatch");
 }
@@ -45,14 +43,11 @@ void ExpectBytes(const std::vector<uint8_t>& actual,
 void TestConstantBlackAndWhite() {
   const Nv12Layout layout{4, 2, 4, 2};
   std::vector<uint8_t> output;
-  mlvc::io::ConvertFp16Yuv444ToNv12Scalar(MakeFrame(4, 2, 0.0F, 0.5F, 0.5F),
-                                           layout, &output);
+  mlvc::io::ConvertFp16Yuv444ToNv12Scalar(MakeFrame(4, 2, 0.0F, 0.5F, 0.5F), layout, &output);
   ExpectBytes(output, {0, 0, 0, 0, 0, 0, 0, 0, 128, 128, 128, 128}, "black");
 
-  mlvc::io::ConvertFp16Yuv444ToNv12Scalar(MakeFrame(4, 2, 1.0F, 0.5F, 0.5F),
-                                           layout, &output);
-  ExpectBytes(output, {255, 255, 255, 255, 255, 255, 255, 255, 128, 128, 128, 128},
-              "white");
+  mlvc::io::ConvertFp16Yuv444ToNv12Scalar(MakeFrame(4, 2, 1.0F, 0.5F, 0.5F), layout, &output);
+  ExpectBytes(output, {255, 255, 255, 255, 255, 255, 255, 255, 128, 128, 128, 128}, "white");
 }
 
 void TestChromaAveragesTwoByTwo() {
@@ -62,8 +57,7 @@ void TestChromaAveragesTwoByTwo() {
   const float samples[4] = {0.0F, 0.5F, 0.5F, 1.0F};
   for (std::size_t i = 0; i < 4; ++i) {
     data[plane + i] = static_cast<uint16_t>(mlvc::codec::FloatToHalfBits(samples[i]));
-    data[2 * plane + i] =
-        static_cast<uint16_t>(mlvc::codec::FloatToHalfBits(1.0F - samples[i]));
+    data[2 * plane + i] = static_cast<uint16_t>(mlvc::codec::FloatToHalfBits(1.0F - samples[i]));
   }
   std::vector<uint8_t> output;
   mlvc::io::ConvertFp16Yuv444ToNv12Scalar(frame, {2, 2, 2, 2}, &output);
@@ -100,8 +94,8 @@ void TestRejectsOddVisibleDimensions() {
   bool rejected = false;
   try {
     std::vector<uint8_t> output;
-    mlvc::io::ConvertFp16Yuv444ToNv12Scalar(MakeFrame(4, 2, 0.0F, 0.5F, 0.5F),
-                                             {3, 2, 4, 2}, &output);
+    mlvc::io::ConvertFp16Yuv444ToNv12Scalar(MakeFrame(4, 2, 0.0F, 0.5F, 0.5F), {3, 2, 4, 2},
+                                            &output);
   } catch (const std::exception&) {
     rejected = true;
   }

@@ -1,6 +1,9 @@
 #ifndef MLVC_CODEC_DETAIL_ENCODER_H_
 #define MLVC_CODEC_DETAIL_ENCODER_H_
 
+#include <mlvc/codec/detail/frame/reference_state.h>
+#include <mlvc/codec/detail/memory/scratch.h>
+#include <mlvc/codec/detail/quantization/qscale_cache.h>
 #include <mlvc/codec/tensor_data.h>
 #include <mlvc/entropy/entropy_codec.h>
 #include <mlvc/entropy/sidecar.h>
@@ -10,10 +13,6 @@
 
 #include <cstdint>
 #include <vector>
-
-#include <mlvc/codec/detail/quantization/qscale_cache.h>
-#include <mlvc/codec/detail/frame/reference_state.h>
-#include <mlvc/codec/detail/memory/scratch.h>
 
 namespace mlvc::codec {
 

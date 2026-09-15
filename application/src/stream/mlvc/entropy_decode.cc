@@ -1,5 +1,4 @@
 #include <mlvc/application/stream/mlvc_entropy_decode.h>
-
 #include <mlvc/codec/detail/stage/constants.h>
 #include <mlvc/codec/mlvc_entropy.h>
 #include <mlvc/codec/tensor_utils.h>
@@ -8,10 +7,9 @@
 namespace mlvc::codec {
 
 DecodedEntropyFrame DecodeMlvcEntropyFrame(mlvc::MlvcOfficialEntropyDecoder* decoder,
-                                           const mlvc::ModelRecord& decoder_record,
-                                           int frame_index, MlvcFrameType frame_type, int q_index,
-                                           std::vector<uint8_t> payload,
-                                           mlvc::Profiler* profiler) {
+                                           const mlvc::ModelRecord& decoder_record, int frame_index,
+                                           MlvcFrameType frame_type, int q_index,
+                                           std::vector<uint8_t> payload, mlvc::Profiler* profiler) {
   mlvc::Check(decoder != nullptr, "MLVC entropy decoder is required");
   mlvc::Check(profiler != nullptr, "MLVC entropy profiler is required");
   mlvc::Check(decoder_record.inputs.size() >= 3,
@@ -36,8 +34,8 @@ DecodedEntropyFrame DecodeMlvcEntropyFrame(mlvc::MlvcOfficialEntropyDecoder* dec
   decoder->SetStream(payload, profiler);
   const std::size_t z_symbol_count = mlvc::TensorShape(z_shape).NumElements();
   std::vector<int8_t> z_symbols =
-      decoder->DecodeZ(q_index, static_cast<int>(z_symbol_count / (z_height * z_width)),
-                       z_height, z_width, profiler);
+      decoder->DecodeZ(q_index, static_cast<int>(z_symbol_count / (z_height * z_width)), z_height,
+                       z_width, profiler);
   std::vector<uint8_t> scales_0;
   std::vector<uint8_t> scales_1;
   {
@@ -46,8 +44,8 @@ DecodedEntropyFrame DecodeMlvcEntropyFrame(mlvc::MlvcOfficialEntropyDecoder* dec
   }
   {
     mlvc::ScopedCpuTimer stage_timer(profiler, "entropy.scale_index_expand");
-    BuildMlvcScaleIndexesFromZRaw(decoded.z_raw, y_channels, y_height, y_width,
-                                  kMlvcChannelRepeat, &scales_0, &scales_1);
+    BuildMlvcScaleIndexesFromZRaw(decoded.z_raw, y_channels, y_height, y_width, kMlvcChannelRepeat,
+                                  &scales_0, &scales_1);
   }
   std::vector<int8_t> y_symbols_0 = decoder->DecodeY(scales_0, false, profiler);
   std::vector<int8_t> y_symbols_1 = decoder->DecodeY(scales_1, true, profiler);

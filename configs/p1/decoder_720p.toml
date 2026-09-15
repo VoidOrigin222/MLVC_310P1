@@ -1,0 +1,16 @@
+mode = "decode"
+device = 0
+frame_num = -1
+format = "none"
+output = "/root/workplace/mlvc_20260903/mlvc_v3/p1-v1-repair-20260911/acceptance/720p-537-none-171013/reconstruction"
+input_transport_port = 39191
+execution_profile = "pipeline-v1"
+
+[pipeline]
+stream_workers = 1
+queue_capacity = 3
+frame_buffer_slots = 3
+entropy_workers = 2
+graph_packet_capacity = 2
+[model]
+manifest = "/root/workplace/mlvc_20260903/mlvc720p/1280x720/manifest_310P1.json"

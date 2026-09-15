@@ -1,14 +1,13 @@
-#include <mlvc/codec/detail/stage/stage_workspace.h>
-
 #include <acl/acl.h>
+#include <mlvc/codec/detail/profile/codec_profile.h>
+#include <mlvc/codec/detail/stage/stage_output_policy.h>
+#include <mlvc/codec/detail/stage/stage_runtime_state.h>
+#include <mlvc/codec/detail/stage/stage_workspace.h>
+#include <mlvc/codec/detail/tensor/tensor_utils.h>
 
 #include <chrono>
 #include <cstring>
 
-#include <mlvc/codec/detail/profile/codec_profile.h>
-#include <mlvc/codec/detail/stage/stage_output_policy.h>
-#include <mlvc/codec/detail/stage/stage_runtime_state.h>
-#include <mlvc/codec/detail/tensor/tensor_utils.h>
 #include "mlvc/core/status.h"
 #include "mlvc/framework/profile_range.h"
 #include "mlvc/runtime/decode_prior_acl.h"
@@ -145,7 +144,7 @@ void StageOutputWorkspace::MirrorOutputsToCpu(const mlvc::ModelRecord& record,
     const char* skip_reason = StageOutputCpuMirrorSkipReason(
         record.name, record.outputs[i], reason, g_skip_async_entropy_cpu_mirror,
         g_skip_async_encode_device_only_cpu_mirror, g_skip_async_decode_device_only_cpu_mirror,
-        mlvc::DecodePriorAclAvailable());
+        mlvc::DecodePriorAclAvailable(), g_force_decode_video_output_cpu_mirror);
     if (skip_reason != nullptr) {
       if (profiler != nullptr) {
         AddProfileEventWithArgs(

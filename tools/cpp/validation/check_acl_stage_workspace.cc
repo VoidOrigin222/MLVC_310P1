@@ -1,3 +1,6 @@
+#include <mlvc/codec/detail/stage/stage_runner.h>
+#include <mlvc/codec/detail/stage/stage_runtime_state.h>
+#include <mlvc/codec/detail/stage/stage_workspace.h>
 #include <mlvc/codec/tensor_data.h>
 #include <mlvc/core/status.h>
 #include <mlvc/runtime/stage_runtime.h>
@@ -7,10 +10,6 @@
 #include <filesystem>
 #include <iostream>
 #include <string>
-
-#include <mlvc/codec/detail/stage/stage_runner.h>
-#include <mlvc/codec/detail/stage/stage_runtime_state.h>
-#include <mlvc/codec/detail/stage/stage_workspace.h>
 
 namespace {
 

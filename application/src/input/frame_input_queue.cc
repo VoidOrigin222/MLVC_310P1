@@ -89,8 +89,7 @@ InputFrame AsyncFrameInputQueue::Pop() {
   next_frame_to_consume_ = ready.frame_index + 1;
   lock.unlock();
   producer_condition_.notify_one();
-  return InputFrame{ready.frame_index,
-                    &arena_->Get(static_cast<std::size_t>(ready.slot_index)),
+  return InputFrame{ready.frame_index, &arena_->Get(static_cast<std::size_t>(ready.slot_index)),
                     ready.slot_index, false};
 }
 

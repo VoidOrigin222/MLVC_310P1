@@ -1,17 +1,17 @@
+#include <mlvc/codec/detail/entropy/entropy_buffers.h>
 #include <mlvc/codec/detail/frame/encoder.h>
+#include <mlvc/codec/detail/frame/reference.h>
+#include <mlvc/codec/detail/profile/allocation_tracking.h>
+#include <mlvc/codec/detail/profile/codec_profile.h>
+#include <mlvc/codec/detail/stage/constants.h>
+#include <mlvc/codec/detail/stage/stage_runner.h>
+#include <mlvc/codec/detail/stage/stage_runtime_state.h>
+#include <mlvc/codec/detail/tensor/tensor_utils.h>
 
 #include <chrono>
 #include <cstdint>
 #include <future>
 
-#include <mlvc/codec/detail/profile/allocation_tracking.h>
-#include <mlvc/codec/detail/profile/codec_profile.h>
-#include <mlvc/codec/detail/stage/constants.h>
-#include <mlvc/codec/detail/entropy/entropy_buffers.h>
-#include <mlvc/codec/detail/frame/reference.h>
-#include <mlvc/codec/detail/stage/stage_runner.h>
-#include <mlvc/codec/detail/stage/stage_runtime_state.h>
-#include <mlvc/codec/detail/tensor/tensor_utils.h>
 #include "mlvc/core/status.h"
 #include "mlvc/framework/profile_range.h"
 

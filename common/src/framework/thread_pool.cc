@@ -23,8 +23,7 @@ void ThreadPool::Enqueue(std::function<void()> task) {
   {
     std::lock_guard<std::mutex> lock(mutex_);
     Check(!stopping_, "cannot submit task after thread pool stop");
-    Check(max_queue_size_ == 0 || tasks_.size() < max_queue_size_,
-          "thread-pool queue is full");
+    Check(max_queue_size_ == 0 || tasks_.size() < max_queue_size_, "thread-pool queue is full");
     tasks_.push(std::move(task));
   }
   condition_.notify_one();

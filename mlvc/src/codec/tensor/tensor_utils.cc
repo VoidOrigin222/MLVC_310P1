@@ -1,3 +1,5 @@
+#include <mlvc/codec/detail/profile/codec_profile.h>
+#include <mlvc/codec/detail/quantization/qscale_cache.h>
 #include <mlvc/codec/detail/tensor/tensor_utils.h>
 
 #include <algorithm>
@@ -6,8 +8,6 @@
 #include <filesystem>
 #include <fstream>
 
-#include <mlvc/codec/detail/profile/codec_profile.h>
-#include <mlvc/codec/detail/quantization/qscale_cache.h>
 #include "mlvc/core/status.h"
 #include "mlvc/framework/profile_range.h"
 

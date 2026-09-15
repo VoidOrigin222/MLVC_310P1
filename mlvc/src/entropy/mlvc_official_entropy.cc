@@ -99,13 +99,25 @@ std::vector<int32_t> BuildZIndexes(int q_index, int channels, int height, int wi
 }  // namespace
 
 std::vector<int8_t> NarrowMlvcSymbols(const std::vector<int32_t>& values) {
-  std::vector<int8_t> output(values.size());
-  for (std::size_t i = 0; i < values.size(); ++i) {
-    Check(values[i] >= std::numeric_limits<int8_t>::min() &&
-              values[i] <= std::numeric_limits<int8_t>::max(),
+  // Keep validation, but do it in a separate reduction pass.  The old loop
+  // checked the range and converted every symbol in the same branch-heavy
+  // loop, which prevented vectorization and was measurable at 1080P (roughly
+  // 390k symbols per frame).  A branch-free conversion pass lets the ARM
+  // compiler use SIMD while the first pass still rejects malformed streams.
+  if (!values.empty()) {
+    int32_t min_value = values.front();
+    int32_t max_value = values.front();
+    for (std::size_t i = 1; i < values.size(); ++i) {
+      min_value = std::min(min_value, values[i]);
+      max_value = std::max(max_value, values[i]);
+    }
+    Check(min_value >= std::numeric_limits<int8_t>::min() &&
+              max_value <= std::numeric_limits<int8_t>::max(),
           "decoded MLVC symbol is outside int8 range");
-    output[i] = static_cast<int8_t>(values[i]);
   }
+  std::vector<int8_t> output(values.size());
+  std::transform(values.begin(), values.end(), output.begin(),
+                 [](int32_t value) { return static_cast<int8_t>(value); });
   return output;
 }
 
@@ -206,8 +218,9 @@ void MlvcOfficialEntropyDecoder::SetStream(const std::vector<uint8_t>& payload,
   }
 }
 
-std::vector<int32_t> MlvcOfficialEntropyDecoder::DecodeZInt32(
-    int q_index, int z_channels, int z_height, int z_width, Profiler* profiler) {
+std::vector<int32_t> MlvcOfficialEntropyDecoder::DecodeZInt32(int q_index, int z_channels,
+                                                              int z_height, int z_width,
+                                                              Profiler* profiler) {
   std::vector<int32_t> indexes;
   {
     ScopedCpuTimer timer(profiler, "entropy.z.index_build");
@@ -227,14 +240,13 @@ std::vector<int32_t> MlvcOfficialEntropyDecoder::DecodeZInt32(
 
 std::vector<int8_t> MlvcOfficialEntropyDecoder::DecodeZ(int q_index, int z_channels, int z_height,
                                                         int z_width, Profiler* profiler) {
-  std::vector<int32_t> values =
-      DecodeZInt32(q_index, z_channels, z_height, z_width, profiler);
+  std::vector<int32_t> values = DecodeZInt32(q_index, z_channels, z_height, z_width, profiler);
   ScopedCpuTimer timer(profiler, "entropy.z.int32_to_int8");
   return NarrowMlvcSymbols(values);
 }
 
-std::vector<int32_t> MlvcOfficialEntropyDecoder::DecodeYInt32(
-    const std::vector<uint8_t>& scales, bool eof, Profiler* profiler) {
+std::vector<int32_t> MlvcOfficialEntropyDecoder::DecodeYInt32(const std::vector<uint8_t>& scales,
+                                                              bool eof, Profiler* profiler) {
   const char* const part = eof ? "y1" : "y0";
   std::vector<int32_t> indexes;
   std::vector<int32_t> values;

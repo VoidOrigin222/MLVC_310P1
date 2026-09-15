@@ -1,9 +1,10 @@
 #include "mlvc/codec/mlvc_entropy.h"
 
+#include <mlvc/codec/detail/tensor/tensor_utils.h>
+
 #include <algorithm>
 #include <cmath>
 
-#include <mlvc/codec/detail/tensor/tensor_utils.h>
 #include "mlvc/core/status.h"
 #include "mlvc/entropy/entropy_codec.h"
 #include "mlvc/framework/profile_range.h"
@@ -115,45 +116,46 @@ void BuildMlvcScaleIndexesFromZRaw(const TensorData& z_raw, int y_channels, int 
   const int spatial_repeat = std::max(spatial_repeat_h, spatial_repeat_w);
   const std::size_t plane = PlaneSize(y_height, y_width);
 
-  std::vector<uint8_t> y_scales(static_cast<std::size_t>(y_channels) * plane);
-  for (int channel = 0; channel < y_channels; ++channel) {
-    const int source_channel = channel / channel_repeat;
-    for (int y = 0; y < y_height; ++y) {
-      const int source_y = std::min(y / spatial_repeat, z_height - 1);
-      for (int x = 0; x < y_width; ++x) {
-        const int source_x = std::min(x / spatial_repeat, z_width - 1);
-        const std::size_t source_index =
-            (static_cast<std::size_t>(source_channel) * static_cast<std::size_t>(z_height) +
-             static_cast<std::size_t>(source_y)) *
-                static_cast<std::size_t>(z_width) +
-            static_cast<std::size_t>(source_x);
-        const float value = std::abs(z_values.at(source_index));
-        const int index = std::clamp(static_cast<int>(value), 0, kScaleLevel - 1);
-        y_scales[static_cast<std::size_t>(channel) * plane +
-                 static_cast<std::size_t>(y) * static_cast<std::size_t>(y_width) +
-                 static_cast<std::size_t>(x)] = static_cast<uint8_t>(index);
-      }
-    }
-  }
-
   const int half_channels = y_channels / 2;
   scales_0->assign(static_cast<std::size_t>(half_channels) * plane, 0);
   scales_1->assign(static_cast<std::size_t>(half_channels) * plane, 0);
+  // Write both checkerboard streams directly.  Materializing all y channels
+  // and then splitting them required a second full-resolution traversal.
+  std::vector<int> source_y(static_cast<std::size_t>(y_height));
+  std::vector<int> source_x(static_cast<std::size_t>(y_width));
+  for (int y = 0; y < y_height; ++y) {
+    source_y[static_cast<std::size_t>(y)] = std::min(y / spatial_repeat, z_height - 1);
+  }
+  for (int x = 0; x < y_width; ++x) {
+    source_x[static_cast<std::size_t>(x)] = std::min(x / spatial_repeat, z_width - 1);
+  }
   for (int channel = 0; channel < half_channels; ++channel) {
     const std::size_t dst_base = static_cast<std::size_t>(channel) * plane;
-    const std::size_t src0_base = static_cast<std::size_t>(channel) * plane;
-    const std::size_t src1_base = static_cast<std::size_t>(channel + half_channels) * plane;
+    const int source_channel_0 = channel / channel_repeat;
+    const int source_channel_1 = (channel + half_channels) / channel_repeat;
     for (int y = 0; y < y_height; ++y) {
       const bool even_row = (y & 1) == 0;
+      const std::size_t source_row_0 =
+          (static_cast<std::size_t>(source_channel_0) * static_cast<std::size_t>(z_height) +
+           static_cast<std::size_t>(source_y[static_cast<std::size_t>(y)])) *
+          static_cast<std::size_t>(z_width);
+      const std::size_t source_row_1 =
+          (static_cast<std::size_t>(source_channel_1) * static_cast<std::size_t>(z_height) +
+           static_cast<std::size_t>(source_y[static_cast<std::size_t>(y)])) *
+          static_cast<std::size_t>(z_width);
       for (int x = 0; x < y_width; ++x) {
         const bool even_col = (x & 1) == 0;
         const bool mask0 = (even_row == even_col);
         const std::size_t offset = static_cast<std::size_t>(y) * static_cast<std::size_t>(y_width) +
                                    static_cast<std::size_t>(x);
-        const uint8_t a = y_scales[src0_base + offset];
-        const uint8_t b = y_scales[src1_base + offset];
-        (*scales_0)[dst_base + offset] = mask0 ? a : b;
-        (*scales_1)[dst_base + offset] = mask0 ? b : a;
+        const std::size_t source_offset =
+            static_cast<std::size_t>(source_x[static_cast<std::size_t>(x)]);
+        const int scale_0 = std::clamp(
+            static_cast<int>(std::abs(z_values[source_row_0 + source_offset])), 0, kScaleLevel - 1);
+        const int scale_1 = std::clamp(
+            static_cast<int>(std::abs(z_values[source_row_1 + source_offset])), 0, kScaleLevel - 1);
+        (*scales_0)[dst_base + offset] = static_cast<uint8_t>(mask0 ? scale_0 : scale_1);
+        (*scales_1)[dst_base + offset] = static_cast<uint8_t>(mask0 ? scale_1 : scale_0);
       }
     }
   }

@@ -7,8 +7,7 @@
 
 namespace mlvc::app {
 
-std::filesystem::path MlvcCodecRuntime::ResolveSidecarPath(
-    const mlvc::ModelManifest& manifest) {
+std::filesystem::path MlvcCodecRuntime::ResolveSidecarPath(const mlvc::ModelManifest& manifest) {
   mlvc::Check(!manifest.sidecar().file.empty(),
               "model manifest does not specify a runtime sidecar");
   const std::filesystem::path sidecar_path = manifest.sidecar().file.is_absolute()
@@ -19,9 +18,8 @@ std::filesystem::path MlvcCodecRuntime::ResolveSidecarPath(
   return sidecar_path;
 }
 
-MlvcCodecRuntime::MlvcCodecRuntime(
-    const std::filesystem::path& manifest_path, int device,
-    mlvc::codec::StageOutputBindingMode binding_mode)
+MlvcCodecRuntime::MlvcCodecRuntime(const std::filesystem::path& manifest_path, int device,
+                                   mlvc::codec::StageOutputBindingMode binding_mode)
     : runtime_(device),
       models_(&runtime_, mlvc::ModelManifest::Load(manifest_path)),
       sidecar_(mlvc::RuntimeSidecar::Load(ResolveSidecarPath(models_.manifest()))),

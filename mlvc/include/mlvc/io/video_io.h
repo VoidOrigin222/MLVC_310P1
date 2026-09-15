@@ -3,11 +3,19 @@
 
 #include <mlvc/codec/tensor_data.h>
 
+#include <condition_variable>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
+#include <deque>
+#include <exception>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <opencv2/core/mat.hpp>
 #include <string>
+#include <thread>
+#include <vector>
 
 namespace mlvc::io {
 
@@ -59,6 +67,44 @@ class DecodedVideoWriter {
   std::string preset_;
   FILE* pipe_ = nullptr;
   int frame_count_ = 0;
+};
+
+// Publishes decoded frames to a MediaMTX RTSP endpoint through FFmpeg.
+// Conversion and pipe writes run on a dedicated worker so decode is not
+// blocked by network backpressure.
+class RtspVideoPublisher {
+ public:
+  RtspVideoPublisher(const std::string& url, double fps, int width, int height,
+                     const std::string& preset = "ultrafast", int crf = 0,
+                     std::size_t queue_capacity = 3, const std::string& transport = "udp");
+  RtspVideoPublisher(const RtspVideoPublisher&) = delete;
+  RtspVideoPublisher& operator=(const RtspVideoPublisher&) = delete;
+  ~RtspVideoPublisher();
+
+  void WriteTensorFrame(const codec::TensorData& tensor);
+  void WriteNv12Frame(std::vector<uint8_t> frame);
+  void Close();
+  int frame_count() const { return frame_count_; }
+  uint64_t dropped_frames() const { return dropped_frames_; }
+
+ private:
+  FILE* pipe_ = nullptr;
+  int width_ = 0;
+  int height_ = 0;
+  int frame_count_ = 0;
+  uint64_t dropped_frames_ = 0;
+  std::size_t queue_capacity_ = 3;
+  struct QueuedFrame {
+    codec::TensorData tensor;
+    std::vector<uint8_t> nv12;
+  };
+  std::deque<QueuedFrame> queue_;
+  mutable std::mutex mutex_;
+  std::condition_variable cv_;
+  std::thread worker_;
+  bool stopping_ = false;
+  bool closed_ = false;
+  std::exception_ptr worker_error_;
 };
 
 bool IsVideoPath(const std::filesystem::path& path);

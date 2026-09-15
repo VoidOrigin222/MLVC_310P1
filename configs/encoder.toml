@@ -1,7 +1,7 @@
 mode = "encode"
-input_frame_dir = "../data/preprocessed_frames/614lab_1080p_fp16"
+input_frame_dir = "../data/preprocessed_frames/60s_720p_fp16"
 device = 0
-frame_num = 537
+frame_num = -1
 qp = 2
 gop = 96
 reset_interval = 32
@@ -20,4 +20,4 @@ entropy_workers = 1
 graph_packet_capacity = 2
 
 [model]
-manifest = "../mlvc1080p/manifest_310P1.json"
+manifest = "../mlvc720p/1280x720/manifest_310P1.json"

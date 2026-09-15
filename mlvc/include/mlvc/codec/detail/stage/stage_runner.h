@@ -1,14 +1,13 @@
 #ifndef MLVC_CODEC_DETAIL_STAGE_RUNNER_H_
 #define MLVC_CODEC_DETAIL_STAGE_RUNNER_H_
 
+#include <mlvc/codec/detail/stage/stage_types.h>
 #include <mlvc/codec/tensor_data.h>
 #include <mlvc/framework/profiler.h>
 #include <mlvc/runtime/stage_runtime.h>
 
 #include <initializer_list>
 #include <string_view>
-
-#include <mlvc/codec/detail/stage/stage_types.h>
 
 namespace mlvc::codec {
 

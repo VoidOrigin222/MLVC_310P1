@@ -1,5 +1,4 @@
 #include <mlvc/codec/detail/prior/prior_layout.h>
-
 #include <mlvc/codec/tensor_data.h>
 #include <mlvc/framework/profile_range.h>
 

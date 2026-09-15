@@ -1,11 +1,10 @@
 #include <mlvc/application/stream/encode/encode_frame.h>
-
-#include <algorithm>
-
 #include <mlvc/codec/detail/stage/constants.h>
 #include <mlvc/codec/detail/stage/stage_runner.h>
 #include <mlvc/codec/detail/tensor/tensor_utils.h>
 #include <mlvc/codec/tensor_utils.h>
+
+#include <algorithm>
 
 #include "mlvc/core/status.h"
 
@@ -14,10 +13,8 @@ namespace mlvc::codec {
 EncodeFrameProcessor::EncodeFrameProcessor(
     const EncodeStreamOptions& options, mlvc::StageModelSet* models,
     const mlvc::RuntimeSidecar* sidecar, mlvc::Profiler* profiler,
-    mlvc::EntropyWorker* entropy_worker, EncodeState* state,
-    MlvcRateController* rate_controller,
-    mlvc::MlvcOfficialEntropyEncoder* entropy_encoder,
-    EncodeDimensions dimensions, double fps)
+    mlvc::EntropyWorker* entropy_worker, EncodeState* state, MlvcRateController* rate_controller,
+    mlvc::MlvcOfficialEntropyEncoder* entropy_encoder, EncodeDimensions dimensions, double fps)
     : options_(options),
       models_(models),
       sidecar_(sidecar),
@@ -34,8 +31,8 @@ EncodeFrameProcessor::EncodeFrameProcessor(
         "encode frame processor dependencies are incomplete");
 }
 
-PendingEncodedFrame EncodeFrameProcessor::Process(
-    const std::shared_ptr<mlvc::DataObject>& data, int expected_frame_index) {
+PendingEncodedFrame EncodeFrameProcessor::Process(const std::shared_ptr<mlvc::DataObject>& data,
+                                                  int expected_frame_index) {
   auto packet = std::dynamic_pointer_cast<mlvc::app::PreparedFramePacket>(data);
   Check(packet != nullptr, "frame pipeline returned an unexpected data object");
   mlvc::app::InputFrame& prepared_frame = packet->frame();
@@ -55,11 +52,10 @@ PendingEncodedFrame EncodeFrameProcessor::Process(
   TensorData q_index_shifted_tensor = MakeInt32ScalarTensor(q_index_shifted);
   const StageInput ref_feature_input =
       BuildReferenceFeatureInput(state_->reference(), state_->zero_feature());
-  RunOutput encoder_output =
-      RunStage(models_, "MLVCEncoder",
-               {TensorInput("x", *prepared_frame.frame), ref_feature_input,
-                TensorInput("q_index_shifted", q_index_shifted_tensor)},
-               profiler_);
+  RunOutput encoder_output = RunStage(models_, "MLVCEncoder",
+                                      {TensorInput("x", *prepared_frame.frame), ref_feature_input,
+                                       TensorInput("q_index_shifted", q_index_shifted_tensor)},
+                                      profiler_);
 
   const TensorData encoder_z_raw = CloneTensor(encoder_output.At("z_raw"));
   const TensorData encoder_y_raw_0 = CloneTensor(encoder_output.At("y_raw_0"));
@@ -81,8 +77,8 @@ PendingEncodedFrame EncodeFrameProcessor::Process(
         std::vector<uint8_t> result;
         entropy_encoder_->Encode(
             z_symbols, y_symbols_0, y_symbols_1, scales_0, scales_1, frame_q_index,
-            static_cast<int>(z_symbols.size() /
-                             (static_cast<std::size_t>(dimensions_.z_height) * dimensions_.z_width)),
+            static_cast<int>(z_symbols.size() / (static_cast<std::size_t>(dimensions_.z_height) *
+                                                 dimensions_.z_width)),
             dimensions_.z_height, dimensions_.z_width, &result);
         return result;
       });

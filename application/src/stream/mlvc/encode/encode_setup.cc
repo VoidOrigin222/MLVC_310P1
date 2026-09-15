@@ -22,10 +22,9 @@ void ValidateEncodeInput(const EncodeStreamOptions& options) {
 }
 
 mlvc::io::MlvcBitstreamHeader BuildEncodeHeader(const EncodeStreamOptions& options,
-                                                const SourceFrameGeometry& geometry,
-                                                double fps) {
+                                                const SourceFrameGeometry& geometry, double fps) {
   mlvc::io::MlvcBitstreamHeader header;
-  header.version = 3;
+  header.version = 4;
   header.width = geometry.width;
   header.height = geometry.height;
   header.fps = fps;
@@ -37,6 +36,8 @@ mlvc::io::MlvcBitstreamHeader BuildEncodeHeader(const EncodeStreamOptions& optio
   header.ltr_qp_shift = options.ltr_qp_shift;
   header.target_bitrate_bps = options.target_bitrate_bps;
   header.flags = 0;
+  header.forced_ltr_recovery_frame = options.forced_ltr_recovery_frame;
+  header.forced_ltr_reference_frame = options.forced_ltr_reference_frame;
   return header;
 }
 

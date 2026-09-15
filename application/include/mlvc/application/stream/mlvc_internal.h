@@ -4,12 +4,12 @@
 #include <mlvc/application/stream/mlvc_stream.h>
 #include <mlvc/codec/detail/frame/reference_state.h>
 #include <mlvc/codec/detail/stage/stage_runner.h>
+#include <mlvc/codec/detail/stage/stage_runtime_state.h>
 #include <mlvc/codec/detail/stage/stage_types.h>
 #include <mlvc/codec/tensor_data.h>
-#include <mlvc/runtime/model_manifest.h>
 #include <mlvc/framework/profiler.h>
-#include <mlvc/codec/detail/stage/stage_runtime_state.h>
 #include <mlvc/io/mlvc_bitstream.h>
+#include <mlvc/runtime/model_manifest.h>
 
 #include <cstdint>
 #include <filesystem>

@@ -1,8 +1,8 @@
+#include <mlvc/codec/detail/stage/constants.h>
 #include <mlvc/codec/detail/stage/stage_output_policy.h>
 
 #include <string_view>
 
-#include <mlvc/codec/detail/stage/constants.h>
 #include "mlvc/core/status.h"
 
 namespace mlvc::codec {
@@ -85,7 +85,8 @@ MaterializationReason StageOutputMaterializationReason(std::string_view stage_na
 const char* StageOutputCpuMirrorSkipReason(
     std::string_view stage_name, const mlvc::TensorSpec& tensor, MaterializationReason reason,
     bool skip_entropy_cpu_mirror, bool skip_encode_acl_only_cpu_mirror,
-    bool skip_decode_acl_only_cpu_mirror, bool decode_prior_acl_available) {
+    bool skip_decode_acl_only_cpu_mirror, bool decode_prior_acl_available,
+    bool force_decode_video_output_cpu_mirror) {
   if (skip_entropy_cpu_mirror && reason == MaterializationReason::kEntropyEncode) {
     return "deferred_pinned_copy";
   }
@@ -93,6 +94,10 @@ const char* StageOutputCpuMirrorSkipReason(
     return "acl_only_downstream";
   }
   if (skip_decode_acl_only_cpu_mirror && reason == MaterializationReason::kAclOnlyDownstream) {
+    if (force_decode_video_output_cpu_mirror && stage_name == "MLVCDecoder" &&
+        tensor.name == "x_hat") {
+      return nullptr;
+    }
     return "acl_only_downstream";
   }
   if (skip_decode_acl_only_cpu_mirror && reason == MaterializationReason::kEntropyDecode &&
@@ -159,8 +164,7 @@ bool IsAsyncEncodeAclOnlyStageOutput(std::string_view stage_name, std::string_vi
 }
 
 bool IsAsyncDecodeAclOnlyStageOutput(std::string_view stage_name, std::string_view tensor_name) {
-  if (stage_name == "MLVCDecoder" &&
-      (tensor_name == "x_hat" || tensor_name == "feature")) {
+  if (stage_name == "MLVCDecoder" && (tensor_name == "x_hat" || tensor_name == "feature")) {
     return true;
   }
   if ((stage_name == "p_reference_feature_adaptor" || stage_name == "p_reference_frame_adaptor") &&

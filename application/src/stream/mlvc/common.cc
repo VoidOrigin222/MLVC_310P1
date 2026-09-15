@@ -1,7 +1,14 @@
 #include <mlvc/application/input/frame_input_queue.h>
 #include <mlvc/application/progress.h>
-#include <mlvc/codec/execution_profile.h>
 #include <mlvc/application/stream/mlvc_stream.h>
+#include <mlvc/codec/detail/frame/reference_state.h>
+#include <mlvc/codec/detail/profile/codec_profile.h>
+#include <mlvc/codec/detail/stage/constants.h>
+#include <mlvc/codec/detail/stage/stage_runner.h>
+#include <mlvc/codec/detail/stage/stage_runtime_state.h>
+#include <mlvc/codec/detail/stage/stage_types.h>
+#include <mlvc/codec/detail/tensor/tensor_utils.h>
+#include <mlvc/codec/execution_profile.h>
 #include <mlvc/codec/mlvc_entropy.h>
 #include <mlvc/codec/mlvc_rate_control.h>
 #include <mlvc/codec/tensor_utils.h>
@@ -34,16 +41,8 @@
 #include <utility>
 #include <vector>
 
-#include <mlvc/codec/detail/profile/codec_profile.h>
-#include <mlvc/codec/detail/stage/constants.h>
-#include <mlvc/codec/detail/frame/reference_state.h>
-#include <mlvc/codec/detail/stage/stage_runner.h>
-#include <mlvc/codec/detail/stage/stage_runtime_state.h>
-#include <mlvc/codec/detail/stage/stage_types.h>
-#include <mlvc/codec/detail/tensor/tensor_utils.h>
-#include "mlvc/core/status.h"
-
 #include "mlvc/application/stream/mlvc_internal.h"
+#include "mlvc/core/status.h"
 
 namespace mlvc::codec {
 namespace {
@@ -176,9 +175,6 @@ ScopedRuntimeState::~ScopedRuntimeState() {
   g_enable_stage_fusion = enable_stage_fusion_;
 }
 
-
-bool IsMlvcManifest(const mlvc::ModelManifest& manifest) {
-  return HasMlvcModels(manifest);
-}
+bool IsMlvcManifest(const mlvc::ModelManifest& manifest) { return HasMlvcModels(manifest); }
 
 }  // namespace mlvc::codec

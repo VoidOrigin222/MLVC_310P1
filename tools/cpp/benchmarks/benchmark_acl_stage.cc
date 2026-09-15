@@ -46,8 +46,8 @@ bool ParseInputFileBinding(const std::string& value, InputFileBinding* binding) 
   return true;
 }
 
-void LoadInputFiles(const std::vector<InputFileBinding>& bindings,
-                    const mlvc::StageModel& stage, std::vector<TensorBuffer>* inputs) {
+void LoadInputFiles(const std::vector<InputFileBinding>& bindings, const mlvc::StageModel& stage,
+                    std::vector<TensorBuffer>* inputs) {
   for (const InputFileBinding& binding : bindings) {
     std::size_t input_index = stage.record().inputs.size();
     for (std::size_t i = 0; i < stage.record().inputs.size(); ++i) {
@@ -63,8 +63,8 @@ void LoadInputFiles(const std::vector<InputFileBinding>& bindings,
     std::error_code error;
     const std::uintmax_t file_bytes = std::filesystem::file_size(binding.path, error);
     if (error) {
-      throw std::runtime_error("failed to inspect input file " + binding.path.string() +
-                               ": " + error.message());
+      throw std::runtime_error("failed to inspect input file " + binding.path.string() + ": " +
+                               error.message());
     }
     TensorBuffer& input = inputs->at(input_index);
     if (file_bytes != input.bytes.size()) {

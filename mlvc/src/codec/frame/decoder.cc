@@ -1,20 +1,19 @@
-#include <mlvc/codec/detail/frame/decoder.h>
-
 #include <acl/acl.h>
+#include <mlvc/codec/detail/frame/decoder.h>
+#include <mlvc/codec/detail/frame/reference.h>
+#include <mlvc/codec/detail/prior/prior_layout.h>
+#include <mlvc/codec/detail/profile/allocation_tracking.h>
+#include <mlvc/codec/detail/profile/codec_profile.h>
+#include <mlvc/codec/detail/stage/constants.h>
+#include <mlvc/codec/detail/stage/stage_runner.h>
+#include <mlvc/codec/detail/stage/stage_runtime_state.h>
+#include <mlvc/codec/detail/tensor/tensor_utils.h>
 
 #include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <string>
 
-#include <mlvc/codec/detail/profile/allocation_tracking.h>
-#include <mlvc/codec/detail/profile/codec_profile.h>
-#include <mlvc/codec/detail/stage/constants.h>
-#include <mlvc/codec/detail/prior/prior_layout.h>
-#include <mlvc/codec/detail/frame/reference.h>
-#include <mlvc/codec/detail/stage/stage_runner.h>
-#include <mlvc/codec/detail/stage/stage_runtime_state.h>
-#include <mlvc/codec/detail/tensor/tensor_utils.h>
 #include "mlvc/core/status.h"
 #include "mlvc/framework/profile_range.h"
 #include "mlvc/runtime/decode_prior_acl.h"

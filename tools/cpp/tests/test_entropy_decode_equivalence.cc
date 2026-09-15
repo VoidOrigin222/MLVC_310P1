@@ -62,12 +62,12 @@ std::vector<Packet> ReadPackets(const std::filesystem::path& bitstream_path, int
   return packets;
 }
 
-mlvc::codec::DecodedEntropyFrame DecodePacket(
-    mlvc::MlvcOfficialEntropyDecoder* decoder, const mlvc::ModelRecord& decoder_record,
-    const Packet& packet, mlvc::Profiler* profiler) {
+mlvc::codec::DecodedEntropyFrame DecodePacket(mlvc::MlvcOfficialEntropyDecoder* decoder,
+                                              const mlvc::ModelRecord& decoder_record,
+                                              const Packet& packet, mlvc::Profiler* profiler) {
   return mlvc::codec::DecodeMlvcEntropyFrame(decoder, decoder_record, packet.frame_index,
-                                              packet.frame_type, packet.q_index, packet.payload,
-                                              profiler);
+                                             packet.frame_type, packet.q_index, packet.payload,
+                                             profiler);
 }
 
 void CheckParallelEquivalence(const std::filesystem::path& model_directory,
@@ -104,8 +104,7 @@ void CheckParallelEquivalence(const std::filesystem::path& model_directory,
 }
 
 void CheckDetailedProfileEvents(const std::filesystem::path& model_directory,
-                                const mlvc::ModelRecord& decoder_record,
-                                const Packet& packet) {
+                                const mlvc::ModelRecord& decoder_record, const Packet& packet) {
   mlvc::MlvcOfficialEntropyDecoder decoder(model_directory);
   mlvc::Profiler profiler;
   (void)DecodePacket(&decoder, decoder_record, packet, &profiler);
@@ -115,15 +114,12 @@ void CheckDetailedProfileEvents(const std::filesystem::path& model_directory,
     names.insert(event.name);
   }
   const std::vector<std::string> required = {
-      "entropy.payload_copy",       "entropy.stream_open",
-      "entropy.z.index_build",      "entropy.z.output_allocate",
-      "entropy.z.rans_decode",      "entropy.z.int32_to_int8",
-      "entropy.z.int8_to_fp16",     "entropy.scale_index_expand",
-      "entropy.y0.index_convert",   "entropy.y0.output_allocate",
-      "entropy.y0.rans_decode",     "entropy.y0.int32_to_int8",
-      "entropy.y0.int8_to_fp16",    "entropy.y1.index_convert",
-      "entropy.y1.output_allocate", "entropy.y1.rans_decode",
-      "entropy.y1.stream_finalize", "entropy.y1.int32_to_int8",
+      "entropy.payload_copy",       "entropy.stream_open",        "entropy.z.index_build",
+      "entropy.z.output_allocate",  "entropy.z.rans_decode",      "entropy.z.int32_to_int8",
+      "entropy.z.int8_to_fp16",     "entropy.scale_index_expand", "entropy.y0.index_convert",
+      "entropy.y0.output_allocate", "entropy.y0.rans_decode",     "entropy.y0.int32_to_int8",
+      "entropy.y0.int8_to_fp16",    "entropy.y1.index_convert",   "entropy.y1.output_allocate",
+      "entropy.y1.rans_decode",     "entropy.y1.stream_finalize", "entropy.y1.int32_to_int8",
       "entropy.y1.int8_to_fp16",
   };
   for (const std::string& name : required) {
@@ -183,8 +179,8 @@ int main(int argc, char** argv) {
 
     CheckDetailedProfileEvents(manifest.directory(), decoder_record, packets.front());
     CheckParallelEquivalence(manifest.directory(), decoder_record, packets);
-    const double sequential_seconds = MeasureSequential(manifest.directory(), decoder_record,
-                                                        packets);
+    const double sequential_seconds =
+        MeasureSequential(manifest.directory(), decoder_record, packets);
     const double parallel_seconds = MeasureParallel(manifest.directory(), decoder_record, packets);
     const double frames = static_cast<double>(packets.size());
     std::cout << "frames=" << packets.size() << "\n";

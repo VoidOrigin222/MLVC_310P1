@@ -1,8 +1,8 @@
 #ifndef MLVC_FRAMEWORK_ENTROPY_WORKER_H_
 #define MLVC_FRAMEWORK_ENTROPY_WORKER_H_
 
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <future>
 #include <memory>

@@ -1,6 +1,7 @@
 #ifndef MLVC_CODEC_DETAIL_QSCALE_CACHE_H_
 #define MLVC_CODEC_DETAIL_QSCALE_CACHE_H_
 
+#include <mlvc/codec/detail/stage/constants.h>
 #include <mlvc/codec/tensor_data.h>
 #include <mlvc/core/status.h>
 #include <mlvc/core/tensor_handle.h>
@@ -13,8 +14,6 @@
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include <mlvc/codec/detail/stage/constants.h>
 
 namespace mlvc::codec {
 

@@ -37,10 +37,8 @@ void TestTwoSlotsRetireInOrderAndReuseReleasedSlot() {
 
   mlvc::Check(window.full() && window.size() == 2,
               "two-slot window must accept two in-flight tasks");
-  mlvc::Check(slots.size() == 2 && slots[0] != slots[1],
-              "in-flight tasks must use distinct slots");
-  mlvc::Check(window.max_observed_size() == 2,
-              "window must record maximum in-flight count");
+  mlvc::Check(slots.size() == 2 && slots[0] != slots[1], "in-flight tasks must use distinct slots");
+  mlvc::Check(window.max_observed_size() == 2, "window must record maximum in-flight count");
 
   second.set_value(22);
   first.set_value(11);

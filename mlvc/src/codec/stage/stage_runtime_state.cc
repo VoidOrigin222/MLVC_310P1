@@ -1,13 +1,12 @@
-#include <mlvc/codec/detail/stage/stage_runtime_state.h>
-
 #include <acl/acl.h>
+#include <mlvc/codec/detail/profile/codec_profile.h>
+#include <mlvc/codec/detail/stage/constants.h>
+#include <mlvc/codec/detail/stage/stage_runtime_state.h>
 
 #include <chrono>
 #include <cstring>
 #include <string>
 
-#include <mlvc/codec/detail/profile/codec_profile.h>
-#include <mlvc/codec/detail/stage/constants.h>
 #include "mlvc/core/status.h"
 #include "mlvc/framework/profile_range.h"
 
@@ -25,6 +24,7 @@ void CheckAclStatus(aclError status, const char* operation) {
 bool g_skip_async_entropy_cpu_mirror = false;
 bool g_skip_async_encode_device_only_cpu_mirror = false;
 bool g_skip_async_decode_device_only_cpu_mirror = false;
+bool g_force_decode_video_output_cpu_mirror = false;
 StageOutputWorkspace* g_stage_output_workspace = nullptr;
 void* g_acl_user_compute_stream = nullptr;
 mlvc::CodecGraphExecutor* g_codec_graph_executor = nullptr;

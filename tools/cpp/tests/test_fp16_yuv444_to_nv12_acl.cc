@@ -1,11 +1,10 @@
+#include <acl/acl.h>
 #include <mlvc/codec/tensor_data.h>
 #include <mlvc/core/buffer.h>
 #include <mlvc/core/status.h>
 #include <mlvc/io/fp16_yuv444_to_nv12.h>
 #include <mlvc/runtime/fp16_yuv444_to_nv12_acl.h>
 #include <mlvc/runtime/stage_runtime.h>
-
-#include <acl/acl.h>
 
 #include <chrono>
 #include <cstdint>
@@ -21,8 +20,7 @@ int main() {
         mlvc::codec::MakeTensor({1, 3, kHeight, kWidth}, mlvc::DataType::kFloat16);
     auto* values = reinterpret_cast<uint16_t*>(input.bytes.data());
     for (std::size_t i = 0; i < input.Elements(); ++i) {
-      const float value =
-          static_cast<float>(static_cast<int>(i % 24U) - 3) / 16.0F;
+      const float value = static_cast<float>(static_cast<int>(i % 24U) - 3) / 16.0F;
       values[i] = mlvc::codec::FloatToHalfBits(value);
     }
 
@@ -38,10 +36,9 @@ int main() {
                    "copy conversion test input H2D");
     mlvc::Check(mlvc::Fp16Yuv444ToNv12AclAvailable(),
                 "FP16 YUV444-to-NV12 ACL operator is unavailable");
-    mlvc::Fp16Yuv444ToNv12Acl(input_device.data(), input.shape, layout,
-                              output_device.data(), runtime.stream());
-    mlvc::CheckAcl(aclrtSynchronizeStream(runtime.stream()),
-                   "synchronize conversion test stream");
+    mlvc::Fp16Yuv444ToNv12Acl(input_device.data(), input.shape, layout, output_device.data(),
+                              runtime.stream());
+    mlvc::CheckAcl(aclrtSynchronizeStream(runtime.stream()), "synchronize conversion test stream");
 
     std::vector<uint8_t> actual(expected.size());
     mlvc::CheckAcl(aclrtMemcpy(actual.data(), actual.size(), output_device.data(),
@@ -63,34 +60,30 @@ int main() {
     constexpr int kFullWidth = 1920;
     constexpr int kFullVisibleHeight = 1080;
     constexpr int kFullInputHeight = 1088;
-    mlvc::codec::TensorData full_input = mlvc::codec::MakeTensor(
-        {1, 3, kFullInputHeight, kFullWidth}, mlvc::DataType::kFloat16);
+    mlvc::codec::TensorData full_input =
+        mlvc::codec::MakeTensor({1, 3, kFullInputHeight, kFullWidth}, mlvc::DataType::kFloat16);
     auto* full_values = reinterpret_cast<uint16_t*>(full_input.bytes.data());
     for (std::size_t i = 0; i < full_input.Elements(); ++i) {
-      const float value =
-          static_cast<float>(static_cast<int>(i % 1536U) - 256) / 1024.0F;
+      const float value = static_cast<float>(static_cast<int>(i % 1536U) - 256) / 1024.0F;
       full_values[i] = mlvc::codec::FloatToHalfBits(value);
     }
-    const mlvc::io::Nv12Layout full_layout{
-        kFullWidth, kFullVisibleHeight, kFullWidth, kFullVisibleHeight};
+    const mlvc::io::Nv12Layout full_layout{kFullWidth, kFullVisibleHeight, kFullWidth,
+                                           kFullVisibleHeight};
     std::vector<uint8_t> full_expected;
-    mlvc::io::ConvertFp16Yuv444ToNv12Scalar(full_input, full_layout,
-                                             &full_expected);
+    mlvc::io::ConvertFp16Yuv444ToNv12Scalar(full_input, full_layout, &full_expected);
     mlvc::AclBuffer full_input_device(full_input.bytes.size());
     mlvc::AclBuffer full_output_device(full_expected.size());
-    mlvc::CheckAcl(aclrtMemcpy(full_input_device.data(), full_input_device.bytes(),
-                               full_input.bytes.data(), full_input.bytes.size(),
-                               ACL_MEMCPY_HOST_TO_DEVICE),
-                   "copy full conversion test input H2D");
-    mlvc::Fp16Yuv444ToNv12Acl(full_input_device.data(), full_input.shape,
-                              full_layout, full_output_device.data(),
-                              runtime.stream());
+    mlvc::CheckAcl(
+        aclrtMemcpy(full_input_device.data(), full_input_device.bytes(), full_input.bytes.data(),
+                    full_input.bytes.size(), ACL_MEMCPY_HOST_TO_DEVICE),
+        "copy full conversion test input H2D");
+    mlvc::Fp16Yuv444ToNv12Acl(full_input_device.data(), full_input.shape, full_layout,
+                              full_output_device.data(), runtime.stream());
     mlvc::CheckAcl(aclrtSynchronizeStream(runtime.stream()),
                    "synchronize full conversion test stream");
     std::vector<uint8_t> full_actual(full_expected.size());
-    mlvc::CheckAcl(aclrtMemcpy(full_actual.data(), full_actual.size(),
-                               full_output_device.data(), full_output_device.bytes(),
-                               ACL_MEMCPY_DEVICE_TO_HOST),
+    mlvc::CheckAcl(aclrtMemcpy(full_actual.data(), full_actual.size(), full_output_device.data(),
+                               full_output_device.bytes(), ACL_MEMCPY_DEVICE_TO_HOST),
                    "copy full conversion test output D2H");
     mlvc::Check(full_actual == full_expected,
                 "1080p device FP16 YUV444-to-NV12 output differs from scalar reference");
@@ -98,11 +91,9 @@ int main() {
     constexpr int kTimingIterations = 5;
     const auto timing_begin = std::chrono::steady_clock::now();
     for (int iteration = 0; iteration < kTimingIterations; ++iteration) {
-      mlvc::Fp16Yuv444ToNv12Acl(full_input_device.data(), full_input.shape,
-                                full_layout, full_output_device.data(),
-                                runtime.stream());
-      mlvc::CheckAcl(aclrtSynchronizeStream(runtime.stream()),
-                     "synchronize timed full conversion");
+      mlvc::Fp16Yuv444ToNv12Acl(full_input_device.data(), full_input.shape, full_layout,
+                                full_output_device.data(), runtime.stream());
+      mlvc::CheckAcl(aclrtSynchronizeStream(runtime.stream()), "synchronize timed full conversion");
     }
     const auto timing_end = std::chrono::steady_clock::now();
     const double average_ms =
@@ -118,25 +109,20 @@ int main() {
     mlvc::CheckAcl(aclrtCreateEventWithFlag(&conversion_ready, kTimedSyncEvent),
                    "create conversion ready timeline event");
     mlvc::CheckAcl(aclrtCreateStream(&wait_stream), "create conversion wait stream");
-    mlvc::Fp16Yuv444ToNv12Acl(
-        full_input_device.data(), full_input.shape, full_layout,
-        full_output_device.data(), runtime.stream(), conversion_start,
-        conversion_ready);
+    mlvc::Fp16Yuv444ToNv12Acl(full_input_device.data(), full_input.shape, full_layout,
+                              full_output_device.data(), runtime.stream(), conversion_start,
+                              conversion_ready);
     mlvc::CheckAcl(aclrtSynchronizeEvent(conversion_ready),
                    "synchronize conversion ready timeline event");
     float event_elapsed_ms = 0.0F;
-    mlvc::CheckAcl(aclrtEventElapsedTime(&event_elapsed_ms, conversion_start,
-                                        conversion_ready),
+    mlvc::CheckAcl(aclrtEventElapsedTime(&event_elapsed_ms, conversion_start, conversion_ready),
                    "read conversion timeline before stream wait");
     mlvc::CheckAcl(aclrtStreamWaitEvent(wait_stream, conversion_ready),
                    "wait for conversion ready timeline event");
-    mlvc::CheckAcl(aclrtSynchronizeStream(wait_stream),
-                   "synchronize conversion wait stream");
+    mlvc::CheckAcl(aclrtSynchronizeStream(wait_stream), "synchronize conversion wait stream");
     mlvc::CheckAcl(aclrtDestroyStream(wait_stream), "destroy conversion wait stream");
-    mlvc::CheckAcl(aclrtDestroyEvent(conversion_ready),
-                   "destroy conversion ready timeline event");
-    mlvc::CheckAcl(aclrtDestroyEvent(conversion_start),
-                   "destroy conversion start timeline event");
+    mlvc::CheckAcl(aclrtDestroyEvent(conversion_ready), "destroy conversion ready timeline event");
+    mlvc::CheckAcl(aclrtDestroyEvent(conversion_start), "destroy conversion start timeline event");
     std::cout << "device_fp16_yuv444_to_nv12_1080p_avg_ms=" << average_ms << '\n';
     std::cout << "device_fp16_yuv444_to_nv12_event_ms=" << event_elapsed_ms << '\n';
     std::cout << "device FP16 YUV444-to-NV12 test passed\n";

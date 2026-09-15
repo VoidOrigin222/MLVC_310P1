@@ -1,9 +1,9 @@
 #ifndef MLVC_APPLICATION_INPUT_FRAME_INPUT_QUEUE_H_
 #define MLVC_APPLICATION_INPUT_FRAME_INPUT_QUEUE_H_
 
+#include <mlvc/application/input/frame_buffer_pool.h>
 #include <mlvc/codec/tensor_data.h>
 #include <mlvc/io/frame_source.h>
-#include <mlvc/application/input/frame_buffer_pool.h>
 
 #include <condition_variable>
 #include <cstddef>

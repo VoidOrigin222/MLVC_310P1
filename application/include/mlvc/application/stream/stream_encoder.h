@@ -1,8 +1,8 @@
 #ifndef MLVC_APPLICATION_STREAM_STREAM_ENCODER_H_
 #define MLVC_APPLICATION_STREAM_STREAM_ENCODER_H_
 
-#include <filesystem>
 #include <cstddef>
+#include <filesystem>
 #include <string>
 
 namespace mlvc::codec {
@@ -38,8 +38,11 @@ struct EncodeStreamOptions {
   int forced_ltr_recovery_frame = -1;
   int forced_ltr_reference_frame = -1;
   int device = 0;
-  std::string udp_host;
-  int udp_port = 0;
+  std::string output_transport_host;
+  std::string output_transport_mode = "udp";
+  int output_transport_port = 0;
+  uint64_t output_transport_pacing_rate_bps = 0;
+  std::size_t output_transport_max_burst_bytes = 4096;
   PipelineOptions pipeline;
 };
 

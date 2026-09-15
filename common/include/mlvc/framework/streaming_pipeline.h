@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <queue>
@@ -87,11 +88,9 @@ class BoundedQueue {
 
 class StreamingPipeline {
  public:
-  using Processor =
-      std::function<std::shared_ptr<DataObject>(const std::shared_ptr<DataObject>&)>;
+  using Processor = std::function<std::shared_ptr<DataObject>(const std::shared_ptr<DataObject>&)>;
 
-  explicit StreamingPipeline(std::size_t worker_count = 0,
-                             std::size_t queue_capacity = 8);
+  explicit StreamingPipeline(std::size_t worker_count = 0, std::size_t queue_capacity = 8);
   ~StreamingPipeline();
 
   StreamingPipeline(const StreamingPipeline&) = delete;
@@ -109,11 +108,17 @@ class StreamingPipeline {
   std::size_t error_count() const { return error_count_.load(); }
 
  private:
+  struct WorkItem {
+    std::size_t sequence = 0;
+    std::shared_ptr<DataObject> input;
+  };
+
   void ProcessingLoop();
+  void PublishReadyResults();
 
   const std::size_t worker_count_;
   const std::size_t queue_capacity_;
-  BoundedQueue<std::shared_ptr<DataObject>> input_queue_;
+  BoundedQueue<WorkItem> input_queue_;
   BoundedQueue<std::shared_ptr<DataObject>> output_queue_;
   Processor processor_;
   std::vector<std::thread> processing_threads_;
@@ -121,6 +126,10 @@ class StreamingPipeline {
   std::atomic<bool> running_{false};
   std::atomic<std::size_t> processed_count_{0};
   std::atomic<std::size_t> error_count_{0};
+  std::atomic<std::size_t> next_sequence_{0};
+  std::mutex reorder_mutex_;
+  std::map<std::size_t, std::shared_ptr<DataObject>> completed_results_;
+  std::size_t next_output_sequence_ = 0;
 };
 
 }  // namespace mlvc
