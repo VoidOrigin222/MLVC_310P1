@@ -64,6 +64,7 @@ UdpMlvcSender::UdpMlvcSender(const std::string& host, uint16_t port,
 UdpMlvcSender::~UdpMlvcSender() = default;
 
 void UdpMlvcSender::SendHeader(const MlvcBitstreamHeader& header) {
+  Check(!closed_, "MLVC UDP sender is closed");
   MlvcBitstreamHeader normalized = header;
   if (normalized.version == 0) normalized.version = 3;
   ValidateMlvcBitstreamHeader(normalized);
@@ -91,6 +92,7 @@ void UdpMlvcSender::SendHeader(const MlvcBitstreamHeader& header) {
 
 void UdpMlvcSender::SendFrame(int frame_index, mlvc::codec::MlvcFrameType frame_type, int q_index,
                               const std::vector<uint8_t>& payload) {
+  Check(!closed_, "MLVC UDP sender is closed");
   ValidateMlvcFrameMetadata(frame_index, frame_type, q_index, frame_index, frame_index == 0);
   Check(payload.size() <= MaxMlvcFramePayloadBytes(8192, 8192),
         "MLVC frame payload exceeds the maximum supported payload size");
@@ -107,8 +109,15 @@ void UdpMlvcSender::SendFrame(int frame_index, mlvc::codec::MlvcFrameType frame_
 }
 
 void UdpMlvcSender::SendEnd() {
+  Check(!closed_, "MLVC UDP sender is closed");
   sender_.Send(std::vector<uint8_t>{kEndMessage});
   sender_.Flush();
+}
+
+void UdpMlvcSender::Close() {
+  if (closed_) return;
+  sender_.Flush();
+  closed_ = true;
 }
 
 UdpMlvcReceiver::UdpMlvcReceiver(uint16_t port) : receiver_(port, "MLVC") {}
@@ -194,10 +203,13 @@ bool UdpMlvcReceiver::ReceiveFrame(int* frame_index, mlvc::codec::MlvcFrameType*
 }
 
 RtpMlvcSender::RtpMlvcSender(const std::string& host, uint16_t port, uint64_t pacing_rate_bps,
-                             std::size_t max_burst_bytes)
-    : sender_(host, port, 0x4d4c5643u, pacing_rate_bps, max_burst_bytes) {}
+                             std::size_t max_burst_bytes, std::size_t max_queue_bytes,
+                             uint64_t max_queue_delay_ms)
+    : sender_(host, port, 0x4d4c5643u, pacing_rate_bps, max_burst_bytes, max_queue_bytes,
+              max_queue_delay_ms) {}
 RtpMlvcSender::~RtpMlvcSender() = default;
 void RtpMlvcSender::SendHeader(const MlvcBitstreamHeader& header) {
+  Check(!closed_, "MLVC RTP sender is closed");
   MlvcBitstreamHeader normalized = header;
   if (normalized.version == 0) normalized.version = 3;
   ValidateMlvcBitstreamHeader(normalized);
@@ -224,6 +236,7 @@ void RtpMlvcSender::SendHeader(const MlvcBitstreamHeader& header) {
 }
 void RtpMlvcSender::SendFrame(int frame_index, mlvc::codec::MlvcFrameType frame_type, int q_index,
                               const std::vector<uint8_t>& payload) {
+  Check(!closed_, "MLVC RTP sender is closed");
   ValidateMlvcFrameMetadata(frame_index, frame_type, q_index, frame_index, frame_index == 0);
   Check(payload.size() <= MaxMlvcFramePayloadBytes(8192, 8192),
         "RTP MLVC frame payload exceeds the maximum supported payload size");
@@ -241,12 +254,19 @@ void RtpMlvcSender::SendFrame(int frame_index, mlvc::codec::MlvcFrameType frame_
                    static_cast<uint32_t>(frame_index * 3000), message);
 }
 void RtpMlvcSender::SendEnd() {
+  Check(!closed_, "MLVC RTP sender is closed");
   // EOS is a single small RTP unit.  Repeat it so a late or lost terminal
   // datagram cannot leave the receiver blocked after all frames were decoded.
   for (int attempt = 0; attempt < 3; ++attempt) {
     sender_.SendUnit(mlvc::transport::RtpUnitType::kEos, 0, 1, 0xffffffffu,
                      static_cast<uint32_t>(attempt), {kEndMessage});
   }
+}
+
+void RtpMlvcSender::Close() {
+  if (closed_) return;
+  sender_.Close();
+  closed_ = true;
 }
 
 RtpMlvcReceiver::RtpMlvcReceiver(uint16_t port) : receiver_(port, "MLVC RTP") {}

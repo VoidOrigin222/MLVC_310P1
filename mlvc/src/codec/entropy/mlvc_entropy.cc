@@ -62,6 +62,29 @@ bool ShouldSaveLtrFeatures(int cycle_index, int ltr_start_idx, int ltr_period) {
          ShouldUseLtrFeatures(cycle_index, ltr_start_idx, ltr_period);
 }
 
+void ValidateForcedLtrConfiguration(int gop, int ltr_start_idx, int ltr_period,
+                                    int recovery_frame, int reference_frame) {
+  Check(recovery_frame >= -1 && reference_frame >= -1,
+        "forced LTR frame indices must be -1 or non-negative");
+  const bool has_recovery = recovery_frame >= 0;
+  const bool has_reference = reference_frame >= 0;
+  Check(has_recovery == has_reference,
+        "forced LTR recovery and reference frames must be configured together");
+  if (!has_recovery) return;
+
+  Check(ltr_period > 0, "forced LTR requires a positive ltr_period");
+  Check(reference_frame < recovery_frame,
+        "forced LTR reference frame must precede the recovery frame");
+  if (gop > 0) {
+    Check(reference_frame / gop == recovery_frame / gop,
+          "forced LTR reference and recovery frames must be in the same GOP");
+    Check(recovery_frame % gop != 0, "forced LTR recovery frame cannot be an I-frame");
+  }
+  const int reference_cycle = gop > 0 ? reference_frame % gop : reference_frame;
+  Check(ShouldSaveLtrFeatures(reference_cycle, ltr_start_idx, ltr_period),
+        "forced LTR reference frame is not an LTR capture frame");
+}
+
 MlvcFrameType MlvcFrameTypeForFrame(int frame_index, int gop, int reset_interval, int ltr_start_idx,
                                     int ltr_period) {
   if (IsMlvcIFrame(frame_index, gop, reset_interval)) {

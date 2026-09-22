@@ -35,9 +35,11 @@ class UdpMlvcSender {
   void SendFrame(int frame_index, mlvc::codec::MlvcFrameType frame_type, int q_index,
                  const std::vector<uint8_t>& payload);
   void SendEnd();
+  void Close();
 
  private:
   mlvc::transport::UdpMessageSender sender_;
+  bool closed_ = false;
 };
 
 class UdpMlvcReceiver {
@@ -59,15 +61,19 @@ class UdpMlvcReceiver {
 class RtpMlvcSender {
  public:
   RtpMlvcSender(const std::string& host, uint16_t port, uint64_t pacing_rate_bps = 0,
-                std::size_t max_burst_bytes = 4096);
+                std::size_t max_burst_bytes = 4096,
+                std::size_t max_queue_bytes = 4u * 1024u * 1024u,
+                uint64_t max_queue_delay_ms = 1000);
   ~RtpMlvcSender();
   void SendHeader(const MlvcBitstreamHeader& header);
   void SendFrame(int frame_index, mlvc::codec::MlvcFrameType frame_type, int q_index,
                  const std::vector<uint8_t>& payload);
   void SendEnd();
+  void Close();
 
  private:
   mlvc::transport::RtpMlvcSender sender_;
+  bool closed_ = false;
 };
 
 class RtpMlvcReceiver {

@@ -1,5 +1,7 @@
 #include <cassert>
 #include <stdexcept>
+#include <chrono>
+#include <thread>
 
 #include "mlvc/transport/rtp_mlvc.h"
 using namespace mlvc::transport;
@@ -25,5 +27,12 @@ int main() {
   assert(threw);
   // Reusing the same unit id after completion starts a fresh unit.
   assert(!r.Push(a, &out));
+  RtpMlvcReassembler bounded(1024, 1, std::chrono::milliseconds(10));
+  assert(!bounded.Push(a, &out));
+  std::this_thread::sleep_for(std::chrono::milliseconds(15));
+  assert(!bounded.Push(b, &out));
+  auto rtcp = EncodeRtcpConfigRequest({7, 0x01020304});
+  const auto decoded = DecodeRtcpConfigRequest(rtcp);
+  assert(decoded.config_id == 7 && decoded.ssrc == 0x01020304);
   return 0;
 }

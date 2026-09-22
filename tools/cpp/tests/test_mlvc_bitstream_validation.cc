@@ -84,6 +84,43 @@ int main() {
                     reader.header().forced_ltr_reference_frame == 8,
                 "forced LTR metadata did not survive bitstream header roundtrip");
 
+    const auto header_only = mlvc::io::ResolveForcedLtrFrames(v4, -1, -1);
+    mlvc::Check(header_only.recovery_frame == 40 && header_only.reference_frame == 8,
+                "decoder did not use forced LTR metadata from the v4 header");
+    const auto matching = mlvc::io::ResolveForcedLtrFrames(v4, 40, 8);
+    mlvc::Check(matching.recovery_frame == 40 && matching.reference_frame == 8,
+                "matching decoder forced LTR configuration was not accepted");
+
+    ExpectReject(
+        [&] { mlvc::codec::ValidateForcedLtrConfiguration(96, 8, 16, 40, -1); },
+        "unpaired forced LTR configuration");
+    ExpectReject(
+        [&] { mlvc::codec::ValidateForcedLtrConfiguration(96, 8, 16, 40, 40); },
+        "LTR reference not before recovery");
+    ExpectReject(
+        [&] { mlvc::codec::ValidateForcedLtrConfiguration(96, 8, 16, 104, 8); },
+        "cross-GOP LTR reference");
+    ExpectReject(
+        [&] { mlvc::codec::ValidateForcedLtrConfiguration(96, 8, 16, 96, 8); },
+        "I-frame forced LTR recovery");
+    ExpectReject(
+        [&] { mlvc::codec::ValidateForcedLtrConfiguration(96, 8, 16, 40, 9); },
+        "reference frame that is not an LTR capture");
+    mlvc::codec::ValidateForcedLtrConfiguration(96, 8, 16, 40, 8);
+
+    ExpectReject(
+        [&] {
+          auto invalid = header;
+          invalid.forced_ltr_recovery_frame = 40;
+          invalid.forced_ltr_reference_frame = 8;
+          mlvc::io::ValidateMlvcBitstreamHeader(invalid);
+        },
+        "forced LTR metadata in a pre-v4 header");
+    ExpectReject([&] { mlvc::io::ResolveForcedLtrFrames(v4, 40, -1); },
+                 "unpaired decoder override");
+    ExpectReject([&] { mlvc::io::ResolveForcedLtrFrames(v4, 40, 16); },
+                 "decoder override conflicting with the header");
+
     const uint64_t payload_limit = mlvc::io::MaxMlvcFramePayloadBytes(header.width, header.height);
     mlvc::Check(payload_limit == 16ULL * 1024ULL * 1024ULL, "1080p payload limit is incorrect");
     mlvc::io::ValidateMlvcFrameMetadata(0, mlvc::codec::MlvcFrameType::kIFrame, 18, 0, true);

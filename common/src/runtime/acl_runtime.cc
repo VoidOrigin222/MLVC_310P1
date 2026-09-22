@@ -88,8 +88,8 @@ void CheckTensorCompatible(const TensorSpec& spec, const TensorView& view,
   Check(view.dtype() == spec.dtype, "ACL stage input/output dtype mismatch: " + stage_name + "." +
                                         spec.name + " expected " + DataTypeName(spec.dtype) +
                                         " got " + DataTypeName(view.dtype()));
-  Check(view.shape().NumElements() == TensorShape(spec.shape).NumElements(),
-        "ACL stage input/output element count mismatch: " + stage_name + "." + spec.name);
+  Check(view.shape().dims() == spec.shape,
+        "ACL stage input/output shape mismatch: " + stage_name + "." + spec.name);
 }
 
 void AppendEnvPath(const char* name, const std::filesystem::path& path) {
@@ -166,7 +166,13 @@ void ValidateAclTensorSpecs(const std::vector<TensorSpec>& specs, const std::str
 
 void CheckAcl(aclError status, const std::string& operation) {
   if (status != ACL_ERROR_NONE) {
-    throw Error(operation + " failed: ret=" + std::to_string(status));
+    const char* recent = aclGetRecentErrMsg();
+    std::string message = operation + " failed: ret=" + std::to_string(status);
+    if (recent != nullptr && recent[0] != '\0') {
+      message += ", detail=";
+      message += recent;
+    }
+    throw Error(message);
   }
 }
 
@@ -502,7 +508,14 @@ void AclStage::RunNamed(const NamedTensorView* inputs, std::size_t input_count,
 
 AclModelSet::AclModelSet(AclRuntime* runtime, ModelManifest manifest)
     : manifest_(std::move(manifest)) {
+  Check(runtime != nullptr, "ACL model set requires a runtime");
   ValidateAclManifestForAclRuntime(manifest_);
+  const char* actual_soc = aclrtGetSocName();
+  Check(actual_soc != nullptr && actual_soc[0] != '\0',
+        "ACL runtime could not determine the device SoC");
+  Check(manifest_.soc_version() == actual_soc,
+        "ACL manifest soc_version mismatch: manifest=" + manifest_.soc_version() +
+            ", device=" + actual_soc);
   for (ModelRecord& record : manifest_.models()) {
     const std::filesystem::path model_path =
         record.model.is_absolute() ? record.model : manifest_.directory() / record.model;

@@ -28,7 +28,15 @@ struct MlvcBitstreamHeader {
   int forced_ltr_reference_frame = -1;
 };
 
+struct ForcedLtrFrames {
+  int recovery_frame = -1;
+  int reference_frame = -1;
+};
+
 void ValidateMlvcBitstreamHeader(const MlvcBitstreamHeader& header);
+ForcedLtrFrames ResolveForcedLtrFrames(const MlvcBitstreamHeader& header,
+                                       int requested_recovery_frame,
+                                       int requested_reference_frame);
 uint64_t MaxMlvcFramePayloadBytes(int width, int height);
 void ValidateMlvcFrameMetadata(int frame_index, mlvc::codec::MlvcFrameType frame_type, int q_index,
                                int expected_frame_index, bool require_i_frame);

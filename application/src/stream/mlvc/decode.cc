@@ -285,20 +285,10 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
       bitstream_reader.emplace(options.input_bitstream_path);
       header = bitstream_reader->header();
     }
-    int forced_ltr_recovery_frame = options.forced_ltr_recovery_frame;
-    int forced_ltr_reference_frame = options.forced_ltr_reference_frame;
-    if (header.version >= 4) {
-      if (forced_ltr_recovery_frame >= 0 &&
-          forced_ltr_recovery_frame != header.forced_ltr_recovery_frame) {
-        throw mlvc::Error("decoder forced_ltr_recovery_frame does not match bitstream header");
-      }
-      if (forced_ltr_reference_frame >= 0 &&
-          forced_ltr_reference_frame != header.forced_ltr_reference_frame) {
-        throw mlvc::Error("decoder forced_ltr_reference_frame does not match bitstream header");
-      }
-      forced_ltr_recovery_frame = header.forced_ltr_recovery_frame;
-      forced_ltr_reference_frame = header.forced_ltr_reference_frame;
-    }
+    const io::ForcedLtrFrames forced_ltr = io::ResolveForcedLtrFrames(
+        header, options.forced_ltr_recovery_frame, options.forced_ltr_reference_frame);
+    const int forced_ltr_recovery_frame = forced_ltr.recovery_frame;
+    const int forced_ltr_reference_frame = forced_ltr.reference_frame;
     const bool write_output = options.output_format != "none";
     const std::string writer_format =
         options.output_format.empty() ? io::GuessDecodeOutputFormat(options.output_video_path, "")
@@ -535,6 +525,7 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
       rtsp_nv12_pipeline->Drain();
     }
     bitstream_pipeline.Stop();
+    bitstream_pipeline.RethrowIfFailed();
     if (raw_forwarder.has_value()) {
       raw_forwarder->Close();
     }

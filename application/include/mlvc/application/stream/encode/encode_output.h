@@ -9,6 +9,7 @@
 #include <mlvc/io/udp_frame_transport.h>
 
 #include <cstdint>
+#include <exception>
 #include <filesystem>
 #include <optional>
 
@@ -41,6 +42,7 @@ class EncodeOutput {
   std::optional<mlvc::io::RtpMlvcSender> rtp_sender_;
   MlvcRateController rate_controller_;
   uint64_t payload_bytes_ = 0;
+  bool closed_ = false;
 };
 
 }  // namespace mlvc::codec

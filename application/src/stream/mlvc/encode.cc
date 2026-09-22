@@ -162,6 +162,7 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
     frame_consumer.Join();
     frame_consumer.RethrowIfFailed();
     frame_pipeline.Stop();
+    frame_pipeline.RethrowIfFailed();
     while (!pending_entropy.empty()) {
       output.Flush(std::move(pending_entropy.front()));
       pending_entropy.pop_front();

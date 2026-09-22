@@ -3,14 +3,28 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
 
 namespace mlvc::transport {
+struct UdpTransportStats {
+  uint64_t wire_bytes = 0;
+  uint64_t packets = 0;
+  uint64_t max_burst_bytes = 0;
+  uint64_t max_queue_delay_us = 0;
+  uint64_t average_queue_delay_us = 0;
+  uint64_t socket_block_us = 0;
+};
+
 struct UdpSendOptions {
   uint64_t pacing_rate_bps = 0;
   std::size_t max_burst_bytes = 4096;
+  std::size_t max_queue_bytes = 4u * 1024u * 1024u;
+  uint64_t max_queue_delay_ms = 1000;
+  // Optional deterministic failure hook used by transport tests.
+  std::function<void()> before_send;
 };
 
 // VideoTrans-compatible fragmented UDP transport. The transport carries opaque
@@ -26,6 +40,7 @@ class UdpMessageSender {
 
   void Send(const std::vector<uint8_t>& message, uint8_t channel = 0);
   void Flush();
+  UdpTransportStats Stats() const;
 
  private:
   struct Impl;

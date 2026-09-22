@@ -37,6 +37,7 @@ void StreamingPipeline::Start() {
     std::lock_guard<std::mutex> lock(reorder_mutex_);
     completed_results_.clear();
     next_output_sequence_ = 0;
+    first_error_ = nullptr;
   }
   active_workers_ = worker_count_;
   running_ = true;
@@ -75,6 +76,11 @@ bool StreamingPipeline::GetOutput(std::shared_ptr<DataObject>* output) {
   return output_queue_.Pop(output);
 }
 
+void StreamingPipeline::RethrowIfFailed() const {
+  std::lock_guard<std::mutex> lock(reorder_mutex_);
+  if (first_error_) std::rethrow_exception(first_error_);
+}
+
 void StreamingPipeline::ProcessingLoop() {
   WorkItem work;
   while (input_queue_.Pop(&work)) {
@@ -83,6 +89,8 @@ void StreamingPipeline::ProcessingLoop() {
       output = processor_(work.input);
     } catch (...) {
       ++error_count_;
+      std::lock_guard<std::mutex> lock(reorder_mutex_);
+      if (!first_error_) first_error_ = std::current_exception();
     }
     {
       std::unique_lock<std::mutex> lock(reorder_mutex_);

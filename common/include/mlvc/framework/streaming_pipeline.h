@@ -5,6 +5,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
+#include <exception>
 #include <functional>
 #include <map>
 #include <memory>
@@ -106,6 +107,7 @@ class StreamingPipeline {
   bool running() const { return running_.load(); }
   std::size_t processed_count() const { return processed_count_.load(); }
   std::size_t error_count() const { return error_count_.load(); }
+  void RethrowIfFailed() const;
 
  private:
   struct WorkItem {
@@ -127,7 +129,8 @@ class StreamingPipeline {
   std::atomic<std::size_t> processed_count_{0};
   std::atomic<std::size_t> error_count_{0};
   std::atomic<std::size_t> next_sequence_{0};
-  std::mutex reorder_mutex_;
+  mutable std::mutex reorder_mutex_;
+  std::exception_ptr first_error_;
   std::map<std::size_t, std::shared_ptr<DataObject>> completed_results_;
   std::size_t next_output_sequence_ = 0;
 };

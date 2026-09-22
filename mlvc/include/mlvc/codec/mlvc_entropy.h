@@ -23,6 +23,8 @@ bool ShouldResetReferenceFeature(int frame_index, int gop, int reset_interval);
 int MlvcResetCycleIndex(int frame_index, int reset_interval);
 bool ShouldUseLtrFeatures(int cycle_index, int ltr_start_idx, int ltr_period);
 bool ShouldSaveLtrFeatures(int cycle_index, int ltr_start_idx, int ltr_period);
+void ValidateForcedLtrConfiguration(int gop, int ltr_start_idx, int ltr_period,
+                                    int recovery_frame, int reference_frame);
 MlvcFrameType MlvcFrameTypeForFrame(int frame_index, int gop, int reset_interval, int ltr_start_idx,
                                     int ltr_period);
 std::string_view MlvcFrameTypeName(MlvcFrameType frame_type);

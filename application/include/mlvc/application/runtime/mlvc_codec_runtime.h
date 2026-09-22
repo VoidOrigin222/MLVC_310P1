@@ -38,6 +38,8 @@ class MlvcCodecRuntime {
   int device() const { return runtime_.device_id(); }
 
  private:
+  static mlvc::ModelManifest LoadVerifiedManifest(
+      const std::filesystem::path& manifest_path);
   static std::filesystem::path ResolveSidecarPath(const mlvc::ModelManifest& manifest);
 
   // Declaration order is significant. Models use runtime_, sidecar uses the

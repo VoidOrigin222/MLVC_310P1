@@ -37,6 +37,11 @@ std::vector<uint8_t> Base(uint32_t count = 1) {
   Put<uint32_t>(&bytes, count);
   return bytes;
 }
+std::vector<uint8_t> Int32Bytes(std::initializer_list<int32_t> values) {
+  std::vector<uint8_t> bytes;
+  for (int32_t value : values) Put<int32_t>(&bytes, value);
+  return bytes;
+}
 template <typename F>
 void Reject(F&& f, const char* message) {
   bool rejected = false;
@@ -61,6 +66,18 @@ int main() {
     Write(valid, bytes);
     const auto loaded = mlvc::RuntimeSidecar::Load(valid);
     mlvc::Check(loaded.force_zero_thres() == value, "valid sidecar failed to load");
+
+    auto qp_bytes = Base(2);
+    PutArray(&qp_bytes, "q_shift", 2, {1}, 4, Int32Bytes({100}));
+    PutArray(&qp_bytes, "i_encoder_q_scale", 0, {8, 1}, 16,
+             std::vector<uint8_t>(16, 0));
+    const auto qp_path = root / "mlvc_sidecar_qp.bin";
+    Write(qp_path, qp_bytes);
+    const auto qp_sidecar = mlvc::RuntimeSidecar::Load(qp_path);
+    mlvc::Check(qp_sidecar.ShiftedQp(2, 0) == 7, "shifted QP was not clamped to sidecar rows");
+    mlvc::Check(qp_sidecar.ShiftedQp(-100, 0) == 0, "negative shifted QP was not clamped");
+    Reject([&] { (void)qp_sidecar.ShiftedQp(0, -1); },
+           "negative frame adaptation index accepted");
 
     auto trailing = bytes;
     trailing.push_back(0);

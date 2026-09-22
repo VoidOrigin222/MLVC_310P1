@@ -42,6 +42,29 @@ int main() {
                   "multi-worker pipeline output order mismatch at " + std::to_string(i) + ": got " +
                       std::to_string(values[static_cast<std::size_t>(i)]));
     }
+    mlvc::StreamingPipeline failing_pipeline(3, 4);
+    failing_pipeline.SetProcessor([](const std::shared_ptr<mlvc::DataObject>& input) {
+      const auto item = std::dynamic_pointer_cast<Item>(input);
+      mlvc::Check(item != nullptr, "unexpected failing pipeline item type");
+      mlvc::Check(item->value != 2, "expected worker failure");
+      return std::static_pointer_cast<mlvc::DataObject>(std::make_shared<Item>(item->value));
+    });
+    failing_pipeline.Start();
+    for (int i = 0; i < 4; ++i) {
+      mlvc::Check(failing_pipeline.AddInput(std::make_shared<Item>(i)),
+                  "failed to add failing pipeline item");
+    }
+    failing_pipeline.CloseInput();
+    while (failing_pipeline.GetOutput(&output)) {
+    }
+    failing_pipeline.Stop();
+    bool propagated = false;
+    try {
+      failing_pipeline.RethrowIfFailed();
+    } catch (const std::exception&) {
+      propagated = true;
+    }
+    mlvc::Check(propagated, "worker exception was not propagated");
     std::cout << "streaming pipeline order test passed\n";
     return 0;
   } catch (const std::exception& error) {

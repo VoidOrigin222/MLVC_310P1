@@ -1,5 +1,6 @@
 #include "mlvc/entropy/sidecar.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -216,6 +217,7 @@ int RuntimeSidecar::z_channel(const std::string& prefix) const {
 }
 
 int RuntimeSidecar::ShiftedQp(int base_qp, int frame_adaptation_index) const {
+  Check(frame_adaptation_index >= 0, "frame adaptation index must be non-negative");
   // q_shift is optional for backward compatibility with older sidecar files
   const auto it = arrays_.find("q_shift");
   if (it == arrays_.end()) {
@@ -227,7 +229,24 @@ int RuntimeSidecar::ShiftedQp(int base_qp, int frame_adaptation_index) const {
   Check(array.shape.size() == 1 && array.shape[0] > frame_adaptation_index,
         "frame adaptation index out of range");
   const auto values = array.AsInt32();
-  return base_qp + values[frame_adaptation_index];
+  const int64_t shifted = static_cast<int64_t>(base_qp) +
+                          static_cast<int64_t>(values[frame_adaptation_index]);
+  Check(shifted >= std::numeric_limits<int>::min() &&
+            shifted <= std::numeric_limits<int>::max(),
+        "shifted QP integer overflow");
+
+  // All runtime q-scale tables use the first dimension as the supported QP
+  // rows.  Clamp to the intersection of those tables so a shifted QP can
+  // never select a row that one of the codec stages cannot materialize.
+  int qp_rows = 64;
+  for (const auto& [name, candidate] : arrays_) {
+    if (name.find("_q_scale") == std::string::npos || candidate.shape.empty()) continue;
+    Check(candidate.shape[0] > 0 && candidate.shape[0] <= std::numeric_limits<int>::max(),
+          "invalid Q scale row count: " + name);
+    qp_rows = std::min(qp_rows, static_cast<int>(candidate.shape[0]));
+  }
+  Check(qp_rows > 0, "sidecar contains no usable Q scale rows");
+  return std::clamp(static_cast<int>(shifted), 0, qp_rows - 1);
 }
 
 const uint16_t* RuntimeSidecar::QScaleData(const std::string& name, int qp) const {

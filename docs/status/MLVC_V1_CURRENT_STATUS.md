@@ -10,6 +10,18 @@
 - **Issue #10锛氬凡瀹屾垚**銆俇DP token bucket pacing 宸叉帴鍏ュ彂閫侀摼璺紝骞跺畬鎴?720p/1080p 鍙屾満楠岃瘉銆?
 - **Issue #9锛氬凡瀹屾垚**銆俁TP receiver銆乻ender銆佸垎鐗囬噸缁勩€佸簭鍒楀彿涓撻」娴嬭瘯銆佺紪鐮佸櫒/瑙ｇ爜鍣ㄩ厤缃帴鍏ヤ互鍙?120/537 甯у弻鏈洪獙鏀跺潎宸插畬鎴愩€?
 
+## Upload Baseline (2026-09-22)
+
+The formal source baseline includes completed Issues #1 through #10. Issue #9
+also includes bounded RTP reassembly contexts, fragment timeout cleanup,
+random non-zero default SSRC, SCU session-config resend, and an MLVC RTCP
+configuration-request codec. The formal-device `rtp_reassembler` and
+`rtp_sender` tests pass on both Ascend 310P1 devices.
+
+The pure RTP codec path was measured with 537 frames: 1080p encode/decode at
+33.54/31.89 FPS and 720p encode/decode at 84.89/80.83 FPS. The RTP-to-RTSP
+1080p output path remains below 30 FPS and is tracked as Issue #11.
+
 ## 宸查獙璇佺粨鏋?
 
 - 妯″瀷鍔犺浇娴嬭瘯锛氶€氳繃銆?

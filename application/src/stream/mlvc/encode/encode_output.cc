@@ -22,11 +22,18 @@ EncodeOutput::EncodeOutput(const EncodeStreamOptions& options,
     if (options_.output_transport_mode == "rtp") {
       rtp_sender_.emplace(
           options_.output_transport_host, static_cast<uint16_t>(options_.output_transport_port),
-          options_.output_transport_pacing_rate_bps, options_.output_transport_max_burst_bytes);
+          options_.output_transport_pacing_rate_bps, options_.output_transport_max_burst_bytes,
+          options_.output_transport_max_queue_bytes,
+          options_.output_transport_max_queue_delay_ms);
       rtp_sender_->SendHeader(header);
     } else {
+      mlvc::transport::UdpSendOptions send_options;
+      send_options.pacing_rate_bps = options_.output_transport_pacing_rate_bps;
+      send_options.max_burst_bytes = options_.output_transport_max_burst_bytes;
+      send_options.max_queue_bytes = options_.output_transport_max_queue_bytes;
+      send_options.max_queue_delay_ms = options_.output_transport_max_queue_delay_ms;
       udp_sender_.emplace(options_.output_transport_host,
-                          static_cast<uint16_t>(options_.output_transport_port));
+                          static_cast<uint16_t>(options_.output_transport_port), send_options);
       udp_sender_->SendHeader(header);
     }
   } else {
@@ -34,7 +41,12 @@ EncodeOutput::EncodeOutput(const EncodeStreamOptions& options,
   }
 }
 
-EncodeOutput::~EncodeOutput() { Close(); }
+EncodeOutput::~EncodeOutput() {
+  try {
+    Close();
+  } catch (...) {
+  }
+}
 
 void EncodeOutput::Flush(PendingEncodedFrame pending) {
   std::vector<uint8_t> payload = pending.payload.get();
@@ -59,10 +71,25 @@ void EncodeOutput::Flush(PendingEncodedFrame pending) {
 }
 
 void EncodeOutput::Close() {
-  if (writer_.has_value()) writer_->Close();
+  if (closed_) return;
+  std::exception_ptr first_error;
+  const auto close_one = [&first_error](auto& resource) {
+    if (!resource.has_value()) return;
+    try {
+      resource->Close();
+    } catch (...) {
+      if (first_error == nullptr) first_error = std::current_exception();
+    }
+  };
+  close_one(writer_);
+  close_one(udp_sender_);
+  close_one(rtp_sender_);
+  closed_ = true;
+  if (first_error != nullptr) std::rethrow_exception(first_error);
 }
 
 void EncodeOutput::SendEnd() {
+  Check(!closed_, "encode output is closed");
   if (udp_sender_.has_value()) udp_sender_->SendEnd();
   if (rtp_sender_.has_value()) rtp_sender_->SendEnd();
 }

@@ -38,6 +38,7 @@ mlvc::io::MlvcBitstreamHeader BuildEncodeHeader(const EncodeStreamOptions& optio
   header.flags = 0;
   header.forced_ltr_recovery_frame = options.forced_ltr_recovery_frame;
   header.forced_ltr_reference_frame = options.forced_ltr_reference_frame;
+  mlvc::io::ValidateMlvcBitstreamHeader(header);
   return header;
 }
 

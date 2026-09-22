@@ -154,6 +154,9 @@ DecoderApplicationConfig LoadDecoderConfig(const std::filesystem::path& config_p
   Check(result.stream.drop_frame_index >= -1, "drop_frame_index must be non-negative or -1");
   result.stream.forced_ltr_reference_frame = GetInt(config, "forced_ltr_reference_frame", -1);
   result.stream.forced_ltr_recovery_frame = GetInt(config, "forced_ltr_recovery_frame", -1);
+  Check((result.stream.forced_ltr_recovery_frame >= 0) ==
+            (result.stream.forced_ltr_reference_frame >= 0),
+        "decoder forced LTR recovery and reference frames must be configured together");
   result.stream.profile_output_path = GetString(config, "profile_output");
   result.stream.input_transport_port = udp_port;
   result.stream.input_transport_mode = input_transport_mode;

@@ -27,6 +27,10 @@ EncodeFrameDecision EncodeState::BeginFrame(int frame_index, const EncodeStreamO
       (gop_cycle_index == options.ltr_start_idx ||
        (gop_cycle_index > options.ltr_start_idx && gop_cycle_index % options.ltr_period == 0));
   const bool forced_ltr_recovery = frame_index == options.forced_ltr_recovery_frame;
+  if (forced_ltr_recovery) {
+    Check(!is_i_frame, "forced LTR recovery frame cannot be an I-frame");
+    Check(has_ltr_feature_, "forced LTR recovery frame has no cached LTR feature");
+  }
   const bool use_ltr_recovery =
       !is_i_frame && has_ltr_feature_ && (forced_ltr_recovery || mark_as_ltr);
   return EncodeFrameDecision{

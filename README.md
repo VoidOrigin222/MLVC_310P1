@@ -45,3 +45,17 @@ ctest --test-dir build --output-on-failure
 ```
 
 The project uses Google C++ style through `.clang-format`.
+
+## Current Validation
+
+Issues #1 through #10 are implemented in this source tree. Issue #11 remains
+open because the 1080p RTP-to-RTSP output path is below the 30 FPS target.
+
+The pure RTP codec path was validated on Ascend 310P1 with 537 frames:
+
+- 1080p: 33.54 FPS encode, 31.89 FPS decode
+- 720p: 84.89 FPS encode, 80.83 FPS decode
+
+The repository intentionally excludes device build directories, generated
+outputs, local logs, and model binaries. Model assets must be supplied through
+the manifest and external deployment directory described in `P1_DEPLOYMENT.md`.

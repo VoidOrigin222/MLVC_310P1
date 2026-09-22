@@ -80,8 +80,13 @@ void ValidateMlvcBitstreamHeaderImpl(const MlvcBitstreamHeader& header) {
   Check(std::isfinite(header.target_bitrate_bps) && header.target_bitrate_bps >= 0.0,
         "MLVC bitstream target_bitrate_bps must be finite and non-negative, got " +
             std::to_string(header.target_bitrate_bps));
-  Check(header.forced_ltr_recovery_frame >= -1 && header.forced_ltr_reference_frame >= -1,
-        "MLVC forced LTR frame indices must be -1 or non-negative");
+  if (header.version > 0 && header.version < 4) {
+    Check(header.forced_ltr_recovery_frame == -1 && header.forced_ltr_reference_frame == -1,
+          "MLVC bitstream versions before 4 cannot carry forced LTR metadata");
+  }
+  mlvc::codec::ValidateForcedLtrConfiguration(
+      header.gop, header.ltr_start_idx, header.ltr_period, header.forced_ltr_recovery_frame,
+      header.forced_ltr_reference_frame);
 }
 
 void ValidateMlvcFrameMetadataImpl(int frame_index, mlvc::codec::MlvcFrameType frame_type,
@@ -111,6 +116,31 @@ uint64_t MaxMlvcFramePayloadBytes(int width, int height) {
 
 void ValidateMlvcBitstreamHeader(const MlvcBitstreamHeader& header) {
   ValidateMlvcBitstreamHeaderImpl(header);
+}
+
+ForcedLtrFrames ResolveForcedLtrFrames(const MlvcBitstreamHeader& header,
+                                       int requested_recovery_frame,
+                                       int requested_reference_frame) {
+  Check(requested_recovery_frame >= -1 && requested_reference_frame >= -1,
+        "decoder forced LTR frame indices must be -1 or non-negative");
+  Check((requested_recovery_frame >= 0) == (requested_reference_frame >= 0),
+        "decoder forced LTR recovery and reference frames must be configured together");
+
+  ForcedLtrFrames result{requested_recovery_frame, requested_reference_frame};
+  if (header.version >= 4) {
+    if (requested_recovery_frame >= 0) {
+      Check(requested_recovery_frame == header.forced_ltr_recovery_frame,
+            "decoder forced_ltr_recovery_frame does not match bitstream header");
+      Check(requested_reference_frame == header.forced_ltr_reference_frame,
+            "decoder forced_ltr_reference_frame does not match bitstream header");
+    }
+    result = ForcedLtrFrames{header.forced_ltr_recovery_frame,
+                             header.forced_ltr_reference_frame};
+  }
+  mlvc::codec::ValidateForcedLtrConfiguration(header.gop, header.ltr_start_idx,
+                                              header.ltr_period, result.recovery_frame,
+                                              result.reference_frame);
+  return result;
 }
 
 void ValidateMlvcFrameMetadata(int frame_index, mlvc::codec::MlvcFrameType frame_type, int q_index,

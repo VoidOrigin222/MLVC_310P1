@@ -1,6 +1,6 @@
 ﻿# MLVC Issue 台账
 
-更新时间：2026-09-14
+更新时间：2026-09-15
 
 | 编号 | 标题 | 状态 |
 |---|---|---|
@@ -36,3 +36,7 @@ Issue #11 的 ACL/NV12 子问题已完成。根因是两台设备未把实际 `m
 ACL 路径双机复测（2026-09-14）：1080P RTP→RTSP-UDP，120 帧编码/解码 32.01/22.83 FPS，537 帧 32.49/25.22 FPS，均完整解码且 0 丢帧。trace 确认 `acl_video.fp16_yuv444_to_nv12.device` 537 次、`copy.rtsp.nv12_d2h.device` 537 次，CPU NV12 回退事件为 0。ACL 算子子问题已关闭；Issue #11 整体仍因 1080P 低于 30 FPS 保持 `in_progress`。
 
 独立 conversion stream 复测：ACL NV12 转换从 decode stream 移出，并以 timeline event 建立依赖；537 帧解码 24.98 FPS、0 丢帧。相较 decode stream 版本 25.22 FPS 无显著提升，当前主要瓶颈为 ACL kernel 与 Decoder OM 的 NPU 资源争用。
+
+## DVPP H.264 VENC 评估（2026-09-15）
+
+两台 P1 已完成 ACL VENC 和低层 MPI 通道探测。ACL `aclvencCreateChannel` 返回 `507018`（AICPU exception），独立 `aclrtProcessReport` 线程不能改变结果；低层 MPI 探测返回 `HI_ERR_VENC_NO_MEM`。设备 `libdvpp_op_base.so` 的 `hi_mpi_venc_create_chn` 实际由 `dvpp::JpegeManager` 导出，当前 runtime 没有可用的 H.264 VENC manager。详细设计和证据见 [ISSUE_11_DVPP_VENC_DESIGN.md](ISSUE_11_DVPP_VENC_DESIGN.md)。Issue #11 继续保持 `in_progress`，现阶段保留 `libx264` 回退。

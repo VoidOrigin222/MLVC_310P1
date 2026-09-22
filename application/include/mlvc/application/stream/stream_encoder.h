@@ -43,6 +43,8 @@ struct EncodeStreamOptions {
   int output_transport_port = 0;
   uint64_t output_transport_pacing_rate_bps = 0;
   std::size_t output_transport_max_burst_bytes = 4096;
+  std::size_t output_transport_max_queue_bytes = 4u * 1024u * 1024u;
+  uint64_t output_transport_max_queue_delay_ms = 1000;
   PipelineOptions pipeline;
 };
 

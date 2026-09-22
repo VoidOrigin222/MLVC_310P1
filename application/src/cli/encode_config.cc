@@ -2,6 +2,7 @@
 #include <mlvc/application/stream/mlvc_stream.h>
 #include <mlvc/application/stream/stream_encoder.h>
 #include <mlvc/codec/execution_profile.h>
+#include <mlvc/codec/mlvc_entropy.h>
 #include <mlvc/io/video_io.h>
 #include <mlvc/runtime/model_manifest.h>
 #include <toml++/toml.h>
@@ -147,6 +148,9 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
   Check(options.min_qp <= options.max_qp, "min_qp must not exceed max_qp");
   options.forced_ltr_recovery_frame = GetInt(config, "forced_ltr_recovery_frame", -1);
   options.forced_ltr_reference_frame = GetInt(config, "forced_ltr_reference_frame", -1);
+  mlvc::codec::ValidateForcedLtrConfiguration(
+      options.gop, options.ltr_start_idx, options.ltr_period, options.forced_ltr_recovery_frame,
+      options.forced_ltr_reference_frame);
   Check(config["udp_host"].node() == nullptr && config["udp_port"].node() == nullptr,
         "udp_host and udp_port are no longer supported; use output_transport_host and "
         "output_transport_port");
@@ -157,10 +161,16 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
   options.output_transport_port = GetInt(config, "output_transport_port", 0);
   const int pacing_rate_bps = GetInt(config, "output_transport_pacing_rate_bps", 0);
   const int max_burst_bytes = GetInt(config, "output_transport_max_burst_bytes", 4096);
+  const int max_queue_bytes = GetInt(config, "output_transport_max_queue_bytes", 4 * 1024 * 1024);
+  const int max_queue_delay_ms = GetInt(config, "output_transport_max_queue_delay_ms", 1000);
   Check(pacing_rate_bps >= 0, "output_transport_pacing_rate_bps must be non-negative");
   Check(max_burst_bytes > 0, "output_transport_max_burst_bytes must be positive");
+  Check(max_queue_bytes > 0, "output_transport_max_queue_bytes must be positive");
+  Check(max_queue_delay_ms >= 0, "output_transport_max_queue_delay_ms must be non-negative");
   options.output_transport_pacing_rate_bps = static_cast<uint64_t>(pacing_rate_bps);
   options.output_transport_max_burst_bytes = static_cast<std::size_t>(max_burst_bytes);
+  options.output_transport_max_queue_bytes = static_cast<std::size_t>(max_queue_bytes);
+  options.output_transport_max_queue_delay_ms = static_cast<uint64_t>(max_queue_delay_ms);
   Check(options.output_transport_port >= 0 && options.output_transport_port <= 65535,
         "output_transport_port must be in [0, 65535]");
   Check(options.output_transport_port == 0 || !options.output_transport_host.empty(),

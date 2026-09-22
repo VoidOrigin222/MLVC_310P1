@@ -78,6 +78,10 @@ if(BUILD_TESTING)
   target_link_libraries(test_rtp_sender PRIVATE mlvc_common)
   target_include_directories(test_rtp_sender PRIVATE common/include)
   add_test(NAME rtp_sender COMMAND test_rtp_sender)
+  add_executable(test_udp_sender_flush_error tools/cpp/tests/test_udp_sender_flush_error.cc)
+  target_link_libraries(test_udp_sender_flush_error PRIVATE mlvc_common)
+  target_include_directories(test_udp_sender_flush_error PRIVATE common/include)
+  add_test(NAME udp_sender_flush_error COMMAND test_udp_sender_flush_error)
 endif()
 
 target_include_directories(mlvc_common
@@ -135,6 +139,8 @@ add_library(mlvc_codec
   mlvc/src/io/bitstream_io.cc
   mlvc/src/io/frame_source.cc
   mlvc/src/io/fp16_yuv444_to_nv12.cc
+  mlvc/src/io/dvpp_jpeg_encoder.cc
+  mlvc/src/io/dvpp_h264_encoder.cc
   mlvc/src/io/mlvc_bitstream.cc
   mlvc/src/io/udp_frame_transport.cc
   mlvc/src/io/video_io.cc
@@ -157,6 +163,8 @@ target_link_libraries(mlvc_codec PUBLIC
   acl_dvpp
   ${OpenCV_LIBS}
 )
+
+target_compile_definitions(mlvc_codec PRIVATE ENABLE_DVPP_INTERFACE)
 
 target_compile_options(mlvc_codec PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
@@ -227,6 +235,33 @@ if(MLVC_BUILD_APPS)
   add_executable(benchmark_acl_decoder tools/cpp/benchmarks/benchmark_acl_decoder.cc)
   target_link_libraries(benchmark_acl_decoder PRIVATE mlvc_codec)
   target_compile_options(benchmark_acl_decoder PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
+  )
+
+  add_executable(benchmark_dvpp_jpeg tools/cpp/benchmarks/benchmark_dvpp_jpeg.cc)
+  target_link_libraries(benchmark_dvpp_jpeg PRIVATE mlvc_codec)
+  target_compile_definitions(benchmark_dvpp_jpeg PRIVATE ENABLE_DVPP_INTERFACE)
+  target_compile_options(benchmark_dvpp_jpeg PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
+  )
+
+  add_executable(benchmark_dvpp_h264 tools/cpp/benchmarks/benchmark_dvpp_h264.cc)
+  target_link_libraries(benchmark_dvpp_h264 PRIVATE mlvc_codec)
+  target_compile_definitions(benchmark_dvpp_h264 PRIVATE ENABLE_DVPP_INTERFACE)
+  target_compile_options(benchmark_dvpp_h264 PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
+  )
+
+  add_executable(benchmark_dvpp_venc_minimal
+    tools/cpp/benchmarks/benchmark_dvpp_venc_minimal.cc
+  )
+  target_link_libraries(benchmark_dvpp_venc_minimal PRIVATE ascendcl acl_dvpp Threads::Threads)
+  target_compile_definitions(benchmark_dvpp_venc_minimal PRIVATE ENABLE_DVPP_INTERFACE)
+  target_include_directories(benchmark_dvpp_venc_minimal PRIVATE
+    "${ASCEND_CANN_PACKAGE_PATH}/include"
+  )
+  target_link_directories(benchmark_dvpp_venc_minimal PRIVATE "${ASCEND_CANN_LIB_DIR}")
+  target_compile_options(benchmark_dvpp_venc_minimal PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
   )
 
@@ -336,7 +371,7 @@ if(MLVC_BUILD_APPS)
     add_executable(test_reference_reset_schedule
       tools/cpp/tests/test_reference_reset_schedule.cc
     )
-    target_link_libraries(test_reference_reset_schedule PRIVATE mlvc_codec)
+    target_link_libraries(test_reference_reset_schedule PRIVATE mlvc_application)
     target_compile_options(test_reference_reset_schedule PRIVATE
       $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
     )
