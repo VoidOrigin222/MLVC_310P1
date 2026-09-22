@@ -1,20 +1,20 @@
 # MLVC 310P1
 
-MLVC deployment sources for Ascend 310P1. Encoder and decoder share one unified source tree and are built as two executables from the same CMake project.
+MLVC 是面向 Ascend 310P1 的编解码部署项目。编码器和解码器共用一套源码，通过同一个 CMake 工程构建为两个可执行文件。
 
-## Layout
+## 目录结构
 
 ```text
-common/       Shared runtime, transport, and framework code
-mlvc/         MLVC codec, entropy, I/O, and ACL runtime
-application/  Pipeline and command-line configuration code
-apps/         encode_main.cc and decode_main.cc
-configs/      Encoder and decoder TOML configurations
-custom_ops/   Ascend custom operators
-tools/        Tests, benchmarks, and utilities
+common/       公共运行时、传输层和流水线框架
+mlvc/         MLVC 编解码、熵编码、I/O 和 ACL 运行时
+application/  应用流水线和命令行配置
+apps/         encode_main.cc 和 decode_main.cc
+configs/      编码器和解码器 TOML 配置
+custom_ops/   Ascend 自定义算子
+tools/        测试、性能基准和辅助工具
 ```
 
-## Build
+## 构建
 
 ```bash
 source scripts/env.sh
@@ -22,40 +22,39 @@ source scripts/env.sh
 cmake --build build -j4
 ```
 
-The official rANS package and toml++ are external dependencies. By default CMake looks for `third_party/` and `mlvc-main/` beside this source directory. Override the location when needed:
+官方 rANS 包和 toml++ 属于外部依赖。默认情况下，CMake 会在源码目录旁查找 `third_party/` 和 `mlvc-main/`。也可以显式指定外部依赖根目录：
 
 ```bash
 cmake -S . -B build \
   -DMLVC_EXTERNAL_ROOT=/root/workplace/mlvc_20260903
 ```
 
-## Run
+## 运行
 
 ```bash
 ./build/mlvc_encode --config configs/encoder.toml
 ./build/mlvc_decode --config configs/decoder.toml
 ```
 
-The canonical configurations use RTP input/output and the no-output decode path. Change the transport fields in these two files when another mode is required.
+仓库中的标准配置使用 RTP 输入/输出和无输出解码模式。切换传输方式或设备时，请修改 `configs/encoder.toml` 和 `configs/decoder.toml` 中的传输、模型和输入参数。
 
-## Tests
+## 测试
 
 ```bash
 ctest --test-dir build --output-on-failure
 ```
 
-The project uses Google C++ style through `.clang-format`.
+项目使用 `.clang-format` 中的 Google C++ 代码格式规范。
 
-## Current Validation
+## 当前验证状态
 
-Issues #1 through #10 are implemented in this source tree. Issue #11 remains
-open because the 1080p RTP-to-RTSP output path is below the 30 FPS target.
+Issue #1 至 Issue #10 已在当前源码中完成。Issue #11 尚未完成，原因是 1080P RTP 到 RTSP 的输出全链路尚未稳定达到 30 FPS。
 
-The pure RTP codec path was validated on Ascend 310P1 with 537 frames:
+Ascend 310P1 上已完成 537 帧纯 RTP 编解码实测：
 
-- 1080p: 33.54 FPS encode, 31.89 FPS decode
-- 720p: 84.89 FPS encode, 80.83 FPS decode
+- 1080P：编码 33.54 FPS，解码 31.89 FPS；
+- 720P：编码 84.89 FPS，解码 80.83 FPS。
 
-The repository intentionally excludes device build directories, generated
-outputs, local logs, and model binaries. Model assets must be supplied through
-the manifest and external deployment directory described in `P1_DEPLOYMENT.md`.
+## 模型资产
+
+仓库不包含设备构建目录、生成文件、本地日志和模型二进制文件。模型资产应通过 manifest 和外部部署目录提供，具体部署方式见 [P1_DEPLOYMENT.md](P1_DEPLOYMENT.md)。
