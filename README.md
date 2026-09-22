@@ -22,12 +22,10 @@ source scripts/env.sh
 cmake --build build -j4
 ```
 
-官方 rANS 包和 toml++ 属于外部依赖。默认情况下，CMake 会在源码目录旁查找 `third_party/` 和 `mlvc-main/`。也可以显式指定外部依赖根目录：
-
-```bash
-cmake -S . -B build \
-  -DMLVC_EXTERNAL_ROOT=/root/workplace/mlvc_20260903
-```
+项目已将官方 rANS 实现和 toml++ 头文件集成在仓库的 `third_party/`
+目录中，CMake 会自动使用仓库内版本，不再依赖源码目录之外的
+`mlvc-main/` 或外部 `third_party/` 目录。OpenCV、Ascend CANN 和 DVPP
+属于设备系统依赖，仍需在 Ascend 设备环境中安装。
 
 ## 运行
 

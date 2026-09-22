@@ -9,11 +9,10 @@ source scripts/env.sh
 cmake --build build -j4
 ```
 
-If the source directory is placed at `/root/workplace/mlvc_20260903/mlvc_acl_cpp`, the default external dependency paths resolve automatically. Otherwise set the dependency root explicitly:
-
-```bash
-cmake -S . -B build -DMLVC_EXTERNAL_ROOT=/root/workplace/mlvc_20260903
-```
+The rANS implementation and toml++ headers are included under `third_party/`
+and are resolved from the repository automatically. OpenCV, Ascend CANN and
+DVPP remain device-system dependencies and must be installed on the target
+Ascend environment.
 
 ## Encoder
 

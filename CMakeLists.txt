@@ -13,19 +13,20 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(ASCEND_CANN_PACKAGE_PATH "/usr/local/Ascend/cann" CACHE PATH "CANN package path")
 set(ASCEND_CANN_LIB_DIR "${ASCEND_CANN_PACKAGE_PATH}/lib64")
 set(ASCEND_CANN_ARCH_LIB_DIR "${ASCEND_CANN_PACKAGE_PATH}/x86_64-linux/lib64")
-set(MLVC_EXTERNAL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." CACHE PATH
-    "Directory containing third_party and mlvc-main")
-set(TOMLPLUSPLUS_INCLUDE_DIR
-    "${MLVC_EXTERNAL_ROOT}/third_party/tomlplusplus/include"
-    CACHE PATH "toml++ include directory")
+set(MLVC_VENDOR_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party")
+set(TOMLPLUSPLUS_INCLUDE_DIR "${MLVC_VENDOR_ROOT}/tomlplusplus/include")
 
 include(CTest)
 find_package(OpenCV REQUIRED)
 find_package(Threads REQUIRED)
 
-set(MLVC_MSRTC_RANS_DIR
-    "${MLVC_EXTERNAL_ROOT}/mlvc-main/mlvc-main/packages/msrtc_rans"
-    CACHE PATH "Official MLVC rANS source directory")
+set(MLVC_MSRTC_RANS_DIR "${MLVC_VENDOR_ROOT}/msrtc_rans")
+if(NOT EXISTS "${TOMLPLUSPLUS_INCLUDE_DIR}/toml++/toml.h")
+  message(FATAL_ERROR "Missing vendored toml++ headers under ${TOMLPLUSPLUS_INCLUDE_DIR}")
+endif()
+if(NOT EXISTS "${MLVC_MSRTC_RANS_DIR}/src/EntropyCoder.cpp")
+  message(FATAL_ERROR "Missing vendored MLVC rANS source under ${MLVC_MSRTC_RANS_DIR}")
+endif()
 add_library(mlvc_msrtc_rans STATIC
   "${MLVC_MSRTC_RANS_DIR}/src/EntropyCoder.cpp"
 )
