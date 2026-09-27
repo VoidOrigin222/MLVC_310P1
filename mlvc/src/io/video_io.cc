@@ -94,7 +94,8 @@ std::string BuildFfmpegCommand(const std::filesystem::path& output_path, double 
 }
 
 std::string BuildRtspCommand(const std::string& url, double fps, int width, int height,
-                             const std::string& preset, int crf, const std::string& transport) {
+                             const std::string& preset, int crf, const std::string& transport,
+                             bool h264_copy) {
   Check(!url.empty(), "RTSP output URL must not be empty");
   Check(fps > 0.0 && std::isfinite(fps), "RTSP FPS must be finite and positive");
   Check(width > 0 && height > 0, "RTSP dimensions must be positive");
@@ -102,10 +103,15 @@ std::string BuildRtspCommand(const std::string& url, double fps, int width, int 
   Check(crf >= 0 && crf <= 51, "RTSP encoder CRF must be in [0, 51]");
   Check(transport == "tcp" || transport == "udp", "RTSP transport must be tcp or udp");
   std::ostringstream command;
-  command << "ffmpeg -hide_banner -loglevel error -f rawvideo -pix_fmt nv12"
-          << " -s " << width << "x" << height << " -r " << fps << " -i pipe:0"
-          << " -an -c:v libx264 -preset " << preset << " -tune zerolatency"
-          << " -crf " << crf << " -pix_fmt yuv420p -f rtsp -rtsp_transport " << transport << " "
+  command << "ffmpeg -hide_banner -loglevel error";
+  if (h264_copy) {
+    command << " -r " << fps << " -f h264 -i pipe:0 -an -c:v copy";
+  } else {
+    command << " -f rawvideo -pix_fmt nv12 -s " << width << "x" << height << " -r " << fps
+            << " -i pipe:0 -an -c:v libx264 -preset " << preset << " -tune zerolatency"
+            << " -crf " << crf << " -pix_fmt yuv420p";
+  }
+  command << " -f rtsp -rtsp_transport " << transport << " "
           << ShellQuote(std::filesystem::path(url));
   return command.str();
 }
@@ -244,10 +250,12 @@ void DecodedVideoWriter::Close() {
 
 RtspVideoPublisher::RtspVideoPublisher(const std::string& url, double fps, int width, int height,
                                        const std::string& preset, int crf,
-                                       std::size_t queue_capacity, const std::string& transport)
-    : width_(width), height_(height), queue_capacity_(queue_capacity) {
+                                       std::size_t queue_capacity, const std::string& transport,
+                                       bool h264_copy)
+    : width_(width), height_(height), queue_capacity_(queue_capacity), h264_copy_(h264_copy) {
   Check(queue_capacity_ > 0, "RTSP output queue capacity must be positive");
-  const std::string command = BuildRtspCommand(url, fps, width_, height_, preset, crf, transport);
+  const std::string command =
+      BuildRtspCommand(url, fps, width_, height_, preset, crf, transport, h264_copy_);
   pipe_ = popen(command.c_str(), "w");
   Check(pipe_ != nullptr, "failed to open FFmpeg RTSP publisher");
   worker_ = std::thread([this] {
@@ -262,15 +270,23 @@ RtspVideoPublisher::RtspVideoPublisher(const std::string& url, double fps, int w
           if (queue_.empty() && stopping_) break;
           queued = std::move(queue_.front());
           queue_.pop_front();
+          cv_.notify_all();
         }
-        if (queued.nv12.empty()) {
+        if (!queued.h264.empty()) {
+          const std::size_t bytes = queued.h264.size();
+          Check(fwrite(queued.h264.data(), 1, bytes, pipe_) == bytes,
+                "failed to write H.264 stream to FFmpeg RTSP publisher");
+        } else if (queued.nv12.empty()) {
           ConvertFp16Yuv444ToNv12(queued.tensor, layout, &reusable);
+          const std::size_t bytes = reusable.size();
+          Check(fwrite(reusable.data(), 1, bytes, pipe_) == bytes,
+                "failed to write decoded frame to FFmpeg RTSP publisher");
         } else {
           reusable = std::move(queued.nv12);
+          const std::size_t bytes = reusable.size();
+          Check(fwrite(reusable.data(), 1, bytes, pipe_) == bytes,
+                "failed to write decoded frame to FFmpeg RTSP publisher");
         }
-        const std::size_t bytes = reusable.size();
-        Check(fwrite(reusable.data(), 1, bytes, pipe_) == bytes,
-              "failed to write decoded frame to FFmpeg RTSP publisher");
         std::lock_guard<std::mutex> lock(mutex_);
         ++frame_count_;
       }
@@ -291,26 +307,42 @@ RtspVideoPublisher::~RtspVideoPublisher() {
 }
 
 void RtspVideoPublisher::WriteTensorFrame(const codec::TensorData& tensor) {
-  std::lock_guard<std::mutex> lock(mutex_);
+  std::unique_lock<std::mutex> lock(mutex_);
   Check(pipe_ != nullptr && !closed_, "RTSP publisher is closed");
   if (worker_error_ != nullptr) std::rethrow_exception(worker_error_);
-  if (queue_.size() >= queue_capacity_) {
-    ++dropped_frames_;
-    return;
-  }
-  queue_.push_back(QueuedFrame{codec::CloneTensor(tensor), {}});
+  cv_.wait(lock, [this] {
+    return stopping_ || closed_ || worker_error_ != nullptr || queue_.size() < queue_capacity_;
+  });
+  if (worker_error_ != nullptr) std::rethrow_exception(worker_error_);
+  Check(pipe_ != nullptr && !closed_ && !stopping_, "RTSP publisher is closed");
+  queue_.push_back(QueuedFrame{codec::CloneTensor(tensor), {}, {}});
   cv_.notify_one();
 }
 
 void RtspVideoPublisher::WriteNv12Frame(std::vector<uint8_t> frame) {
-  std::lock_guard<std::mutex> lock(mutex_);
+  Check(!frame.empty(), "RTSP NV12 frame must not be empty");
+  std::unique_lock<std::mutex> lock(mutex_);
   Check(pipe_ != nullptr && !closed_, "RTSP publisher is closed");
   if (worker_error_ != nullptr) std::rethrow_exception(worker_error_);
-  if (queue_.size() >= queue_capacity_) {
-    ++dropped_frames_;
-    return;
-  }
-  queue_.push_back(QueuedFrame{{}, std::move(frame)});
+  cv_.wait(lock, [this] {
+    return stopping_ || closed_ || worker_error_ != nullptr || queue_.size() < queue_capacity_;
+  });
+  if (worker_error_ != nullptr) std::rethrow_exception(worker_error_);
+  Check(pipe_ != nullptr && !closed_ && !stopping_, "RTSP publisher is closed");
+  queue_.push_back(QueuedFrame{{}, std::move(frame), {}});
+  cv_.notify_one();
+}
+
+void RtspVideoPublisher::WriteH264Frame(std::vector<uint8_t> frame) {
+  Check(h264_copy_, "H.264 bitstream can only be written to a copy-mode RTSP publisher");
+  Check(!frame.empty(), "H.264 output frame must not be empty");
+  std::unique_lock<std::mutex> lock(mutex_);
+  cv_.wait(lock, [this] {
+    return stopping_ || closed_ || worker_error_ != nullptr || queue_.size() < queue_capacity_;
+  });
+  if (worker_error_ != nullptr) std::rethrow_exception(worker_error_);
+  Check(pipe_ != nullptr && !closed_ && !stopping_, "RTSP publisher is closed");
+  queue_.push_back(QueuedFrame{{}, {}, std::move(frame)});
   cv_.notify_one();
 }
 

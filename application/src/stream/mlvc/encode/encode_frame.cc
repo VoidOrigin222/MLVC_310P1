@@ -5,6 +5,7 @@
 #include <mlvc/codec/tensor_utils.h>
 
 #include <algorithm>
+#include <cmath>
 
 #include "mlvc/core/status.h"
 
@@ -45,9 +46,10 @@ PendingEncodedFrame EncodeFrameProcessor::Process(const std::shared_ptr<mlvc::Da
   const int frame_adaptation_index = kIndexMap[(frame_index + 1) % 8];
   const int base_q_index =
       rate_controller_->SolveQIndex(static_cast<double>(frame_index) / fps_, decision.frame_type);
-  const int frame_q_index = std::min(
-      63, base_q_index +
-              (decision.frame_type == MlvcFrameType::kLtrRecovery ? options_.ltr_qp_shift : 0));
+  const int frame_q_index = std::clamp(
+      base_q_index +
+          (decision.frame_type == MlvcFrameType::kLtrRecovery ? options_.ltr_qp_shift : 0),
+      options_.min_qp, options_.max_qp);
   const int q_index_shifted = sidecar_->ShiftedQp(frame_q_index, frame_adaptation_index);
   TensorData q_index_shifted_tensor = MakeInt32ScalarTensor(q_index_shifted);
   const StageInput ref_feature_input =
@@ -85,8 +87,30 @@ PendingEncodedFrame EncodeFrameProcessor::Process(const std::shared_ptr<mlvc::Da
 
   state_->UpdateAfterEncode(frame_index, decision, encoder_output, profiler_);
   const MlvcFrameType frame_type = decision.frame_type;
+  mlvc::io::MlvcFrameMetadata metadata;
+  metadata.explicit_metadata = true;
+  metadata.model_q_index = q_index_shifted;
+  metadata.pts = static_cast<int64_t>(std::llround(
+      static_cast<long double>(frame_index) * 90000.0L / static_cast<long double>(fps_)));
+  metadata.unit_flags = mlvc::transport::kEfuCrcPresent;
+  if (decision.is_i_frame) {
+    metadata.unit_flags |= mlvc::transport::kEfuRandomAccess |
+                           mlvc::transport::kEfuResetReference;
+    metadata.short_ref_frame_id = mlvc::transport::kMlvcNoReference;
+    metadata.long_ref_frame_id = mlvc::transport::kMlvcNoReference;
+  } else if (frame_type == MlvcFrameType::kLtrRecovery) {
+    metadata.long_ref_frame_id = static_cast<uint32_t>(state_->current_ltr_reference_frame());
+    metadata.short_ref_frame_id = mlvc::transport::kMlvcNoReference;
+  } else {
+    metadata.short_ref_frame_id = decision.reset_reference
+                                      ? mlvc::transport::kMlvcNoReference
+                                      : static_cast<uint32_t>(frame_index - 1);
+  }
+  if (decision.reset_reference) metadata.unit_flags |= mlvc::transport::kEfuResetReference;
+  if (decision.mark_as_ltr) metadata.unit_flags |= mlvc::transport::kEfuStoreAsLtr;
   packet->Release();
-  return PendingEncodedFrame{frame_index, frame_type, frame_q_index, std::move(entropy_future)};
+  return PendingEncodedFrame{frame_index, frame_type, frame_q_index, metadata,
+                             std::move(entropy_future)};
 }
 
 }  // namespace mlvc::codec

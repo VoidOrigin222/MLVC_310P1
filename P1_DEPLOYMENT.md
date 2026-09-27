@@ -3,10 +3,8 @@
 Use one unified source directory on either device. The same build produces both `mlvc_encode` and `mlvc_decode`; select the executable and configuration appropriate for the device role.
 
 ```bash
-source /usr/local/Ascend/cann/set_env.sh
-source scripts/env.sh
-./scripts/configure.sh
-cmake --build build -j4
+bash scripts/bash_build.sh          # decoder
+bash scripts/bash_build_encode.sh  # encoder
 ```
 
 The rANS implementation and toml++ headers are included under `third_party/`
@@ -17,13 +15,13 @@ Ascend environment.
 ## Encoder
 
 ```bash
-./build/mlvc_encode --config configs/encoder.toml
+bash scripts/bash_run_encode.sh [configs/encoder.toml]
 ```
 
 ## Decoder
 
 ```bash
-./build/mlvc_decode --config configs/decoder.toml
+bash scripts/bash_run.sh [configs/decoder.toml]
 ```
 
-The configuration files contain deployment-specific model, input, output, address, and port values. Update those values for a different P1 pair.
+The configuration files are examples, not a ready-to-run device pair. Before running, update the input frame directory, model manifest, device addresses, ports, and output mode for the target setup. To load an isolated vectorized operator package in the decoder process, set `MLVC_VECTOR_OPAPI_LIB` explicitly. Set `MLVC_FFMPEG_BIN` when FFmpeg is not on the system `PATH`.

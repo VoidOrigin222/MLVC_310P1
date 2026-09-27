@@ -47,5 +47,22 @@ int main() {
     }
   }
   assert(flush_failed);
+
+  mlvc::transport::UdpSendOptions queue_limits;
+  queue_limits.pacing_rate_bps = 8000000;
+  queue_limits.max_burst_bytes = 2048;
+  queue_limits.max_queue_bytes = 4096;
+  queue_limits.max_queue_delay_ms = 1;
+  bool oversized_delay_rejected = false;
+  {
+    mlvc::transport::UdpMessageSender sender("127.0.0.1", 9, "queue delay limit test",
+                                             queue_limits);
+    try {
+      sender.Send(std::vector<uint8_t>(1100, 0x5a));
+    } catch (const std::exception&) {
+      oversized_delay_rejected = true;
+    }
+  }
+  assert(oversized_delay_rejected);
   return 0;
 }

@@ -56,6 +56,7 @@ struct BitstreamPacket final : public mlvc::DataObject {
   int frame_index = 0;
   mlvc::codec::MlvcFrameType frame_type = mlvc::codec::MlvcFrameType::kPFrame;
   int q_index = 0;
+  mlvc::io::MlvcFrameMetadata metadata;
   std::vector<uint8_t> payload;
 };
 
@@ -81,6 +82,11 @@ class CallbackDataConsumer final : public mlvc::DataConsumer {
   CallbackDataConsumer(mlvc::StreamingPipeline& pipeline, std::atomic<bool>& running,
                        ConsumeFunction consume_function)
       : DataConsumer(pipeline, running), consume_function_(std::move(consume_function)) {}
+
+  ~CallbackDataConsumer() override {
+    Stop();
+    Join();
+  }
 
  protected:
   void Consume() override;

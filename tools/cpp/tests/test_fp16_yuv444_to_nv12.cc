@@ -1,4 +1,5 @@
 #include <mlvc/codec/tensor_data.h>
+#include <mlvc/codec/tensor_utils.h>
 #include <mlvc/io/fp16_yuv444_to_nv12.h>
 
 #include <algorithm>
@@ -121,6 +122,21 @@ void TestOptimizedMatchesScalar() {
   ExpectBytes(optimized, scalar, "optimized versus scalar");
 }
 
+void TestInt8ToFp16Conversion() {
+  std::vector<int8_t> symbols(256);
+  for (int value = -128; value <= 127; ++value) {
+    symbols[static_cast<std::size_t>(value + 128)] = static_cast<int8_t>(value);
+  }
+  mlvc::codec::TensorData tensor;
+  mlvc::codec::FloatToFp16TensorFromInt8(symbols, mlvc::TensorShape({1, 1, 1, 256}), &tensor);
+  const auto* actual = reinterpret_cast<const uint16_t*>(tensor.bytes.data());
+  for (int value = -128; value <= 127; ++value) {
+    const uint16_t expected = static_cast<uint16_t>(
+        mlvc::codec::FloatToHalfBits(static_cast<float>(value)));
+    Expect(actual[value + 128] == expected, "exact int8 to fp16 conversion");
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -130,6 +146,7 @@ int main() {
     TestVisibleCropAndStridePadding();
     TestRejectsOddVisibleDimensions();
     TestOptimizedMatchesScalar();
+    TestInt8ToFp16Conversion();
     std::cout << "fp16_yuv444_to_nv12 tests passed\n";
     return EXIT_SUCCESS;
   } catch (const std::exception& error) {

@@ -1,6 +1,6 @@
 ﻿# Issue #11 RTSP 输出进度
 
-更新时间：2026-09-13
+更新时间：2026-09-26
 
 ## 实现
 
@@ -17,7 +17,7 @@ RTSP 发布默认使用 UDP 媒体传输（RTSP 控制连接仍使用 TCP 8554�
 
 ## 自动化验证
 
-在 `ascend-lab`（Ascend 310P1）和 `decode-310p1` 上执行：
+在两台 Ascend 310P1 设备上执行：
 
 ```text
 cmake -S . -B build -DMLVC_BUILD_APPS=ON -DBUILD_TESTING=ON
@@ -41,4 +41,24 @@ UDP 媒体传输复测（1080P / 120 帧）：编码 31.78 FPS，解码 24.52 FP
 
 当前瓶颈在 Decoder OM 的 CPU 镜像/D2H 拷贝、YUV 转换和软件 `libx264`；单纯拆分发布线程未能恢复 30 FPS。后续可评估设备驻留输出配合异步 D2H 或 DVPP VENC。
 
-Issue #11 状态：**in_progress**。1080P 当前约 24.52 FPS，尚未达到 30 FPS 验收目标。
+历史状态（2026-09-13）：**in_progress**。当时 1080P 约 24.52 FPS，尚未达到 30 FPS 验收目标；
+以下为后续 DVPP VENC 路径的最新验收结果。
+
+## DVPP VENC 全链路复测（2026-09-25）
+
+在解码端启用 DVPP H.264 VENC，并通过 RTP 完成编码板到解码板的全链路验证：
+
+- 编码端：537/537 帧，33.5355 FPS，`encode=ok`。
+- 解码端：537/537 帧，29.7511 FPS，`decode=ok`。
+- DVPP VENC/RTSP：发布 537 帧，1920×1080 H.264，30 tbr。
+- 解码端 `forward_dropped_frames=0`，`drop_frame_index=-1`。
+- 编码端和解码端 `bitstream_bytes=644207` 一致。
+
+RTSP 输出使用解码板已有的精简 FFmpeg runtime，并由 `output_transport_rtsp_encoder = "dvpp"`
+选择 DVPP 编码路径；FFmpeg 只负责将 H.264 Annex-B 码流发布到 MediaMTX，不再进行软件
+`libx264` 重编码。PC 客户端接入时机晚于发布起点，因此客户端统计帧数可以少于发布器计数，
+不能据此判定解码或 DVPP 丢帧。验收摘要见
+[`acceptance/issue11-venc-20260925/fullchain-537-39220-20260925/实测说明.md`](../../acceptance/issue11-venc-20260925/fullchain-537-39220-20260925/实测说明.md)；原始日志和配置仅保留在本地验收目录。
+
+Issue #11 的 RTSP 显示功能和 30 FPS 级别的 1080P 实测已完成；GitHub issue 仍保持开放，
+本轮未发布验收评论或关闭 issue。RTSP demo 不作为核心编解码路径的性能指标。

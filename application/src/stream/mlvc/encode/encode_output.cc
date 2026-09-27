@@ -24,7 +24,8 @@ EncodeOutput::EncodeOutput(const EncodeStreamOptions& options,
           options_.output_transport_host, static_cast<uint16_t>(options_.output_transport_port),
           options_.output_transport_pacing_rate_bps, options_.output_transport_max_burst_bytes,
           options_.output_transport_max_queue_bytes,
-          options_.output_transport_max_queue_delay_ms);
+          options_.output_transport_max_queue_delay_ms,
+          options_.output_transport_payload_type);
       rtp_sender_->SendHeader(header);
     } else {
       mlvc::transport::UdpSendOptions send_options;
@@ -53,7 +54,8 @@ void EncodeOutput::Flush(PendingEncodedFrame pending) {
   {
     mlvc::ScopedCpuTimer timer(profiler_, "bitstream.frame_write");
     if (writer_.has_value()) {
-      writer_->WriteFrame(pending.frame_index, pending.frame_type, pending.q_index, payload);
+      writer_->WriteFrame(pending.frame_index, pending.frame_type, pending.q_index,
+                          pending.metadata, payload);
     }
     if (udp_sender_.has_value()) {
       mlvc::ScopedCpuTimer udp_timer(profiler_, "udp.send_enqueue");
@@ -61,7 +63,8 @@ void EncodeOutput::Flush(PendingEncodedFrame pending) {
     }
     if (rtp_sender_.has_value()) {
       mlvc::ScopedCpuTimer rtp_timer(profiler_, "rtp.send");
-      rtp_sender_->SendFrame(pending.frame_index, pending.frame_type, pending.q_index, payload);
+      rtp_sender_->SendFrame(pending.frame_index, pending.frame_type, pending.q_index,
+                             pending.metadata, payload);
     }
   }
   payload_bytes_ += payload.size();

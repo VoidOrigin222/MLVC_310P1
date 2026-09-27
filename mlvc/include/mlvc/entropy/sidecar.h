@@ -27,18 +27,22 @@ struct SidecarArray {
 class RuntimeSidecar {
  public:
   static RuntimeSidecar Load(const std::filesystem::path& path);
+  static RuntimeSidecar LoadQpShiftMetadata(const std::filesystem::path& path);
 
   const SidecarArray& Get(const std::string& name) const;
   const std::map<std::string, SidecarArray>& arrays() const { return arrays_; }
   float force_zero_thres() const;
   float python_fast_force_zero_thres() const;
   int z_channel(const std::string& prefix) const;
+  int q_index_count() const;
   int ShiftedQp(int base_qp, int frame_adaptation_index) const;
   const uint16_t* QScaleData(const std::string& name, int qp) const;
   std::shared_ptr<CdfGroup> MakeCdfGroupForPrefix(const std::string& prefix, bool z_table) const;
 
  private:
   std::map<std::string, SidecarArray> arrays_;
+  std::vector<int32_t> metadata_qp_shift_;
+  int metadata_qp_index_count_ = 0;
 };
 
 }  // namespace mlvc

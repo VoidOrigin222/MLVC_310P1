@@ -10,10 +10,12 @@ ltr_period = 64
 ltr_qp_shift = 8
 execution_profile = "pipeline-v1"
 output_transport_mode = "rtp"
-output_transport_host = "10.195.177.115"
+output_transport_payload_type = 96
+# Documentation-only address; replace with the decoder's reachable IP.
+output_transport_host = "192.0.2.1"
 output_transport_port = 39191
 output_transport_pacing_rate_bps = 1000000
-output_transport_max_burst_bytes = 1200
+output_transport_max_burst_bytes = 1240
 
 [pipeline]
 stream_workers = 1

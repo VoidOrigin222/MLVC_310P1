@@ -17,10 +17,11 @@ tools/        测试、性能基准和辅助工具
 ## 构建
 
 ```bash
-source scripts/env.sh
-./scripts/configure.sh
-cmake --build build -j4
+bash scripts/bash_build.sh          # 构建解码端
+bash scripts/bash_build_encode.sh  # 构建编码端
 ```
+
+脚本默认使用 `/usr/local/Ascend/cann-9.1.0` 和 `/opt/opencv/lib64/cmake/opencv4`；可分别通过 `MLVC_CANN_HOME`、`OpenCV_DIR`、`MLVC_BUILD_DIR` 和 `BUILD_JOBS` 覆盖。构建需要目标机已安装 CANN、OpenCV 和 DVPP。
 
 项目已将官方 rANS 实现和 toml++ 头文件集成在仓库的 `third_party/`
 目录中，CMake 会自动使用仓库内版本，不再依赖源码目录之外的
@@ -30,11 +31,11 @@ cmake --build build -j4
 ## 运行
 
 ```bash
-./build/mlvc_encode --config configs/encoder.toml
-./build/mlvc_decode --config configs/decoder.toml
+bash scripts/bash_run_encode.sh [configs/encoder.toml]
+bash scripts/bash_run.sh [configs/decoder.toml]
 ```
 
-仓库中的标准配置使用 RTP 输入/输出和无输出解码模式。切换传输方式或设备时，请修改 `configs/encoder.toml` 和 `configs/decoder.toml` 中的传输、模型和输入参数。
+运行脚本会加载 CANN 环境。仓库中的配置是示例；运行前请修改输入帧目录、模型 manifest、设备地址、端口和输出方式。若要使用隔离安装的向量化算子包，可显式设置 `MLVC_VECTOR_OPAPI_LIB=/path/to/libcust_opapi.so`；需要非系统默认 FFmpeg 时，设置 `MLVC_FFMPEG_BIN=/path/to/ffmpeg/bin`。脚本不会自动继承这些变量或依赖板端特定目录。
 
 ## 测试
 
@@ -44,14 +45,9 @@ ctest --test-dir build --output-on-failure
 
 项目使用 `.clang-format` 中的 Google C++ 代码格式规范。
 
-## 当前验证状态
+## 项目状态
 
-Issue #1 至 Issue #10 已在当前源码中完成。Issue #11 尚未完成，原因是 1080P RTP 到 RTSP 的输出全链路尚未稳定达到 30 FPS。
-
-Ascend 310P1 上已完成 537 帧纯 RTP 编解码实测：
-
-- 1080P：编码 33.54 FPS，解码 31.89 FPS；
-- 720P：编码 84.89 FPS，解码 80.83 FPS。
+各 issue 的 GitHub 状态、代码审查结论和设备验证记录见 [`docs/status/ISSUE_TRACKER.md`](docs/status/ISSUE_TRACKER.md)。设备实测数据见 [`docs/status/`](docs/status/) 下的记录。Issue 在 GitHub 上的开闭状态以 GitHub 页面为准。
 
 ## 模型资产
 

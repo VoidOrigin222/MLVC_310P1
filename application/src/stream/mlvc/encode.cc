@@ -47,6 +47,10 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
     mlvc::StageRuntime& runtime = codec_runtime->runtime();
     mlvc::StageModelSet& models = codec_runtime->models();
     const mlvc::RuntimeSidecar& sidecar = codec_runtime->sidecar();
+    const int sidecar_q_index_count = sidecar.q_index_count();
+    mlvc::io::ValidateMlvcQIndexForSidecar(options.qp, sidecar_q_index_count);
+    mlvc::io::ValidateMlvcQIndexForSidecar(options.min_qp, sidecar_q_index_count);
+    mlvc::io::ValidateMlvcQIndexForSidecar(options.max_qp, sidecar_q_index_count);
     Check(HasMlvcModels(models.manifest()), "manifest does not contain MLVCEncoder / MLVCDecoder");
     const mlvc::ModelRecord& encoder_record = models.manifest().GetModel("MLVCEncoder");
     ConfigureRuntimeState(&codec_runtime->stage_output_workspace(), runtime,
@@ -85,7 +89,19 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
     g_codec_graph_executor = &graph_executor;
     g_codec_graph_executor->RecordTemplate(&profiler);
 
-    const mlvc::io::MlvcBitstreamHeader header = BuildEncodeHeader(options, source_geometry, fps);
+    mlvc::io::MlvcBitstreamHeader header = BuildEncodeHeader(options, source_geometry, fps);
+    header.codec_bundle_sha256 = mlvc::ComputeModelBundleSha256(models.manifest());
+    const mlvc::ModelRecord& decoder_record = models.manifest().GetModel("MLVCDecoder");
+    const auto decoder_output = std::find_if(
+        decoder_record.outputs.begin(), decoder_record.outputs.end(),
+        [](const mlvc::TensorSpec& spec) { return spec.name == "x_hat"; });
+    Check(decoder_output != decoder_record.outputs.end() && decoder_output->shape.size() == 4 &&
+              decoder_output->shape[0] == 1 && decoder_output->shape[1] == 3 &&
+              decoder_output->shape[2] > 0 && decoder_output->shape[3] > 0,
+          "MLVCDecoder x_hat output shape is missing or invalid");
+    header.coded_height = static_cast<int>(decoder_output->shape[2]);
+    header.coded_width = static_cast<int>(decoder_output->shape[3]);
+    mlvc::io::ValidateMlvcBitstreamHeader(header);
     MlvcRateControlOptions rate_options;
     rate_options.width = source_geometry.width;
     rate_options.height = source_geometry.height;

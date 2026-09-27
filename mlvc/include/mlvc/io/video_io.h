@@ -76,13 +76,15 @@ class RtspVideoPublisher {
  public:
   RtspVideoPublisher(const std::string& url, double fps, int width, int height,
                      const std::string& preset = "ultrafast", int crf = 0,
-                     std::size_t queue_capacity = 3, const std::string& transport = "udp");
+                     std::size_t queue_capacity = 3, const std::string& transport = "udp",
+                     bool h264_copy = false);
   RtspVideoPublisher(const RtspVideoPublisher&) = delete;
   RtspVideoPublisher& operator=(const RtspVideoPublisher&) = delete;
   ~RtspVideoPublisher();
 
   void WriteTensorFrame(const codec::TensorData& tensor);
   void WriteNv12Frame(std::vector<uint8_t> frame);
+  void WriteH264Frame(std::vector<uint8_t> frame);
   void Close();
   int frame_count() const { return frame_count_; }
   uint64_t dropped_frames() const { return dropped_frames_; }
@@ -94,9 +96,11 @@ class RtspVideoPublisher {
   int frame_count_ = 0;
   uint64_t dropped_frames_ = 0;
   std::size_t queue_capacity_ = 3;
+  bool h264_copy_ = false;
   struct QueuedFrame {
     codec::TensorData tensor;
     std::vector<uint8_t> nv12;
+    std::vector<uint8_t> h264;
   };
   std::deque<QueuedFrame> queue_;
   mutable std::mutex mutex_;

@@ -11,6 +11,7 @@
 #include <iterator>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #if defined(_WIN32)
 int main() {
@@ -63,6 +64,26 @@ int main() {
                                     std::istreambuf_iterator<char>());
     Expect(argument_text.find("-rtsp_transport\nudp\n") != std::string::npos,
            "RTSP publisher did not select UDP transport");
+
+    const std::filesystem::path h264_output = root / "stream.h264";
+    setenv("MLVC_RTSP_TEST_OUTPUT", h264_output.c_str(), 1);
+    mlvc::io::RtspVideoPublisher h264_publisher("rtsp://127.0.0.1:8554/mlvc", 30.0, 2, 2,
+                                                "ultrafast", 0, 2, "udp", true);
+    const std::vector<std::uint8_t> h264_frame{0, 0, 0, 1, 0x67, 0x42, 0, 0x0a,
+                                                0, 0, 0, 1, 0x68, 0xce, 0x31, 0xb2};
+    h264_publisher.WriteH264Frame(h264_frame);
+    h264_publisher.Close();
+    Expect(h264_publisher.frame_count() == 1, "RTSP H.264 publisher frame count mismatch");
+    Expect(h264_publisher.dropped_frames() == 0, "unexpected RTSP H.264 publisher drop");
+    Expect(std::filesystem::file_size(h264_output) == h264_frame.size(),
+           "RTSP H.264 publisher output size mismatch");
+    std::ifstream h264_argument_file(arguments);
+    const std::string h264_argument_text((std::istreambuf_iterator<char>(h264_argument_file)),
+                                         std::istreambuf_iterator<char>());
+    Expect(h264_argument_text.find("-f\nh264\n") != std::string::npos,
+           "RTSP H.264 publisher did not select H.264 input");
+    Expect(h264_argument_text.find("-c:v\ncopy\n") != std::string::npos,
+           "RTSP H.264 publisher did not copy the encoded stream");
     std::cout << "rtsp video publisher test passed\n";
     return 0;
   } catch (const std::exception& error) {

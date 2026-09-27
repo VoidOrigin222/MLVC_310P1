@@ -12,10 +12,7 @@ int main(int argc, char** argv) {
     mlvc::PrepareAscendRuntimeEnvironment(argv);
     const std::filesystem::path config_path = mlvc::ParseConfigPath(argc, argv);
     const mlvc::DecoderApplicationConfig config = mlvc::LoadDecoderConfig(config_path);
-    const bool use_device_resident_outputs =
-        config.stream.output_format == "none" && config.stream.output_transport_port == 0 &&
-        (config.stream.output_transport_mode == "none" ||
-         config.stream.output_transport_mode == "rtsp");
+    const bool use_device_resident_outputs = config.stream.output_format == "none";
     const auto output_binding_mode =
         use_device_resident_outputs
             ? mlvc::codec::StageOutputBindingMode::kAclDeviceWithCpuMirror

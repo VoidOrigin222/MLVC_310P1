@@ -32,3 +32,15 @@ configs/archive/
 configs/quality/
 *.before-*.bak
 .vscode/
+
+# Local-only acceptance data. Keep concise human-readable reports, but do not
+# publish raw logs, traces, profiler databases, packet captures, or run configs.
+/acceptance/**
+!/acceptance/
+!/acceptance/**/
+!/acceptance/**/*.md
+
+# Local snapshots and one-off hardware orchestration scripts.
+/work/
+/tools/run_fullchain_20260925.py
+/tools/run_fullchain_venc_npu_20260926.py

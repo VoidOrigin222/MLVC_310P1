@@ -33,10 +33,12 @@ EncodeFrameDecision EncodeState::BeginFrame(int frame_index, const EncodeStreamO
   }
   const bool use_ltr_recovery =
       !is_i_frame && has_ltr_feature_ && (forced_ltr_recovery || mark_as_ltr);
+  current_ltr_reference_frame_ = -1;
   return EncodeFrameDecision{
       is_i_frame ? MlvcFrameType::kIFrame
                  : (use_ltr_recovery ? MlvcFrameType::kLtrRecovery : MlvcFrameType::kPFrame),
-      is_i_frame, mark_as_ltr};
+      is_i_frame, mark_as_ltr,
+      ShouldResetReferenceFeature(frame_index, options.gop, options.reset_interval), -1};
 }
 
 void EncodeState::PrepareLtrRecovery(int frame_index, const EncodeStreamOptions& options,
@@ -51,6 +53,7 @@ void EncodeState::PrepareLtrRecovery(int frame_index, const EncodeStreamOptions&
         "requested LTR reference frame is not cached: " + std::to_string(reference_frame));
   reference_.feature = CloneTensor(ltr_it->second);
   reference_.feature_handle.reset();
+  current_ltr_reference_frame_ = reference_frame;
 }
 
 void EncodeState::UpdateAfterEncode(int frame_index, const EncodeFrameDecision& decision,

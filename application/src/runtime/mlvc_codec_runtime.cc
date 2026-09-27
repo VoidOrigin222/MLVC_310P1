@@ -124,11 +124,6 @@ std::string Sha256File(const std::filesystem::path& path, uint64_t expected_byte
   return digest.str();
 }
 
-std::filesystem::path ResolveManifestPath(const mlvc::ModelManifest& manifest,
-                                          const std::filesystem::path& file) {
-  return file.is_absolute() ? file : manifest.directory() / file;
-}
-
 void VerifyFile(const std::filesystem::path& path, uint64_t expected_bytes,
                 const std::string& expected_sha256, const std::string& label) {
   std::error_code error;
@@ -145,10 +140,15 @@ void VerifyFile(const std::filesystem::path& path, uint64_t expected_bytes,
 
 void VerifyManifestFiles(const mlvc::ModelManifest& manifest) {
   const auto& sidecar = manifest.sidecar();
-  VerifyFile(ResolveManifestPath(manifest, sidecar.file), sidecar.bytes, sidecar.sha256,
-             "sidecar");
+  const std::filesystem::path sidecar_path = sidecar.file.is_absolute()
+                                                ? sidecar.file
+                                                : manifest.directory() / sidecar.file;
+  VerifyFile(sidecar_path, sidecar.bytes, sidecar.sha256, "sidecar");
   for (const auto& model : manifest.models()) {
-    VerifyFile(ResolveManifestPath(manifest, model.model), model.bytes, model.sha256,
+    const std::filesystem::path model_path = model.model.is_absolute()
+                                                 ? model.model
+                                                 : manifest.directory() / model.model;
+    VerifyFile(model_path, model.bytes, model.sha256,
                "model " + model.name);
   }
 }
@@ -162,22 +162,12 @@ mlvc::ModelManifest MlvcCodecRuntime::LoadVerifiedManifest(
   return manifest;
 }
 
-std::filesystem::path MlvcCodecRuntime::ResolveSidecarPath(const mlvc::ModelManifest& manifest) {
-  mlvc::Check(!manifest.sidecar().file.empty(),
-              "model manifest does not specify a runtime sidecar");
-  const std::filesystem::path sidecar_path = manifest.sidecar().file.is_absolute()
-                                                 ? manifest.sidecar().file
-                                                 : manifest.directory() / manifest.sidecar().file;
-  mlvc::Check(std::filesystem::exists(sidecar_path),
-              "runtime sidecar does not exist: " + sidecar_path.string());
-  return sidecar_path;
-}
-
 MlvcCodecRuntime::MlvcCodecRuntime(const std::filesystem::path& manifest_path, int device,
                                    mlvc::codec::StageOutputBindingMode binding_mode)
     : runtime_(device),
       models_(&runtime_, LoadVerifiedManifest(manifest_path)),
-      sidecar_(mlvc::RuntimeSidecar::Load(ResolveSidecarPath(models_.manifest()))),
+      sidecar_(mlvc::RuntimeSidecar::LoadQpShiftMetadata(
+          models_.manifest().directory() / "metadata.json")),
       workspace_(&models_, binding_mode) {}
 
 }  // namespace mlvc::app

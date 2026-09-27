@@ -4,6 +4,7 @@
 #include "msrtc_rans/EntropyCoder.h"
 #include "msrtc_rans/rans.h"
 #include <algorithm>
+#include <cstdint>
 #include <vector>
 
 #if defined(__clang__) || defined(__GNUC__)
@@ -695,6 +696,12 @@ private:
     std::vector<DistributionDesc> m_distributionDescs;
     // Concatenated CDF table
     std::vector<freq_t> m_cdfTable;
+    // A coarse frequency-to-symbol index avoids a variable-length upper_bound
+    // search for every decoded sample.  The short correction loop below keeps
+    // the lookup exact at bucket boundaries.
+    static constexpr unsigned kLookupBucketBits = 8;
+    static constexpr unsigned kLookupBucketCount = 1U << kLookupBucketBits;
+    std::vector<uint16_t> m_symbolLookup;
 
     std::error_code decode(RansDecoder& decoder, const span<int32_t>& values, const span<const int32_t>& indices) const;
     bool decodeBypassValue(RansDecoder& decoder, freq_t& bypassValue) const;
@@ -744,6 +751,18 @@ std::error_code EntropyDecoderImpl<StateType, UnitType>::Initialize(const span<c
 
     m_distributionDescs = std::move(distributionDescs);
     m_cdfTable = std::move(cdfTable);
+    m_symbolLookup.resize(m_distributionDescs.size() * kLookupBucketCount);
+    for (std::size_t index = 0; index < m_distributionDescs.size(); ++index) {
+        const auto& desc = m_distributionDescs[index];
+        const auto* basePtr = m_cdfTable.data() + desc.m_SymbolOffset;
+        auto* lookup = m_symbolLookup.data() + index * kLookupBucketCount;
+        for (unsigned bucket = 0; bucket < kLookupBucketCount; ++bucket) {
+            const freq_t lower = static_cast<freq_t>(bucket << kLookupBucketBits);
+            const auto* startPtr = std::upper_bound(
+                basePtr + 1, basePtr + desc.m_BypassSentinel + 1, lower) - 1;
+            lookup[bucket] = static_cast<uint16_t>(startPtr - basePtr);
+        }
+    }
     m_symbolBits = static_cast<freq_t>(symbolBits);
     m_bypassBits = static_cast<freq_t>(bypassBits);
     m_bypassMaxValue = static_cast<freq_t>((1U << bypassBits) - 1);
@@ -819,12 +838,18 @@ std::error_code EntropyDecoderImpl<StateType, UnitType>::decode(RansDecoder& dec
         assert(cumFreq < static_cast<size_t>(1) << m_symbolBits);
 
         const auto* basePtr = m_cdfTable.data() + distributionDesc.m_SymbolOffset;
-        const auto* startPtr = std::upper_bound(basePtr + 1, basePtr + distributionDesc.m_BypassSentinel + 1, cumFreq) - 1;
+        const auto* lookup = m_symbolLookup.data() +
+                             static_cast<std::size_t>(index) * kLookupBucketCount;
+        auto symbol = static_cast<int32_t>(lookup[cumFreq >> kLookupBucketBits]);
+        while (symbol < distributionDesc.m_BypassSentinel &&
+               basePtr[symbol + 1] <= cumFreq) {
+            ++symbol;
+        }
+        const auto* startPtr = basePtr + symbol;
         if (!decoder.Advance(startPtr[0], startPtr[1] - startPtr[0], m_symbolBits)) {
             return make_error_code(error::invalid_stream);
         }
 
-        auto symbol = static_cast<int32_t>(startPtr - basePtr);
         if (symbol == distributionDesc.m_BypassSentinel) {
             freq_t bypassValue;
             if (!decodeBypassValue(decoder, bypassValue)) {

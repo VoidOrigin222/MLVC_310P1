@@ -1,10 +1,13 @@
 #include "mlvc/entropy/sidecar.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <limits>
+#include <string>
 
 #include "mlvc/core/status.h"
 
@@ -46,6 +49,84 @@ T ReadPod(std::istream& input) {
 bool MultiplyWouldOverflow(uint64_t a, uint64_t b) {
   if (a == 0 || b == 0) return false;
   return a > std::numeric_limits<uint64_t>::max() / b;
+}
+
+std::string ReadText(const std::filesystem::path& path) {
+  std::ifstream input(path);
+  Check(input.good(), "failed to open model metadata: " + path.string());
+  return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+}
+
+std::size_t FindJsonValue(const std::string& json, const std::string& key) {
+  const std::string quoted_key = "\"" + key + "\"";
+  const std::size_t key_pos = json.find(quoted_key);
+  Check(key_pos != std::string::npos, "model metadata is missing key: " + key);
+  const std::size_t colon = json.find(':', key_pos + quoted_key.size());
+  Check(colon != std::string::npos, "model metadata key has no value: " + key);
+  return colon + 1;
+}
+
+void SkipJsonWhitespace(const std::string& json, std::size_t* pos) {
+  while (*pos < json.size() && std::isspace(static_cast<unsigned char>(json[*pos]))) {
+    ++*pos;
+  }
+}
+
+int32_t ReadJsonInt(const std::string& json, std::size_t* pos, const std::string& key) {
+  SkipJsonWhitespace(json, pos);
+  bool negative = false;
+  if (*pos < json.size() && json[*pos] == '-') {
+    negative = true;
+    ++*pos;
+  }
+  const std::size_t digits_begin = *pos;
+  int64_t value = 0;
+  while (*pos < json.size() && std::isdigit(static_cast<unsigned char>(json[*pos]))) {
+    const int digit = json[*pos] - '0';
+    Check(value <= (std::numeric_limits<int64_t>::max() - digit) / 10,
+          "model metadata integer overflows: " + key);
+    value = value * 10 + digit;
+    ++*pos;
+  }
+  Check(*pos != digits_begin, "model metadata has an invalid integer: " + key);
+  if (negative) value = -value;
+  Check(value >= std::numeric_limits<int32_t>::min() &&
+            value <= std::numeric_limits<int32_t>::max(),
+        "model metadata integer is out of range: " + key);
+  return static_cast<int32_t>(value);
+}
+
+std::vector<int32_t> ReadJsonIntArray(const std::string& json, const std::string& key) {
+  std::size_t pos = FindJsonValue(json, key);
+  SkipJsonWhitespace(json, &pos);
+  Check(pos < json.size() && json[pos] == '[', "model metadata value is not an array: " + key);
+  ++pos;
+  std::vector<int32_t> values;
+  while (true) {
+    SkipJsonWhitespace(json, &pos);
+    Check(pos < json.size(), "unterminated model metadata array: " + key);
+    if (json[pos] == ']') {
+      ++pos;
+      break;
+    }
+    values.push_back(ReadJsonInt(json, &pos, key));
+    SkipJsonWhitespace(json, &pos);
+    Check(pos < json.size(), "unterminated model metadata array: " + key);
+    if (json[pos] == ',') {
+      ++pos;
+      continue;
+    }
+    Check(json[pos] == ']', "invalid model metadata array separator: " + key);
+    ++pos;
+    break;
+  }
+  Check(!values.empty(), "model metadata array is empty: " + key);
+  return values;
+}
+
+int32_t ReadJsonIntValue(const std::string& json, const std::string& key) {
+  std::size_t pos = FindJsonValue(json, key);
+  return ReadJsonInt(json, &pos, key);
 }
 
 }  // namespace
@@ -196,6 +277,20 @@ RuntimeSidecar RuntimeSidecar::Load(const std::filesystem::path& path) {
   return sidecar;
 }
 
+RuntimeSidecar RuntimeSidecar::LoadQpShiftMetadata(const std::filesystem::path& path) {
+  const std::string json = ReadText(path);
+  RuntimeSidecar metadata;
+  metadata.metadata_qp_shift_ = ReadJsonIntArray(json, "qp_shift");
+  metadata.metadata_qp_index_count_ = ReadJsonIntValue(json, "total_qp_num");
+  Check(metadata.metadata_qp_index_count_ > 0,
+        "model metadata total_qp_num must be positive");
+  const int32_t max_shift = *std::max_element(metadata.metadata_qp_shift_.begin(),
+                                               metadata.metadata_qp_shift_.end());
+  Check(max_shift < metadata.metadata_qp_index_count_,
+        "model metadata qp_shift exceeds total_qp_num");
+  return metadata;
+}
+
 const SidecarArray& RuntimeSidecar::Get(const std::string& name) const {
   const auto it = arrays_.find(name);
   Check(it != arrays_.end(), "sidecar array not found: " + name);
@@ -216,12 +311,40 @@ int RuntimeSidecar::z_channel(const std::string& prefix) const {
   return values[0];
 }
 
+int RuntimeSidecar::q_index_count() const {
+  if (metadata_qp_index_count_ > 0) return metadata_qp_index_count_;
+  int qp_rows = 64;
+  bool found_q_scale = false;
+  for (const auto& [name, candidate] : arrays_) {
+    if (name.find("_q_scale") == std::string::npos || candidate.shape.empty()) continue;
+    Check(candidate.shape[0] > 0 && candidate.shape[0] <= std::numeric_limits<int>::max(),
+          "invalid Q scale row count: " + name);
+    qp_rows = std::min(qp_rows, static_cast<int>(candidate.shape[0]));
+    found_q_scale = true;
+  }
+  Check(found_q_scale, "sidecar contains no Q scale tables");
+  return qp_rows;
+}
+
 int RuntimeSidecar::ShiftedQp(int base_qp, int frame_adaptation_index) const {
   Check(frame_adaptation_index >= 0, "frame adaptation index must be non-negative");
+  if (!metadata_qp_shift_.empty()) {
+    Check(static_cast<std::size_t>(frame_adaptation_index) < metadata_qp_shift_.size(),
+          "frame adaptation index out of range");
+    const int64_t shifted = static_cast<int64_t>(base_qp) +
+                            metadata_qp_shift_[static_cast<std::size_t>(frame_adaptation_index)];
+    Check(shifted >= std::numeric_limits<int>::min() &&
+              shifted <= std::numeric_limits<int>::max(),
+          "shifted QP integer overflow");
+    return std::clamp(static_cast<int>(shifted), 0, q_index_count() - 1);
+  }
   // q_shift is optional for backward compatibility with older sidecar files
   const auto it = arrays_.find("q_shift");
   if (it == arrays_.end()) {
-    return base_qp;  // No shift if q_shift not present
+    // Older sidecars do not carry a q_shift table, but their Q scale tables
+    // still define the only valid runtime range.  Do not let an out-of-range
+    // base QP bypass that contract.
+    return std::clamp(base_qp, 0, q_index_count() - 1);
   }
 
   const SidecarArray& array = it->second;
@@ -238,14 +361,7 @@ int RuntimeSidecar::ShiftedQp(int base_qp, int frame_adaptation_index) const {
   // All runtime q-scale tables use the first dimension as the supported QP
   // rows.  Clamp to the intersection of those tables so a shifted QP can
   // never select a row that one of the codec stages cannot materialize.
-  int qp_rows = 64;
-  for (const auto& [name, candidate] : arrays_) {
-    if (name.find("_q_scale") == std::string::npos || candidate.shape.empty()) continue;
-    Check(candidate.shape[0] > 0 && candidate.shape[0] <= std::numeric_limits<int>::max(),
-          "invalid Q scale row count: " + name);
-    qp_rows = std::min(qp_rows, static_cast<int>(candidate.shape[0]));
-  }
-  Check(qp_rows > 0, "sidecar contains no usable Q scale rows");
+  const int qp_rows = q_index_count();
   return std::clamp(static_cast<int>(shifted), 0, qp_rows - 1);
 }
 

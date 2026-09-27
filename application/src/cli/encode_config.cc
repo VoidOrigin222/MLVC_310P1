@@ -7,17 +7,58 @@
 #include <mlvc/runtime/model_manifest.h>
 #include <toml++/toml.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <initializer_list>
 #include <iostream>
 #include <limits>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include "mlvc/core/status.h"
 
 namespace {
+
+void CheckKnownKeys(const toml::table& table, std::initializer_list<std::string_view> allowed,
+                    const std::string& section) {
+  for (const auto& [key, value] : table) {
+    (void)value;
+    const std::string name(key.str());
+    if (std::find(allowed.begin(), allowed.end(), name) == allowed.end()) {
+      throw mlvc::Error("unknown config key: " +
+                        (section.empty() ? name : section + "." + name));
+    }
+  }
+}
+
+void ValidateConfigKeys(const toml::table& config) {
+  CheckKnownKeys(config,
+                 {"mode", "input", "output", "input_frame_dir", "input_video",
+                  "execution_profile", "manifest", "qp", "gop", "reset_interval", "device",
+                  "frame_num", "fps", "profile_warmup_frames", "profile_output",
+                  "enable_stage_fusion", "ltr_start_idx", "ltr_period", "ltr_qp_shift",
+                  "target_bitrate_bps", "min_qp", "max_qp", "forced_ltr_recovery_frame",
+                  "forced_ltr_reference_frame", "udp_host", "udp_port",
+                  "output_transport_host", "output_transport_mode", "output_transport_port",
+                  "output_transport_payload_type",
+                  "output_transport_pacing_rate_bps", "output_transport_max_burst_bytes",
+                  "output_transport_max_queue_bytes", "output_transport_max_queue_delay_ms",
+                  "model", "pipeline"},
+                 "");
+  if (const toml::node* model = config["model"].node(); model != nullptr) {
+    mlvc::Check(model->is_table(), "config section must be a table: model");
+    CheckKnownKeys(*model->as_table(), {"manifest", "input_frame_dir", "input_video"}, "model");
+  }
+  if (const toml::node* pipeline = config["pipeline"].node(); pipeline != nullptr) {
+    mlvc::Check(pipeline->is_table(), "config section must be a table: pipeline");
+    CheckKnownKeys(*pipeline->as_table(), {"stream_workers", "queue_capacity", "frame_buffer_slots",
+                                            "entropy_workers", "graph_packet_capacity"},
+                   "pipeline");
+  }
+}
 
 toml::table ReadTomlConfig(const std::filesystem::path& path) {
   try {
@@ -29,19 +70,27 @@ toml::table ReadTomlConfig(const std::filesystem::path& path) {
 
 std::string GetString(const toml::table& config, const std::string& key,
                       const std::string& fallback = "") {
-  return config[key].value_or(fallback);
+  if (config[key].node() == nullptr) return fallback;
+  const std::optional<std::string> value = config[key].value<std::string>();
+  mlvc::Check(value.has_value(), "config key must be a string: " + key);
+  return *value;
 }
 
 std::string GetNestedString(const toml::table& config, const std::string& table_name,
                             const std::string& key, const std::string& fallback = "") {
-  return config[table_name][key].value_or(fallback);
+  const toml::node* table_node = config[table_name].node();
+  if (table_node == nullptr) return fallback;
+  mlvc::Check(table_node->is_table(), "config section must be a table: " + table_name);
+  if (config[table_name][key].node() == nullptr) return fallback;
+  const std::optional<std::string> value = config[table_name][key].value<std::string>();
+  mlvc::Check(value.has_value(), "config key must be a string: " + table_name + "." + key);
+  return *value;
 }
 
 int GetInt(const toml::table& config, const std::string& key, int fallback) {
+  if (config[key].node() == nullptr) return fallback;
   const std::optional<int64_t> value = config[key].value<int64_t>();
-  if (!value.has_value()) {
-    return fallback;
-  }
+  mlvc::Check(value.has_value(), "config key must be an integer: " + key);
   mlvc::Check(
       *value >= std::numeric_limits<int>::min() && *value <= std::numeric_limits<int>::max(),
       "config integer is out of int range: " + key);
@@ -50,10 +99,12 @@ int GetInt(const toml::table& config, const std::string& key, int fallback) {
 
 int GetNestedInt(const toml::table& config, const std::string& table_name, const std::string& key,
                  int fallback) {
+  const toml::node* table_node = config[table_name].node();
+  if (table_node == nullptr) return fallback;
+  mlvc::Check(table_node->is_table(), "config section must be a table: " + table_name);
+  if (config[table_name][key].node() == nullptr) return fallback;
   const std::optional<int64_t> value = config[table_name][key].value<int64_t>();
-  if (!value.has_value()) {
-    return fallback;
-  }
+  mlvc::Check(value.has_value(), "config key must be an integer: " + table_name + "." + key);
   mlvc::Check(
       *value >= std::numeric_limits<int>::min() && *value <= std::numeric_limits<int>::max(),
       "config integer is out of int range: " + table_name + "." + key);
@@ -61,17 +112,22 @@ int GetNestedInt(const toml::table& config, const std::string& table_name, const
 }
 
 double GetDouble(const toml::table& config, const std::string& key, double fallback) {
+  if (config[key].node() == nullptr) return fallback;
   if (const std::optional<double> value = config[key].value<double>(); value.has_value()) {
     return *value;
   }
   if (const std::optional<int64_t> value = config[key].value<int64_t>(); value.has_value()) {
     return static_cast<double>(*value);
   }
+  mlvc::Check(false, "config key must be a number: " + key);
   return fallback;
 }
 
 bool GetBool(const toml::table& config, const std::string& key, bool fallback) {
-  return config[key].value_or(fallback);
+  if (config[key].node() == nullptr) return fallback;
+  const std::optional<bool> value = config[key].value<bool>();
+  mlvc::Check(value.has_value(), "config key must be boolean: " + key);
+  return *value;
 }
 
 }  // namespace
@@ -80,6 +136,7 @@ namespace mlvc {
 
 EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_path) {
   const toml::table config = ReadTomlConfig(config_path);
+  ValidateConfigKeys(config);
   const std::string mode = GetString(config, "mode", "encode");
   Check(mode == "encode", "encoder config must use mode = \"encode\"");
   const std::string input = GetString(config, "input");
@@ -107,9 +164,13 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
   codec::EncodeStreamOptions options;
   options.manifest_path = manifest_path;
   options.device = GetInt(config, "device", 0);
+  Check(options.device >= 0, "device must be non-negative");
   options.frame_num = GetInt(config, "frame_num", -1);
+  Check(options.frame_num == -1 || options.frame_num > 0,
+        "frame_num must be -1 or a positive value");
   options.fps = GetDouble(config, "fps", 30.0);
-  Check(std::isfinite(options.fps) && options.fps > 0.0, "fps must be finite and positive");
+  Check(std::isfinite(options.fps) && options.fps >= 0.1 && options.fps <= 1000.0,
+        "fps must be finite and in [0.1, 1000]");
   options.profile_warmup_frames = GetInt(config, "profile_warmup_frames", 0);
   Check(options.profile_warmup_frames >= 0, "profile_warmup_frames must be non-negative");
   Check(options.frame_num <= 0 || options.profile_warmup_frames < options.frame_num,
@@ -137,12 +198,19 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
   options.ltr_start_idx = GetInt(config, "ltr_start_idx", 8);
   options.ltr_period = GetInt(config, "ltr_period", 64);
   options.ltr_qp_shift = GetInt(config, "ltr_qp_shift", 8);
+  Check(options.ltr_start_idx >= 0, "ltr_start_idx must be non-negative");
+  Check(options.ltr_period >= 0, "ltr_period must be non-negative");
   options.target_bitrate_bps = GetDouble(config, "target_bitrate_bps", 0.0);
   options.min_qp = GetInt(config, "min_qp", 0);
   options.max_qp = GetInt(config, "max_qp", 63);
   Check(options.ltr_qp_shift >= 0 && options.ltr_qp_shift <= 63, "ltr_qp_shift must be in [0, 63]");
   Check(std::isfinite(options.target_bitrate_bps) && options.target_bitrate_bps >= 0.0,
         "target_bitrate_bps must be finite and non-negative");
+  const double max_target_bitrate_bps = std::min(
+      static_cast<double>(std::numeric_limits<int>::max()) * 0.25,
+      static_cast<double>(std::numeric_limits<int>::max()) * options.fps / 16.0);
+  Check(options.target_bitrate_bps <= max_target_bitrate_bps,
+        "target_bitrate_bps exceeds the rate controller's integer budget");
   Check(options.min_qp >= 0 && options.min_qp <= 63, "min_qp must be in [0, 63]");
   Check(options.max_qp >= 0 && options.max_qp <= 63, "max_qp must be in [0, 63]");
   Check(options.min_qp <= options.max_qp, "min_qp must not exceed max_qp");
@@ -159,15 +227,21 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
   Check(options.output_transport_mode == "udp" || options.output_transport_mode == "rtp",
         "output_transport_mode must be udp or rtp");
   options.output_transport_port = GetInt(config, "output_transport_port", 0);
+  const int payload_type = GetInt(config, "output_transport_payload_type", 96);
   const int pacing_rate_bps = GetInt(config, "output_transport_pacing_rate_bps", 0);
   const int max_burst_bytes = GetInt(config, "output_transport_max_burst_bytes", 4096);
   const int max_queue_bytes = GetInt(config, "output_transport_max_queue_bytes", 4 * 1024 * 1024);
   const int max_queue_delay_ms = GetInt(config, "output_transport_max_queue_delay_ms", 1000);
   Check(pacing_rate_bps >= 0, "output_transport_pacing_rate_bps must be non-negative");
-  Check(max_burst_bytes > 0, "output_transport_max_burst_bytes must be positive");
+  Check(payload_type >= 96 && payload_type <= 127,
+        "output_transport_payload_type must be in the dynamic RTP range [96, 127]");
+  const int min_packet_burst_bytes = options.output_transport_mode == "rtp" ? 1240 : 1068;
+  Check(max_burst_bytes >= min_packet_burst_bytes,
+        "output_transport_max_burst_bytes must hold at least one complete paced packet");
   Check(max_queue_bytes > 0, "output_transport_max_queue_bytes must be positive");
   Check(max_queue_delay_ms >= 0, "output_transport_max_queue_delay_ms must be non-negative");
   options.output_transport_pacing_rate_bps = static_cast<uint64_t>(pacing_rate_bps);
+  options.output_transport_payload_type = static_cast<uint8_t>(payload_type);
   options.output_transport_max_burst_bytes = static_cast<std::size_t>(max_burst_bytes);
   options.output_transport_max_queue_bytes = static_cast<std::size_t>(max_queue_bytes);
   options.output_transport_max_queue_delay_ms = static_cast<uint64_t>(max_queue_delay_ms);

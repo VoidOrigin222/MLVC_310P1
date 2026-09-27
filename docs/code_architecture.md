@@ -163,7 +163,7 @@ mlvc_encode（UDP 配置）
   -> io::UdpMlvcSender
   -> io::UdpMlvcReceiver
   -> Decoder OM + rANS
-  -> io::RawYuvUdpSender (可选)
+  -> 本地视频或 RTSP 输出（可选）
 
 UDP、熵编码、输入预取和任务管道分别使用自己的队列/线程；DPB 和 LTR 状态仍由
 编解码主线程按帧序维护。`ScopedRuntimeState` 还用进程内互斥保护全局 ACL 状态，避免两个

@@ -28,12 +28,11 @@ receive buffer, matching the VideoTrans receiver's burst-oriented design.
 UDP itself does not guarantee delivery; a missing fragment causes the current
 logical message to be discarded when the next message starts. MLVC receive
 uses a dedicated `recvfrom`/reassembly thread and a condition-variable queue;
-the decoder thread only consumes complete messages. Raw YUV forwarding uses the
-same pattern with a dedicated packet-send thread.
+the decoder thread only consumes complete messages.
 
 ## 输出转发
 
-JPEG/VideoTrans 转发方案已从 v1 代码中删除。当前解码器支持本地视频输出，以及 `raw_fp16_yuv444` 原始 FP16 YUV UDP 转发；RTSP 输出由 Issue #11 单独实现。
+原始 YUV 和 JPEG/VideoTrans 转发方案已删除。当前解码器支持本地视频和 RTSP 输出。
 
 Run `mlvc_decode` first so it is blocked on the UDP port, then run
 `mlvc_encode`. The example configs use Q8, GOP128, Reset32, LTR start 8,

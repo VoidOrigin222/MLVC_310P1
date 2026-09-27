@@ -4,6 +4,7 @@ frame_num = -1
 format = "none"
 input_transport_port = 39191
 input_transport_mode = "rtp"
+input_transport_payload_type = 96
 output_transport_mode = "none"
 execution_profile = "pipeline-v1"
 

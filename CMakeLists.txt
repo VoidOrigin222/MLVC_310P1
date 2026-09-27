@@ -54,14 +54,20 @@ add_library(mlvc_common
   common/src/entropy/rans_core.cc
   common/src/transport/udp_message_transport.cc
   common/src/transport/udp_pacer.cc
+  common/src/transport/mlvc_media_unit.cc
   common/src/transport/rtp_mlvc.cc
   common/src/transport/rtp_message_receiver.cc
+  common/src/transport/rtcp_session.cc
 )
 if(BUILD_TESTING)
   add_executable(test_rtp_mlvc tools/cpp/tests/test_rtp_mlvc.cc)
   target_link_libraries(test_rtp_mlvc PRIVATE mlvc_common)
   target_include_directories(test_rtp_mlvc PRIVATE common/include)
   add_test(NAME rtp_mlvc COMMAND test_rtp_mlvc)
+  add_executable(test_mlvc_media_unit tools/cpp/tests/test_mlvc_media_unit.cc)
+  target_link_libraries(test_mlvc_media_unit PRIVATE mlvc_common)
+  target_include_directories(test_mlvc_media_unit PRIVATE common/include)
+  add_test(NAME mlvc_media_unit COMMAND test_mlvc_media_unit)
   add_executable(test_rtp_reassembler tools/cpp/tests/test_rtp_reassembler.cc)
   target_link_libraries(test_rtp_reassembler PRIVATE mlvc_common)
   add_test(NAME rtp_reassembler COMMAND test_rtp_reassembler)
@@ -76,13 +82,35 @@ if(BUILD_TESTING)
     COMMAND test_rtp_message_receiver_sequence
   )
   add_executable(test_rtp_sender tools/cpp/tests/test_rtp_sender.cc)
-  target_link_libraries(test_rtp_sender PRIVATE mlvc_common)
-  target_include_directories(test_rtp_sender PRIVATE common/include)
+  target_link_libraries(test_rtp_sender PRIVATE mlvc_codec)
   add_test(NAME rtp_sender COMMAND test_rtp_sender)
+  add_executable(test_rtp_receiver_recovery tools/cpp/tests/test_rtp_receiver_recovery.cc)
+  target_link_libraries(test_rtp_receiver_recovery PRIVATE mlvc_codec)
+  add_test(NAME rtp_receiver_recovery COMMAND test_rtp_receiver_recovery)
   add_executable(test_udp_sender_flush_error tools/cpp/tests/test_udp_sender_flush_error.cc)
   target_link_libraries(test_udp_sender_flush_error PRIVATE mlvc_common)
   target_include_directories(test_udp_sender_flush_error PRIVATE common/include)
   add_test(NAME udp_sender_flush_error COMMAND test_udp_sender_flush_error)
+  add_executable(test_udp_fragment_validation
+    tools/cpp/tests/test_udp_fragment_validation.cc
+  )
+  target_link_libraries(test_udp_fragment_validation PRIVATE mlvc_common)
+  target_compile_options(test_udp_fragment_validation PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
+  )
+  add_test(NAME udp_fragment_validation COMMAND test_udp_fragment_validation)
+  add_executable(test_udp_pacer_rate tools/cpp/tests/test_udp_pacer_rate.cc)
+  target_link_libraries(test_udp_pacer_rate PRIVATE mlvc_common)
+  target_compile_options(test_udp_pacer_rate PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
+  )
+  add_test(NAME udp_pacer_rate COMMAND test_udp_pacer_rate)
+  add_executable(test_rtcp_session tools/cpp/tests/test_rtcp_session.cc)
+  target_link_libraries(test_rtcp_session PRIVATE mlvc_common)
+  target_compile_options(test_rtcp_session PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
+  )
+  add_test(NAME rtcp_session COMMAND test_rtcp_session)
 endif()
 
 target_include_directories(mlvc_common
@@ -162,6 +190,7 @@ target_link_libraries(mlvc_codec PUBLIC
   mlvc_common
   mlvc_msrtc_rans
   acl_dvpp
+  acl_dvpp_mpi
   ${OpenCV_LIBS}
 )
 
@@ -283,12 +312,6 @@ if(MLVC_BUILD_APPS)
   set_target_properties(mlvc_decode PROPERTIES OUTPUT_NAME "mlvc_decode${MLVC_APP_SUFFIX}")
   target_link_libraries(mlvc_decode PRIVATE mlvc_application)
   target_compile_options(mlvc_decode PRIVATE
-    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
-  )
-
-  add_executable(mlvc_decode_entropy2_candidate apps/decode_main.cc)
-  target_link_libraries(mlvc_decode_entropy2_candidate PRIVATE mlvc_application)
-  target_compile_options(mlvc_decode_entropy2_candidate PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
   )
 
@@ -416,12 +439,7 @@ if(MLVC_BUILD_APPS)
     target_compile_options(test_decode_config PRIVATE
       $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
     )
-    if(MLVC_TEST_MANIFEST)
-      add_test(NAME decode_config COMMAND test_decode_config "${MLVC_TEST_MANIFEST}")
-    else()
-      add_test(NAME decode_config COMMAND test_decode_config
-        "${CMAKE_CURRENT_SOURCE_DIR}/../mlvc1080p/manifest_310P1.json")
-    endif()
+    add_test(NAME decode_config COMMAND test_decode_config)
 
     add_executable(test_encode_config tools/cpp/tests/test_encode_config.cc)
     target_link_libraries(test_encode_config PRIVATE mlvc_application)
@@ -431,4 +449,16 @@ if(MLVC_BUILD_APPS)
     add_test(NAME encode_config COMMAND test_encode_config)
   endif()
 
+endif()
+
+if(BUILD_TESTING)
+  get_property(MLVC_DIRECTORY_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+  foreach(MLVC_TARGET IN LISTS MLVC_DIRECTORY_TARGETS)
+    if(MLVC_TARGET MATCHES "^test_")
+      target_compile_options(${MLVC_TARGET} PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-UNDEBUG>
+        $<$<CXX_COMPILER_ID:MSVC>:/UNDEBUG>
+      )
+    endif()
+  endforeach()
 endif()

@@ -3,6 +3,7 @@
 #include <mlvc/codec/detail/tensor/tensor_utils.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -12,6 +13,30 @@
 #include "mlvc/framework/profile_range.h"
 
 namespace mlvc::codec {
+namespace {
+
+constexpr uint16_t ExactInt8ToFp16(int value) {
+  const uint16_t sign = value < 0 ? 0x8000U : 0U;
+  const unsigned magnitude = static_cast<unsigned>(value < 0 ? -value : value);
+  if (magnitude == 0) return sign;
+
+  unsigned exponent = 0;
+  for (unsigned remaining = magnitude; remaining > 1; remaining >>= 1) ++exponent;
+  const unsigned mantissa = (magnitude - (1U << exponent)) << (10U - exponent);
+  return static_cast<uint16_t>(sign | ((exponent + 15U) << 10U) | mantissa);
+}
+
+constexpr std::array<uint16_t, 256> MakeInt8ToFp16Table() {
+  std::array<uint16_t, 256> table{};
+  for (int index = 0; index < static_cast<int>(table.size()); ++index) {
+    table[static_cast<std::size_t>(index)] = ExactInt8ToFp16(index - 128);
+  }
+  return table;
+}
+
+constexpr auto kInt8ToFp16 = MakeInt8ToFp16Table();
+
+}  // namespace
 
 uint32_t FloatToHalfBits(float value) {
   uint32_t bits = 0;
@@ -234,7 +259,8 @@ void FloatToFp16TensorFromInt8(const std::vector<int8_t>& symbols, const mlvc::T
   tensor->bytes.resize(tensor->shape.NumElements() * mlvc::ElementSize(tensor->dtype));
   auto* output = reinterpret_cast<uint16_t*>(tensor->bytes.data());
   for (std::size_t i = 0; i < symbols.size(); ++i) {
-    output[i] = static_cast<uint16_t>(FloatToHalfBits(static_cast<float>(symbols[i])));
+    const auto index = static_cast<std::size_t>(static_cast<int>(symbols[i]) + 128);
+    output[i] = kInt8ToFp16[index];
   }
 }
 

@@ -1,4 +1,5 @@
 #include <mlvc/application/stream/encode/encode_setup.h>
+#include <mlvc/codec/execution_profile.h>
 
 #include <filesystem>
 
@@ -7,6 +8,8 @@
 namespace mlvc::codec {
 
 void ValidateEncodeInput(const EncodeStreamOptions& options) {
+  Check(mlvc::codec::IsCodecExecutionProfile(options.execution_profile),
+        "unsupported codec execution profile: " + options.execution_profile);
   Check(!options.manifest_path.empty(), "encode stream requires a manifest path");
   Check(!options.input_video_path.empty() || !options.input_frame_dir.empty(),
         "MLVC encode requires input_frame_dir or input_video; synthetic frames are disabled");

@@ -2,12 +2,14 @@
 #define MLVC_IO_MLVC_BITSTREAM_H_
 
 #include <cstdint>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <string>
 #include <vector>
 
 #include "mlvc/codec/mlvc_entropy.h"
+#include "mlvc/transport/mlvc_media_unit.h"
 
 namespace mlvc::io {
 
@@ -26,6 +28,13 @@ struct MlvcBitstreamHeader {
   uint32_t flags = 0;
   int forced_ltr_recovery_frame = -1;
   int forced_ltr_reference_frame = -1;
+  // The visible dimensions describe the source/output crop.  The coded
+  // dimensions are the static model tensor shape (for example 1920x1088 for
+  // a 1920x1080 stream).  A zero value means "same as visible" for legacy
+  // headers that predate MLVC-ES v1.
+  int coded_width = 0;
+  int coded_height = 0;
+  std::array<uint8_t, 32> codec_bundle_sha256{};
 };
 
 struct ForcedLtrFrames {
@@ -33,7 +42,19 @@ struct ForcedLtrFrames {
   int reference_frame = -1;
 };
 
+struct MlvcFrameMetadata {
+  bool explicit_metadata = false;
+  int model_q_index = -1;
+  uint32_t unit_flags = 0;
+  uint32_t short_ref_frame_id = mlvc::transport::kMlvcNoReference;
+  uint32_t long_ref_frame_id = mlvc::transport::kMlvcNoReference;
+  int64_t pts = 0;
+};
+
 void ValidateMlvcBitstreamHeader(const MlvcBitstreamHeader& header);
+void ValidateMlvcDecoderOutputShape(const MlvcBitstreamHeader& header,
+                                    const std::vector<int64_t>& output_shape);
+void ValidateMlvcQIndexForSidecar(int q_index, int supported_q_index_count);
 ForcedLtrFrames ResolveForcedLtrFrames(const MlvcBitstreamHeader& header,
                                        int requested_recovery_frame,
                                        int requested_reference_frame);
@@ -84,12 +105,21 @@ class MlvcBitstreamWriter {
 
   void WriteFrame(int frame_index, mlvc::codec::MlvcFrameType frame_type, int q_index,
                   const std::vector<uint8_t>& payload);
+  void WriteFrame(int frame_index, mlvc::codec::MlvcFrameType frame_type, int q_index,
+                  const MlvcFrameMetadata& metadata, const std::vector<uint8_t>& payload);
+  void SwitchConfiguration(uint32_t config_id, const MlvcBitstreamHeader& header);
   void Close();
 
  private:
   std::filesystem::path path_;
   std::ofstream output_;
   bool closed_ = false;
+  uint64_t max_payload_size_ = 0;
+  double fps_ = 30.0;
+  int next_frame_index_ = 0;
+  uint32_t config_id_ = 1;
+  bool configuration_switch_pending_ = false;
+  std::vector<uint8_t> active_config_unit_;
 };
 
 class MlvcBitstreamReader {
@@ -100,6 +130,7 @@ class MlvcBitstreamReader {
   ~MlvcBitstreamReader();
 
   const MlvcBitstreamHeader& header() const { return header_; }
+  const MlvcFrameMetadata& last_frame_metadata() const { return last_frame_metadata_; }
   bool ReadFrame(int* frame_index, mlvc::codec::MlvcFrameType* frame_type, int* q_index,
                  std::vector<uint8_t>* payload);
 
@@ -110,6 +141,12 @@ class MlvcBitstreamReader {
   uint32_t version_ = 0;
   int expected_frame_index_ = 0;
   uint64_t max_payload_size_ = 0;
+  bool media_unit_format_ = false;
+  uint32_t config_id_ = 0;
+  std::vector<uint8_t> active_config_unit_;
+  uint32_t pending_config_id_ = 0;
+  uint32_t last_ltr_frame_id_ = mlvc::transport::kMlvcNoReference;
+  MlvcFrameMetadata last_frame_metadata_;
 };
 
 }  // namespace mlvc::io

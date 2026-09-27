@@ -2,8 +2,8 @@
 
 测试设备：
 
-- 编码端：`ascend-lab`，Ascend 310P1
-- 解码端：`decode-310p1`，Ascend 310P1
+- 编码端：Ascend 310P1
+- 解码端：Ascend 310P1
 - 传输：RTP，MLVC v1
 - 每秒调用一次 `npu-smi info -t usages -i 0 -c 0`
 

@@ -57,7 +57,7 @@ The remaining implementation issues requested for this pass are complete:
 - **#6 UDP error propagation:** asynchronous forwarders have idempotent `Close()` methods that join, flush, and rethrow the final send error before success is reported.
 - **#8 naming consistency:** decoder transport options use `output_transport_*` names throughout the public options and runtime implementation.
 
-P1 Release validation: `ascend-lab` full build and CTest passed (17/17); `decode-310p1` Release build and CTest excluding the 70-second initial-wait test passed (16/16). Issue #11 remains open.
+P1 Release validation: the encoder board full build and CTest passed (17/17); the decoder board Release build and CTest excluding the 70-second initial-wait test passed (16/16). Issue #11 remains open.
 
 ## Post-change RTP verification (2026-09-12)
 
@@ -100,7 +100,7 @@ A 537-frame Chrome trace measured average busy times of 29.70 ms for rANS entrop
 
 ## ACL NV12 operator availability fix (2026-09-14)
 
-The ACL NV12 fallback was caused by deployment configuration and an out-of-date custom operator package. `ASCEND_CUSTOM_OPP_PATH` did not include the `mlvc_prior_ops/vendors/mlvc` vendor root, and the `ascend-lab` package lacked the `MlvcFp16Yuv444ToNv12` kernel registration in `binary_info_config.json` and the corresponding ACLN symbols. The runtime loader now discovers the vendor root from candidate libraries, prepends it to `ASCEND_CUSTOM_OPP_PATH` when needed, and supports the sibling `mlvc_acl_cppv1` repository used on P1.
+The ACL NV12 fallback was caused by deployment configuration and an out-of-date custom operator package. `ASCEND_CUSTOM_OPP_PATH` did not include the `mlvc_prior_ops/vendors/mlvc` vendor root, and the encoder-board package lacked the `MlvcFp16Yuv444ToNv12` kernel registration in `binary_info_config.json` and the corresponding ACLN symbols. The runtime loader now discovers the vendor root from candidate libraries, prepends it to `ASCEND_CUSTOM_OPP_PATH` when needed, and supports a sibling custom-operator repository layout used on P1.
 
 The complete NV12 package was synchronized to both P1 devices. With `ASCEND_CUSTOM_OPP_PATH`, `MLVC_VIDEO_OPAPI_LIB`, and `MLVC_PRIOR_OPAPI_LIB` removed from the environment, `test_fp16_yuv444_to_nv12_acl` passed on both devices. The 1080P ACL conversion measured about 12.26 ms per frame. This confirms that 310P1 supports the operator; the previous CPU fallback was a path/package deployment issue. RTSP 120/537-frame FPS measurements must be rerun with the ACL path enabled.
 

@@ -20,9 +20,9 @@ struct DvppH264EncoderConfig {
   uint32_t output_buffer_bytes = 0;
 };
 
-// Synchronous one-frame interface used by the first DVPP VENC integration
-// step. The input may be produced by an ACL stream; ready_event establishes
-// the dependency before aclvencSendFrame is submitted.
+// Synchronous one-frame interface backed by the device MPI VENC API. The
+// input may be produced by an ACL stream; ready_event establishes the
+// dependency before the frame is copied into the MPI-owned DVPP buffer.
 class DvppH264Encoder {
  public:
   DvppH264Encoder(aclrtContext context, DvppH264EncoderConfig config);

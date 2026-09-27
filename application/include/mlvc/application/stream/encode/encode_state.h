@@ -18,6 +18,8 @@ struct EncodeFrameDecision {
   MlvcFrameType frame_type = MlvcFrameType::kPFrame;
   bool is_i_frame = false;
   bool mark_as_ltr = false;
+  bool reset_reference = false;
+  int ltr_reference_frame = -1;
 };
 
 class EncodeState {
@@ -32,6 +34,7 @@ class EncodeState {
 
   const ReferenceState& reference() const { return reference_; }
   const TensorData& zero_feature() const { return zero_feature_; }
+  int current_ltr_reference_frame() const { return current_ltr_reference_frame_; }
 
  private:
   ReferenceState reference_;
@@ -39,6 +42,7 @@ class EncodeState {
   TensorData ltr_feature_;
   bool has_ltr_feature_ = false;
   std::map<int, TensorData> ltr_features_;
+  int current_ltr_reference_frame_ = -1;
 };
 
 }  // namespace mlvc::codec

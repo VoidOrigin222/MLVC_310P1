@@ -117,6 +117,7 @@ class StreamingPipeline {
 
   void ProcessingLoop();
   void PublishReadyResults();
+  void ReleaseInFlightSlot();
 
   const std::size_t worker_count_;
   const std::size_t queue_capacity_;
@@ -129,6 +130,10 @@ class StreamingPipeline {
   std::atomic<std::size_t> processed_count_{0};
   std::atomic<std::size_t> error_count_{0};
   std::atomic<std::size_t> next_sequence_{0};
+  std::mutex in_flight_mutex_;
+  std::condition_variable in_flight_cv_;
+  std::size_t in_flight_ = 0;
+  bool input_closed_ = true;
   mutable std::mutex reorder_mutex_;
   std::exception_ptr first_error_;
   std::map<std::size_t, std::shared_ptr<DataObject>> completed_results_;

@@ -74,6 +74,7 @@ int main() {
     const auto qp_path = root / "mlvc_sidecar_qp.bin";
     Write(qp_path, qp_bytes);
     const auto qp_sidecar = mlvc::RuntimeSidecar::Load(qp_path);
+    mlvc::Check(qp_sidecar.q_index_count() == 8, "sidecar QP row count mismatch");
     mlvc::Check(qp_sidecar.ShiftedQp(2, 0) == 7, "shifted QP was not clamped to sidecar rows");
     mlvc::Check(qp_sidecar.ShiftedQp(-100, 0) == 0, "negative shifted QP was not clamped");
     Reject([&] { (void)qp_sidecar.ShiftedQp(0, -1); },

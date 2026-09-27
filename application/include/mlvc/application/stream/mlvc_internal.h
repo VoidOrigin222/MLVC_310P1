@@ -33,12 +33,14 @@ struct DecodedEntropyFrame {
   TensorData z_raw;
   TensorData y_raw_0;
   TensorData y_raw_1;
+  mlvc::io::MlvcFrameMetadata metadata;
 };
 
 struct PendingEncodedFrame {
   int frame_index = -1;
   MlvcFrameType frame_type = MlvcFrameType::kPFrame;
   int q_index = 0;
+  mlvc::io::MlvcFrameMetadata metadata;
   std::future<std::vector<uint8_t>> payload;
 };
 

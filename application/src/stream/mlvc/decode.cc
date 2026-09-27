@@ -25,6 +25,7 @@
 #include <mlvc/framework/profile_range.h>
 #include <mlvc/framework/profiler.h>
 #include <mlvc/io/frame_source.h>
+#include <mlvc/io/dvpp_h264_encoder.h>
 #include <mlvc/io/mlvc_bitstream.h>
 #include <mlvc/io/udp_frame_transport.h>
 #include <mlvc/io/video_io.h>
@@ -35,9 +36,12 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
+#include <condition_variable>
 #include <cstdint>
 #include <cstring>
 #include <deque>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <future>
@@ -45,9 +49,11 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -66,25 +72,41 @@ void CheckAclCall(aclError status, const char* operation) {
 class AsyncRtspNv12Pipeline {
  public:
   AsyncRtspNv12Pipeline(const io::Nv12Layout& layout, aclrtStream decode_stream,
-                        mlvc::io::RtspVideoPublisher* publisher, mlvc::Profiler* profiler)
-      : layout_(layout), decode_stream_(decode_stream), publisher_(publisher), profiler_(profiler) {
+                        mlvc::io::RtspVideoPublisher* publisher, aclrtContext context,
+                        std::optional<io::DvppH264EncoderConfig> h264_encoder_config,
+                        mlvc::Profiler* profiler)
+      : layout_(layout),
+        decode_stream_(decode_stream),
+        publisher_(publisher),
+        context_(context),
+        h264_encoder_config_(std::move(h264_encoder_config)),
+        profiler_(profiler) {
     constexpr uint32_t kTimedSyncEvent = ACL_EVENT_SYNC | ACL_EVENT_TIME_LINE;
     CheckAclCall(aclrtCreateStream(&convert_stream_), "aclrtCreateStream RTSP NV12 convert");
-    CheckAclCall(aclrtCreateStream(&copy_stream_), "aclrtCreateStream RTSP NV12 copy");
+    if (!h264_encoder_config_.has_value()) {
+      CheckAclCall(aclrtCreateStream(&copy_stream_), "aclrtCreateStream RTSP NV12 copy");
+    }
     const std::size_t bytes = io::Nv12BufferSize(layout_);
     for (Slot& slot : slots_) {
       slot.device.Allocate(bytes);
-      slot.host.Allocate(bytes);
+      if (!h264_encoder_config_.has_value()) {
+        slot.host.Allocate(bytes);
+      }
       CheckAclCall(aclrtCreateEventWithFlag(&slot.input_ready, kTimedSyncEvent),
                    "aclrtCreateEvent RTSP NV12 input ready");
       CheckAclCall(aclrtCreateEventWithFlag(&slot.conversion_start, kTimedSyncEvent),
                    "aclrtCreateEvent RTSP NV12 conversion start");
       CheckAclCall(aclrtCreateEventWithFlag(&slot.converted, kTimedSyncEvent),
                    "aclrtCreateEvent RTSP NV12 converted");
-      CheckAclCall(aclrtCreateEventWithFlag(&slot.copy_start, kTimedSyncEvent),
-                   "aclrtCreateEvent RTSP NV12 copy start");
-      CheckAclCall(aclrtCreateEventWithFlag(&slot.copied, kTimedSyncEvent),
-                   "aclrtCreateEvent RTSP NV12 copied");
+      if (!h264_encoder_config_.has_value()) {
+        CheckAclCall(aclrtCreateEventWithFlag(&slot.copy_start, kTimedSyncEvent),
+                     "aclrtCreateEvent RTSP NV12 copy start");
+        CheckAclCall(aclrtCreateEventWithFlag(&slot.copied, kTimedSyncEvent),
+                     "aclrtCreateEvent RTSP NV12 copied");
+      }
+    }
+    if (h264_encoder_config_.has_value()) {
+      encoder_worker_ = std::thread(&AsyncRtspNv12Pipeline::EncoderWorker, this);
     }
   }
 
@@ -95,6 +117,14 @@ class AsyncRtspNv12Pipeline {
     try {
       Drain();
     } catch (...) {
+    }
+    if (encoder_worker_.joinable()) {
+      {
+        std::lock_guard<std::mutex> lock(worker_mutex_);
+        worker_stopping_ = true;
+      }
+      worker_condition_.notify_all();
+      encoder_worker_.join();
     }
     if (convert_stream_ != nullptr) {
       (void)aclrtSynchronizeStream(convert_stream_);
@@ -130,40 +160,117 @@ class AsyncRtspNv12Pipeline {
   void Enqueue(mlvc::TensorHandle* x_hat) {
     Check(x_hat != nullptr && x_hat->has_acl_buffer() && x_hat->acl_valid(),
           "RTSP ACL NV12 conversion requires a device-resident x_hat");
-    if (pending_slots_.size() == slots_.size()) {
-      FlushOne();
+    const std::size_t index = next_slot_;
+    const bool async_encode = h264_encoder_config_.has_value();
+    if (async_encode) {
+      ReserveSlot(index);
+    } else if (pending_slots_.size() == slots_.size()) {
+      const std::size_t completed_index = pending_slots_.front();
+      FlushOne(completed_index);
+      pending_slots_.pop_front();
     }
 
-    Slot& slot = slots_.at(next_slot_);
-    slot.conversion_enqueue = std::chrono::steady_clock::now();
-    x_hat->WaitReady(decode_stream_);
-    CheckAclCall(aclrtRecordEvent(slot.input_ready, decode_stream_),
-                 "aclrtRecordEvent RTSP NV12 input ready");
-    CheckAclCall(aclrtStreamWaitEvent(convert_stream_, slot.input_ready),
-                 "aclrtStreamWaitEvent RTSP NV12 input ready");
-    Fp16Yuv444ToNv12Acl(x_hat->AclView().data(), x_hat->shape(), layout_, slot.device.data(),
-                        convert_stream_, slot.conversion_start, slot.converted, profiler_);
-    CheckAclCall(aclrtStreamWaitEvent(copy_stream_, slot.converted),
-                 "aclrtStreamWaitEvent RTSP NV12 converted");
-    slot.copy_enqueue = std::chrono::steady_clock::now();
-    CheckAclCall(aclrtRecordEvent(slot.copy_start, copy_stream_),
-                 "aclrtRecordEvent RTSP NV12 copy start");
-    CheckAclCall(aclrtMemcpyAsync(slot.host.data(), slot.host.bytes(), slot.device.data(),
-                                  slot.device.bytes(), ACL_MEMCPY_DEVICE_TO_HOST, copy_stream_),
-                 "aclrtMemcpyAsync RTSP NV12 D2H");
-    CheckAclCall(aclrtRecordEvent(slot.copied, copy_stream_), "aclrtRecordEvent RTSP NV12 copied");
-    pending_slots_.push_back(next_slot_);
+    Slot& slot = slots_.at(index);
+    try {
+      slot.conversion_enqueue = std::chrono::steady_clock::now();
+      x_hat->WaitReady(decode_stream_);
+      const void* conversion_input = x_hat->AclView().data();
+      mlvc::TensorShape conversion_shape = x_hat->shape();
+      if (async_encode) {
+        // MLVCDecoder reuses one ACL output buffer for x_hat.  Move that
+        // buffer into the reserved RTSP slot and immediately give the
+        // decoder a fresh output buffer.  This avoids a full-frame D2D copy
+        // while keeping the converted input alive until VENC is finished.
+        const mlvc::DataType conversion_dtype = x_hat->dtype();
+        if (!slot.fp16.has_acl_buffer()) {
+          slot.fp16 = std::move(*x_hat);
+        } else {
+          // The slot is no longer in flight after ReserveSlot().  Reuse its
+          // old decoder buffer as the workspace buffer for the next frame.
+          std::swap(*x_hat, slot.fp16);
+        }
+        Check(slot.fp16.has_acl_buffer() && slot.fp16.acl_valid(),
+              "RTSP FP16 slot lost the decoder ACL output");
+        if (!x_hat->has_acl_buffer()) {
+          x_hat->Reset(std::move(conversion_shape), conversion_dtype);
+          x_hat->AllocateAclBuffer(false);
+        }
+        conversion_input = slot.fp16.AclView().data();
+        conversion_shape = slot.fp16.shape();
+      }
+      CheckAclCall(aclrtRecordEvent(slot.input_ready, decode_stream_),
+                   "aclrtRecordEvent RTSP NV12 input ready");
+      CheckAclCall(aclrtStreamWaitEvent(convert_stream_, slot.input_ready),
+                   "aclrtStreamWaitEvent RTSP NV12 input ready");
+      Fp16Yuv444ToNv12Acl(conversion_input, conversion_shape, layout_, slot.device.data(),
+                          convert_stream_, slot.conversion_start, slot.converted, profiler_);
+      if (!async_encode) {
+        CheckAclCall(aclrtStreamWaitEvent(copy_stream_, slot.converted),
+                     "aclrtStreamWaitEvent RTSP NV12 converted");
+        slot.copy_enqueue = std::chrono::steady_clock::now();
+        CheckAclCall(aclrtRecordEvent(slot.copy_start, copy_stream_),
+                     "aclrtRecordEvent RTSP NV12 copy start");
+        CheckAclCall(aclrtMemcpyAsync(slot.host.data(), slot.host.bytes(), slot.device.data(),
+                                      slot.device.bytes(), ACL_MEMCPY_DEVICE_TO_HOST, copy_stream_),
+                     "aclrtMemcpyAsync RTSP NV12 D2H");
+        CheckAclCall(aclrtRecordEvent(slot.copied, copy_stream_),
+                     "aclrtRecordEvent RTSP NV12 copied");
+      }
+
+      if (async_encode) {
+        std::exception_ptr worker_error;
+        {
+          std::lock_guard<std::mutex> lock(worker_mutex_);
+          worker_error = worker_error_;
+          if (worker_error == nullptr) {
+            pending_slots_.push_back(index);
+          } else {
+            slot.in_flight = false;
+          }
+        }
+        worker_condition_.notify_all();
+        if (worker_error != nullptr) std::rethrow_exception(worker_error);
+      } else {
+        pending_slots_.push_back(index);
+      }
+    } catch (...) {
+      if (async_encode) {
+        {
+          std::lock_guard<std::mutex> lock(worker_mutex_);
+          slot.in_flight = false;
+        }
+        worker_condition_.notify_all();
+      }
+      throw;
+    }
     next_slot_ = (next_slot_ + 1) % slots_.size();
+    if (async_encode) worker_condition_.notify_one();
   }
 
   void Drain() {
+    if (h264_encoder_config_.has_value()) {
+      std::unique_lock<std::mutex> lock(worker_mutex_);
+      worker_condition_.wait(lock, [this] {
+        if (worker_error_ != nullptr) return true;
+        if (!pending_slots_.empty()) return false;
+        return std::none_of(slots_.begin(), slots_.end(),
+                            [](const Slot& slot) { return slot.in_flight; });
+      });
+      const std::exception_ptr worker_error = worker_error_;
+      lock.unlock();
+      if (worker_error != nullptr) std::rethrow_exception(worker_error);
+      return;
+    }
     while (!pending_slots_.empty()) {
-      FlushOne();
+      const std::size_t index = pending_slots_.front();
+      FlushOne(index);
+      pending_slots_.pop_front();
     }
   }
 
  private:
   struct Slot {
+    mlvc::TensorHandle fp16;
     mlvc::AclBuffer device;
     mlvc::PinnedHostBuffer host;
     aclrtEvent input_ready = nullptr;
@@ -171,31 +278,133 @@ class AsyncRtspNv12Pipeline {
     aclrtEvent converted = nullptr;
     aclrtEvent copy_start = nullptr;
     aclrtEvent copied = nullptr;
+    bool in_flight = false;
     std::chrono::steady_clock::time_point conversion_enqueue;
     std::chrono::steady_clock::time_point copy_enqueue;
   };
 
-  void FlushOne() {
-    const std::size_t index = pending_slots_.front();
+  void ReserveSlot(std::size_t index) {
+    mlvc::ScopedCpuTimer timer(profiler_, "rtsp.venc_slot_wait");
+    std::unique_lock<std::mutex> lock(worker_mutex_);
+    worker_condition_.wait(lock, [this, index] {
+      return worker_error_ != nullptr || !slots_.at(index).in_flight;
+    });
+    const std::exception_ptr worker_error = worker_error_;
+    if (worker_error != nullptr) {
+      lock.unlock();
+      std::rethrow_exception(worker_error);
+    }
+    slots_.at(index).in_flight = true;
+  }
+
+  void FlushOne(std::size_t index) {
     Slot& slot = slots_.at(index);
-    CheckAclCall(aclrtSynchronizeEvent(slot.copied), "aclrtSynchronizeEvent RTSP NV12 copied");
     CheckAclCall(aclrtSynchronizeEvent(slot.converted),
                  "aclrtSynchronizeEvent RTSP NV12 converted");
     float conversion_ms = 0.0f;
-    float copy_ms = 0.0f;
     CheckAclCall(aclrtEventElapsedTime(&conversion_ms, slot.conversion_start, slot.converted),
                  "aclrtEventElapsedTime RTSP NV12 conversion");
-    CheckAclCall(aclrtEventElapsedTime(&copy_ms, slot.copy_start, slot.copied),
-                 "aclrtEventElapsedTime RTSP NV12 D2H");
     if (profiler_ != nullptr) {
       profiler_->AddEvent("acl_video.fp16_yuv444_to_nv12.device",
                           profiler_->StartMs(slot.conversion_enqueue), conversion_ms);
-      profiler_->AddEvent("copy.rtsp.nv12_d2h.device", profiler_->StartMs(slot.copy_enqueue),
-                          copy_ms);
     }
-    const auto* begin = static_cast<const uint8_t*>(slot.host.data());
-    publisher_->WriteNv12Frame(std::vector<uint8_t>(begin, begin + slot.host.bytes()));
-    pending_slots_.pop_front();
+    if (h264_encoder_config_.has_value()) {
+      if (!h264_encoder_) {
+        h264_encoder_ = std::make_unique<io::DvppH264Encoder>(context_, *h264_encoder_config_);
+      }
+      const auto encode_start = std::chrono::steady_clock::now();
+      std::vector<uint8_t> h264 =
+          h264_encoder_->EncodeDevice(slot.device.data(), slot.device.bytes(), nullptr,
+                                      false);
+      if (profiler_ != nullptr) {
+        const float encode_ms = static_cast<float>(
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                      encode_start)
+                .count());
+        profiler_->AddEvent("dvpp_venc.h264_mpi_encode_d2h", profiler_->StartMs(encode_start),
+                            encode_ms);
+      }
+      publisher_->WriteH264Frame(std::move(h264));
+      ++encoded_frames_;
+    } else {
+      CheckAclCall(aclrtSynchronizeEvent(slot.copied),
+                   "aclrtSynchronizeEvent RTSP NV12 copied");
+      float copy_ms = 0.0f;
+      CheckAclCall(aclrtEventElapsedTime(&copy_ms, slot.copy_start, slot.copied),
+                   "aclrtEventElapsedTime RTSP NV12 D2H");
+      if (profiler_ != nullptr) {
+        profiler_->AddEvent("copy.rtsp.nv12_d2h.device", profiler_->StartMs(slot.copy_enqueue),
+                            copy_ms);
+      }
+      const auto* begin = static_cast<const uint8_t*>(slot.host.data());
+      // FFmpeg's raw NV12 input is visible-size packed.  The ACL/DVPP
+      // conversion buffer may carry 16-pixel padded strides, so strip the
+      // padding before handing the demo stream to libx264.
+      const std::size_t visible_y_bytes =
+          static_cast<std::size_t>(layout_.width) * layout_.height;
+      const std::size_t packed_bytes = visible_y_bytes + visible_y_bytes / 2;
+      std::vector<uint8_t> packed(packed_bytes);
+      for (int row = 0; row < layout_.height; ++row) {
+        std::memcpy(packed.data() + static_cast<std::size_t>(row) * layout_.width,
+                    begin + static_cast<std::size_t>(row) * layout_.width_stride,
+                    static_cast<std::size_t>(layout_.width));
+      }
+      const std::size_t source_uv = static_cast<std::size_t>(layout_.width_stride) *
+                                    layout_.height_stride;
+      const std::size_t packed_uv = visible_y_bytes;
+      for (int row = 0; row < layout_.height / 2; ++row) {
+        std::memcpy(packed.data() + packed_uv + static_cast<std::size_t>(row) * layout_.width,
+                    begin + source_uv + static_cast<std::size_t>(row) * layout_.width_stride,
+                    static_cast<std::size_t>(layout_.width));
+      }
+      publisher_->WriteNv12Frame(std::move(packed));
+    }
+  }
+
+  void SetWorkerError(std::exception_ptr error, std::optional<std::size_t> active_slot) {
+    {
+      std::lock_guard<std::mutex> lock(worker_mutex_);
+      if (worker_error_ == nullptr) worker_error_ = std::move(error);
+      worker_stopping_ = true;
+      if (active_slot.has_value()) slots_.at(*active_slot).in_flight = false;
+      for (const std::size_t index : pending_slots_) slots_.at(index).in_flight = false;
+      pending_slots_.clear();
+    }
+    worker_condition_.notify_all();
+  }
+
+  void EncoderWorker() {
+    try {
+      CheckAclCall(aclrtSetCurrentContext(context_), "aclrtSetCurrentContext RTSP VENC worker");
+    } catch (...) {
+      SetWorkerError(std::current_exception(), std::nullopt);
+      return;
+    }
+    for (;;) {
+      std::size_t index = 0;
+      {
+        std::unique_lock<std::mutex> lock(worker_mutex_);
+        worker_condition_.wait(lock,
+                               [this] { return worker_stopping_ || !pending_slots_.empty(); });
+        if (pending_slots_.empty()) {
+          if (worker_stopping_) return;
+          continue;
+        }
+        index = pending_slots_.front();
+        pending_slots_.pop_front();
+      }
+      try {
+        FlushOne(index);
+      } catch (...) {
+        SetWorkerError(std::current_exception(), index);
+        return;
+      }
+      {
+        std::lock_guard<std::mutex> lock(worker_mutex_);
+        slots_.at(index).in_flight = false;
+      }
+      worker_condition_.notify_all();
+    }
   }
 
   io::Nv12Layout layout_;
@@ -203,10 +412,21 @@ class AsyncRtspNv12Pipeline {
   aclrtStream convert_stream_ = nullptr;
   aclrtStream copy_stream_ = nullptr;
   mlvc::io::RtspVideoPublisher* publisher_ = nullptr;
+  aclrtContext context_ = nullptr;
+  std::optional<io::DvppH264EncoderConfig> h264_encoder_config_;
+  std::unique_ptr<io::DvppH264Encoder> h264_encoder_;
   mlvc::Profiler* profiler_ = nullptr;
-  std::array<Slot, 2> slots_;
+  // Keep enough converted frames in flight to hide the NV12 conversion and
+  // DVPP VENC latency behind the MLVC decoder stage.
+  std::array<Slot, 4> slots_;
   std::deque<std::size_t> pending_slots_;
+  std::mutex worker_mutex_;
+  std::condition_variable worker_condition_;
+  std::thread encoder_worker_;
+  std::exception_ptr worker_error_;
+  bool worker_stopping_ = false;
   std::size_t next_slot_ = 0;
+  std::size_t encoded_frames_ = 0;
 };
 
 }  // namespace
@@ -214,15 +434,15 @@ class AsyncRtspNv12Pipeline {
 int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* services) {
   try {
     ScopedRuntimeState runtime_state_guard;
+    Check(mlvc::codec::IsCodecExecutionProfile(options.execution_profile),
+          "unsupported codec execution profile: " + options.execution_profile);
     // A decode run with no file or transport output does not need a host copy of
     // the reconstructed frame.  Keep the MLVC decoder outputs device-resident
     // so reference features can flow directly into the next frame.  Entropy
     // outputs remain materialized only where the CPU entropy worker consumes
     // them.  This avoids a full-resolution D2H copy and host synchronization on
     // every 1080P frame.
-    const bool use_device_resident_outputs =
-        options.output_format == "none" && options.output_transport_port == 0 &&
-        (options.output_transport_mode == "none" || options.output_transport_mode == "rtsp");
+    const bool use_device_resident_outputs = options.output_format == "none";
     std::unique_ptr<mlvc::app::MlvcCodecRuntime> owned_codec_runtime;
     mlvc::app::MlvcCodecRuntime* codec_runtime =
         services == nullptr ? nullptr : services->codec_runtime;
@@ -237,9 +457,11 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
     mlvc::StageRuntime& runtime = codec_runtime->runtime();
     mlvc::StageModelSet& models = codec_runtime->models();
     const mlvc::RuntimeSidecar& sidecar = codec_runtime->sidecar();
+    const int sidecar_q_index_count = sidecar.q_index_count();
     const std::filesystem::path model_directory = models.manifest().directory();
     Check(HasMlvcModels(models.manifest()), "manifest does not contain MLVCEncoder / MLVCDecoder");
     const mlvc::ModelRecord& decoder_record = models.manifest().GetModel("MLVCDecoder");
+    const mlvc::TensorSpec& x_hat_spec = mlvc::codec::OutputSpec(decoder_record, "x_hat");
     mlvc::codec::StageOutputWorkspace& stage_output_workspace =
         codec_runtime->stage_output_workspace();
     ConfigureRuntimeState(&stage_output_workspace, runtime, false);
@@ -272,9 +494,11 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
     std::optional<io::UdpMlvcReceiver> udp_receiver;
     std::optional<io::RtpMlvcReceiver> rtp_receiver;
     io::MlvcBitstreamHeader header;
+    const auto expected_bundle_hash = mlvc::ComputeModelBundleSha256(models.manifest());
     if (udp_input) {
       if (rtp_input) {
-        rtp_receiver.emplace(static_cast<uint16_t>(options.input_transport_port));
+        rtp_receiver.emplace(static_cast<uint16_t>(options.input_transport_port),
+                              expected_bundle_hash, options.input_transport_payload_type);
         header = rtp_receiver->ReceiveHeader();
       } else {
         udp_receiver.emplace(static_cast<uint16_t>(options.input_transport_port));
@@ -285,6 +509,12 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
       bitstream_reader.emplace(options.input_bitstream_path);
       header = bitstream_reader->header();
     }
+    if (header.codec_bundle_sha256 != std::array<uint8_t, 32>{} &&
+        header.codec_bundle_sha256 != expected_bundle_hash) {
+      Check(false, "MLVC stream model bundle hash does not match the local manifest");
+    }
+    mlvc::io::ValidateMlvcDecoderOutputShape(header, x_hat_spec.shape);
+    mlvc::io::ValidateMlvcQIndexForSidecar(header.q_index, sidecar_q_index_count);
     const io::ForcedLtrFrames forced_ltr = io::ResolveForcedLtrFrames(
         header, options.forced_ltr_recovery_frame, options.forced_ltr_reference_frame);
     const int forced_ltr_recovery_frame = forced_ltr.recovery_frame;
@@ -301,29 +531,41 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
     }
     const bool device_only_outputs = use_device_resident_outputs && !write_output;
     ScopedAsyncDecodeDeviceOnlyMirrorSkip device_output_scope(device_only_outputs);
-    ScopedDecodeVideoOutputMirror video_output_scope(options.output_transport_mode == "rtsp");
-    Check(options.output_transport_port == 0 || !options.output_transport_host.empty(),
-          "output_transport_host is required when output_transport_port is set");
-    std::optional<io::RawYuvUdpSender> raw_forwarder;
+    const bool rtsp_use_dvpp_h264 = options.output_transport_mode == "rtsp" &&
+                                    options.output_transport_rtsp_encoder == "dvpp";
+    ScopedDecodeVideoOutputMirror video_output_scope(
+        write_output || (options.output_transport_mode == "rtsp" && !rtsp_use_dvpp_h264));
     std::optional<io::RtspVideoPublisher> rtsp_publisher;
-    if (options.output_transport_port > 0) {
-      Check(options.output_transport_mode == "raw_fp16_yuv444",
-            "only raw_fp16_yuv444 output transport is supported; JPEG forwarding was removed");
-      raw_forwarder.emplace(options.output_transport_host,
-                            static_cast<uint16_t>(options.output_transport_port));
-    }
     if (options.output_transport_mode == "rtsp") {
       rtsp_publisher.emplace(options.output_transport_rtsp_url, writer_fps, header.width,
                              header.height, options.output_transport_rtsp_preset,
                              options.output_transport_rtsp_crf,
                              static_cast<std::size_t>(options.output_transport_queue_capacity),
-                             options.output_transport_rtsp_transport);
+                             options.output_transport_rtsp_transport, rtsp_use_dvpp_h264);
     }
-    const io::Nv12Layout rtsp_nv12_layout{header.width, header.height, header.width, header.height};
+    constexpr int kDvppStrideAlignment = 16;
+    const int rtsp_width_stride =
+        (header.width + kDvppStrideAlignment - 1) & ~(kDvppStrideAlignment - 1);
+    const int rtsp_height_stride =
+        (header.height + kDvppStrideAlignment - 1) & ~(kDvppStrideAlignment - 1);
+    const io::Nv12Layout rtsp_nv12_layout{header.width, header.height, rtsp_width_stride,
+                                          rtsp_height_stride};
+    std::optional<io::DvppH264EncoderConfig> rtsp_h264_encoder_config;
+    if (rtsp_use_dvpp_h264) {
+      Check(Fp16Yuv444ToNv12AclAvailable(),
+            "DVPP H.264 RTSP output requires ACL FP16 YUV444 to NV12 conversion");
+      io::DvppH264EncoderConfig encoder_config;
+      encoder_config.layout = rtsp_nv12_layout;
+      encoder_config.fps = static_cast<uint32_t>(std::max(1.0, std::round(writer_fps)));
+      encoder_config.gop = encoder_config.fps * 2;
+      encoder_config.bitrate = 8'000'000;
+      rtsp_h264_encoder_config = encoder_config;
+    }
     const bool rtsp_acl_nv12 = rtsp_publisher.has_value() && Fp16Yuv444ToNv12AclAvailable();
     std::optional<AsyncRtspNv12Pipeline> rtsp_nv12_pipeline;
     if (rtsp_acl_nv12) {
-      rtsp_nv12_pipeline.emplace(rtsp_nv12_layout, runtime.stream(), &*rtsp_publisher, &profiler);
+      rtsp_nv12_pipeline.emplace(rtsp_nv12_layout, runtime.stream(), &*rtsp_publisher,
+                                 runtime.context(), std::move(rtsp_h264_encoder_config), &profiler);
     }
     ReferenceState state;
     TensorData zero_feature = MakeFp16Tensor(decoder_record.inputs.at(3).shape, 0.0f);
@@ -344,15 +586,19 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
     int decoded_frames = 0;
     int input_frames_seen = 0;
     int expected_udp_frame_index = 0;
+    int active_short_reference_frame = -1;
     uint64_t bitstream_bytes = 0;
     auto submit_entropy = [&](std::size_t slot, int frame_index, MlvcFrameType frame_type,
-                              int q_index,
+                              int q_index, mlvc::io::MlvcFrameMetadata metadata,
                               std::vector<uint8_t> payload) -> std::future<DecodedEntropyFrame> {
       return entropy_worker.SubmitValue<DecodedEntropyFrame>(
-          [&, slot, frame_index, frame_type, q_index, payload = std::move(payload)]() mutable {
-            return DecodeMlvcEntropyFrame(entropy_decoders.at(slot).get(), decoder_record,
-                                          frame_index, frame_type, q_index, std::move(payload),
-                                          &profiler);
+          [&, slot, frame_index, frame_type, q_index, metadata,
+           payload = std::move(payload)]() mutable {
+            auto decoded = DecodeMlvcEntropyFrame(entropy_decoders.at(slot).get(), decoder_record,
+                                                  frame_index, frame_type, q_index,
+                                                  std::move(payload), &profiler);
+            decoded.metadata = metadata;
+            return decoded;
           });
     };
 
@@ -362,21 +608,30 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
         MlvcFrameType next_frame_type = MlvcFrameType::kPFrame;
         int next_q_index = 0;
         std::vector<uint8_t> next_payload;
+        mlvc::io::MlvcFrameMetadata next_metadata;
         bool received = false;
         if (rtp_input) {
           mlvc::ScopedCpuTimer timer(&profiler, "rtp.receive_queue");
           received = rtp_receiver->ReceiveFrame(&next_frame_index, &next_frame_type, &next_q_index,
                                                 &next_payload);
+          if (received) next_metadata = rtp_receiver->last_frame_metadata();
         } else if (udp_input) {
           mlvc::ScopedCpuTimer timer(&profiler, "udp.receive_queue");
           received = udp_receiver->ReceiveFrame(&next_frame_index, &next_frame_type, &next_q_index,
                                                 &next_payload);
+          if (received) next_metadata = udp_receiver->last_frame_metadata();
         } else {
           received = bitstream_reader->ReadFrame(&next_frame_index, &next_frame_type, &next_q_index,
                                                  &next_payload);
+          if (received) next_metadata = bitstream_reader->last_frame_metadata();
         }
         if (!received) {
           return nullptr;
+        }
+        mlvc::io::ValidateMlvcQIndexForSidecar(next_q_index, sidecar_q_index_count);
+        if (next_metadata.explicit_metadata && next_metadata.model_q_index >= 0) {
+          mlvc::io::ValidateMlvcQIndexForSidecar(next_metadata.model_q_index,
+                                                 sidecar_q_index_count);
         }
         ++input_frames_seen;
         if (udp_input && !rtp_input) {
@@ -394,6 +649,7 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
         packet->frame_index = next_frame_index;
         packet->frame_type = next_frame_type;
         packet->q_index = next_q_index;
+        packet->metadata = next_metadata;
         packet->payload = std::move(next_payload);
         return packet;
       }
@@ -423,11 +679,24 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
       const int frame_index = decoded.frame_index;
       const MlvcFrameType frame_type = decoded.frame_type;
       const int q_index = decoded.q_index;
+      const bool explicit_metadata = decoded.metadata.explicit_metadata;
       const bool is_i_frame = frame_type == MlvcFrameType::kIFrame;
       const bool use_ltr_recovery = frame_type == MlvcFrameType::kLtrRecovery;
       const int gop_cycle_index = header.gop > 0 ? frame_index % header.gop : frame_index;
-      if (ShouldResetReferenceFeature(frame_index, header.gop, header.reset_interval)) {
+      const bool reset_reference = explicit_metadata
+                                       ? (decoded.metadata.unit_flags &
+                                          mlvc::transport::kEfuResetReference) != 0
+                                       : ShouldResetReferenceFeature(frame_index, header.gop,
+                                                                      header.reset_interval);
+      if (reset_reference) {
         state.ResetFeature();
+        active_short_reference_frame = -1;
+      }
+      if (explicit_metadata && frame_type == MlvcFrameType::kPFrame && !reset_reference) {
+        Check(active_short_reference_frame >= 0 &&
+                  decoded.metadata.short_ref_frame_id ==
+                      static_cast<uint32_t>(active_short_reference_frame),
+              "MLVC short reference does not match the currently available decoded frame");
       }
       if (is_i_frame) {
         has_ltr_feature = false;
@@ -436,10 +705,12 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
       }
       if (use_ltr_recovery) {
         Check(has_ltr_feature, "LTR recovery frame has no cached LTR feature");
-        const int reference_frame =
-            frame_index == forced_ltr_recovery_frame && forced_ltr_reference_frame >= 0
-                ? forced_ltr_reference_frame
-                : ltr_features.rbegin()->first;
+        const int reference_frame = explicit_metadata
+                                         ? static_cast<int>(decoded.metadata.long_ref_frame_id)
+                                         : (frame_index == forced_ltr_recovery_frame &&
+                                                    forced_ltr_reference_frame >= 0
+                                                ? forced_ltr_reference_frame
+                                                : ltr_features.rbegin()->first);
         const auto ltr_it = ltr_features.find(reference_frame);
         Check(ltr_it != ltr_features.end(),
               "requested LTR reference frame is not cached: " + std::to_string(reference_frame));
@@ -448,19 +719,17 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
       }
 
       const int frame_adaptation_index = kIndexMap[(frame_index + 1) % 8];
-      const int q_index_shifted = sidecar.ShiftedQp(q_index, frame_adaptation_index);
+      const int q_index_shifted = explicit_metadata && decoded.metadata.model_q_index >= 0
+                                      ? decoded.metadata.model_q_index
+                                      : sidecar.ShiftedQp(q_index, frame_adaptation_index);
       TensorData q_index_shifted_tensor = MakeInt32ScalarTensor(q_index_shifted);
       const StageInput ref_feature_input = BuildReferenceFeatureInput(state, zero_feature);
       RunOutput decoder_output =
           RunStage(&models, "MLVCDecoder",
                    {TensorInput("z_raw", decoded.z_raw), TensorInput("y_raw_0", decoded.y_raw_0),
                     TensorInput("y_raw_1", decoded.y_raw_1), ref_feature_input,
-                    TensorInput("q_index_shifted", q_index_shifted_tensor)},
+                   TensorInput("q_index_shifted", q_index_shifted_tensor)},
                    &profiler);
-      if (raw_forwarder.has_value()) {
-        mlvc::ScopedCpuTimer timer(&profiler, "udp.raw_forward_enqueue");
-        raw_forwarder->SendFrame(decoder_output.At("x_hat"), frame_index);
-      }
       if (rtsp_publisher.has_value()) {
         mlvc::ScopedCpuTimer timer(&profiler, "rtsp.output_enqueue");
         if (rtsp_acl_nv12) {
@@ -472,11 +741,35 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
       if (video_writer.has_value()) {
         video_writer->WriteTensorFrame(decoder_output.At("x_hat"), decoded_frames);
       }
-      UpdateReferenceFeature(decoder_output, &state, &profiler);
-      const bool mark_as_ltr =
-          header.ltr_period > 0 &&
-          (gop_cycle_index == header.ltr_start_idx ||
-           (gop_cycle_index > header.ltr_start_idx && gop_cycle_index % header.ltr_period == 0));
+      if (device_only_outputs) {
+        // The decoder's feature output is also a single reusable ACL buffer.
+        // Exchange it with the previous reference buffer instead of cloning
+        // the full feature tensor every frame.  The old reference buffer is
+        // returned to the decoder workspace for the next invocation.
+        mlvc::TensorHandle* feature = decoder_output.Handle("feature");
+        if (feature != nullptr && feature->has_acl_buffer() && feature->acl_valid()) {
+          const mlvc::TensorShape feature_shape = feature->shape();
+          const mlvc::DataType feature_dtype = feature->dtype();
+          if (state.feature_handle.has_value()) {
+            std::swap(*feature, *state.feature_handle);
+          } else {
+            state.feature.reset();
+            state.feature_handle.emplace(std::move(*feature));
+            feature->Reset(feature_shape, feature_dtype);
+            feature->AllocateAclBuffer(false);
+          }
+        } else {
+          UpdateReferenceFeature(decoder_output, &state, &profiler);
+        }
+      } else {
+        UpdateReferenceFeature(decoder_output, &state, &profiler);
+      }
+      const bool mark_as_ltr = explicit_metadata
+                                  ? (decoded.metadata.unit_flags & mlvc::transport::kEfuStoreAsLtr) != 0
+                                  : (header.ltr_period > 0 &&
+                                     (gop_cycle_index == header.ltr_start_idx ||
+                                      (gop_cycle_index > header.ltr_start_idx &&
+                                       gop_cycle_index % header.ltr_period == 0)));
       if (mark_as_ltr) {
         if (device_only_outputs) {
           Check(state.feature_handle.has_value(),
@@ -493,6 +786,7 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
         ltr_features[frame_index] = CloneTensor(ltr_feature);
         has_ltr_feature = true;
       }
+      active_short_reference_frame = frame_index;
       ++decoded_frames;
     };
 
@@ -501,11 +795,14 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
       Check(packet != nullptr, "bitstream pipeline returned an unexpected data object");
       std::optional<DecodedEntropyFrame> ready;
       if (entropy_window.full()) {
-        ready = entropy_window.PopFront();
+        {
+          mlvc::ScopedCpuTimer timer(&profiler, "decode.entropy_wait");
+          ready = entropy_window.PopFront();
+        }
       }
       entropy_window.SubmitNext([&](std::size_t slot) {
         return submit_entropy(slot, packet->frame_index, packet->frame_type, packet->q_index,
-                              std::move(packet->payload));
+                              packet->metadata, std::move(packet->payload));
       });
       if (ready.has_value()) {
         run_decoded_frame(*ready);
@@ -519,16 +816,18 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
     bitstream_consumer.Join();
     bitstream_consumer.RethrowIfFailed();
     while (!entropy_window.empty()) {
-      run_decoded_frame(entropy_window.PopFront());
+      DecodedEntropyFrame decoded;
+      {
+        mlvc::ScopedCpuTimer timer(&profiler, "decode.entropy_wait");
+        decoded = entropy_window.PopFront();
+      }
+      run_decoded_frame(decoded);
     }
     if (rtsp_nv12_pipeline.has_value()) {
       rtsp_nv12_pipeline->Drain();
     }
     bitstream_pipeline.Stop();
     bitstream_pipeline.RethrowIfFailed();
-    if (raw_forwarder.has_value()) {
-      raw_forwarder->Close();
-    }
     if (rtsp_publisher.has_value()) {
       rtsp_publisher->Close();
     }
@@ -557,19 +856,18 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
     std::cout << "output_video=" << (write_output ? options.output_video_path.string() : "none")
               << "\n";
     std::cout << "output_transport_target="
-              << (raw_forwarder.has_value()
-                      ? options.output_transport_host + ":" +
-                            std::to_string(options.output_transport_port)
-                      : (rtsp_publisher.has_value() ? options.output_transport_rtsp_url : "none"))
+              << (rtsp_publisher.has_value() ? options.output_transport_rtsp_url : "none")
               << "\n";
     std::cout << "output_transport_mode="
-              << (raw_forwarder.has_value() ? "raw_fp16_yuv444"
-                                            : (rtsp_publisher.has_value() ? "rtsp" : "none"))
+              << (rtsp_publisher.has_value() ? "rtsp" : "none")
               << "\n";
+    std::cout << "output_transport_rtsp_encoder="
+              << (rtsp_publisher.has_value() ? options.output_transport_rtsp_encoder : "none")
+              << "\n";
+    std::cout << "output_transport_rtsp_frames="
+              << (rtsp_publisher.has_value() ? rtsp_publisher->frame_count() : 0) << "\n";
     std::cout << "forward_dropped_frames="
-              << (raw_forwarder.has_value()
-                      ? raw_forwarder->dropped_frames()
-                      : (rtsp_publisher.has_value() ? rtsp_publisher->dropped_frames() : 0))
+              << (rtsp_publisher.has_value() ? rtsp_publisher->dropped_frames() : 0)
               << "\n";
     std::cout << "output_video_frames="
               << (video_writer.has_value() ? video_writer->frame_count() : decoded_frames) << "\n";

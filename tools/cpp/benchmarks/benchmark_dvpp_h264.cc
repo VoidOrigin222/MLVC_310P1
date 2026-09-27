@@ -6,6 +6,7 @@
 
 #include <acl/ops/acl_dvpp.h>
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -23,6 +24,7 @@ struct Options {
   int padded_width = 1920;
   int padded_height = 1088;
   int device = 0;
+  int frames = 100;
 };
 
 Options ParseOptions(int argc, char** argv) {
@@ -38,10 +40,12 @@ Options ParseOptions(int argc, char** argv) {
     else if (arg == "--padded-width") options.padded_width = std::stoi(value);
     else if (arg == "--padded-height") options.padded_height = std::stoi(value);
     else if (arg == "--device") options.device = std::stoi(value);
+    else if (arg == "--frames") options.frames = std::stoi(value);
     else throw mlvc::Error("unknown option: " + arg);
   }
   mlvc::Check(!options.input_fp16.empty(), "--input-fp16 is required");
   mlvc::Check(!options.output_h264.empty(), "--output-h264 is required");
+  mlvc::Check(options.frames > 0, "--frames must be positive");
   return options;
 }
 
@@ -78,7 +82,15 @@ int main(int argc, char** argv) {
     aclrtEvent ready = nullptr;
     mlvc::CheckAcl(aclrtCreateEvent(&ready), "aclrtCreateEvent H.264 input");
     mlvc::CheckAcl(aclrtRecordEvent(ready, runtime.stream()), "aclrtRecordEvent H.264 input");
-    const std::vector<uint8_t> h264 = encoder.EncodeDevice(nv12_device, nv12.size(), ready, true);
+    std::vector<uint8_t> h264;
+    const auto encode_start = std::chrono::steady_clock::now();
+    for (int frame = 0; frame < options.frames; ++frame) {
+      std::vector<uint8_t> frame_h264 =
+          encoder.EncodeDevice(nv12_device, nv12.size(), ready, true);
+      h264.insert(h264.end(), frame_h264.begin(), frame_h264.end());
+    }
+    const double encode_seconds =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - encode_start).count();
     mlvc::CheckAcl(aclrtDestroyEvent(ready), "aclrtDestroyEvent H.264 input");
     mlvc::CheckAcl(acldvppFree(nv12_device), "acldvppFree H.264 input");
     mlvc::Check(!h264.empty() && HasAnnexBStartCode(h264),
@@ -90,6 +102,8 @@ int main(int argc, char** argv) {
     output.close();
     mlvc::Check(output.good(), "failed to write H.264 output");
     std::cout << "h264_valid=1\n";
+    std::cout << "venc_frames=" << options.frames << "\n";
+    std::cout << "venc_fps=" << options.frames / encode_seconds << "\n";
     std::cout << "h264_bytes=" << h264.size() << "\n";
     return 0;
   } catch (const std::exception& error) {

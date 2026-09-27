@@ -34,6 +34,11 @@ void StreamingPipeline::Start() {
   error_count_ = 0;
   next_sequence_ = 0;
   {
+    std::lock_guard<std::mutex> lock(in_flight_mutex_);
+    in_flight_ = 0;
+    input_closed_ = false;
+  }
+  {
     std::lock_guard<std::mutex> lock(reorder_mutex_);
     completed_results_.clear();
     next_output_sequence_ = 0;
@@ -49,6 +54,11 @@ void StreamingPipeline::Start() {
 
 void StreamingPipeline::Stop() {
   const bool was_running = running_.exchange(false);
+  {
+    std::lock_guard<std::mutex> lock(in_flight_mutex_);
+    input_closed_ = true;
+  }
+  in_flight_cv_.notify_all();
   if (was_running) {
     input_queue_.Close();
     output_queue_.Close();
@@ -60,20 +70,41 @@ void StreamingPipeline::Stop() {
   output_queue_.Close();
 }
 
-void StreamingPipeline::CloseInput() { input_queue_.Close(); }
+void StreamingPipeline::CloseInput() {
+  {
+    std::lock_guard<std::mutex> lock(in_flight_mutex_);
+    input_closed_ = true;
+  }
+  in_flight_cv_.notify_all();
+  input_queue_.Close();
+}
 
 bool StreamingPipeline::AddInput(std::shared_ptr<DataObject> input) {
   if (!input || !running()) return false;
+  {
+    std::unique_lock<std::mutex> lock(in_flight_mutex_);
+    in_flight_cv_.wait(lock, [this] {
+      return input_closed_ || !running() || in_flight_ < queue_capacity_;
+    });
+    if (input_closed_ || !running()) return false;
+    ++in_flight_;
+  }
   const std::size_t sequence = next_sequence_.fetch_add(1);
-  return input_queue_.Push(WorkItem{sequence, std::move(input)});
+  if (input_queue_.Push(WorkItem{sequence, std::move(input)})) return true;
+  ReleaseInFlightSlot();
+  return false;
 }
 
 bool StreamingPipeline::TryGetOutput(std::shared_ptr<DataObject>* output) {
-  return output_queue_.TryPop(output);
+  const bool popped = output_queue_.TryPop(output);
+  if (popped) ReleaseInFlightSlot();
+  return popped;
 }
 
 bool StreamingPipeline::GetOutput(std::shared_ptr<DataObject>* output) {
-  return output_queue_.Pop(output);
+  const bool popped = output_queue_.Pop(output);
+  if (popped) ReleaseInFlightSlot();
+  return popped;
 }
 
 void StreamingPipeline::RethrowIfFailed() const {
@@ -100,6 +131,7 @@ void StreamingPipeline::ProcessingLoop() {
   }
   if (active_workers_.fetch_sub(1) == 1) {
     running_ = false;
+    in_flight_cv_.notify_all();
     output_queue_.Close();
   }
 }
@@ -115,10 +147,21 @@ void StreamingPipeline::PublishReadyResults() {
       if (output_queue_.Push(std::move(output))) {
         ++processed_count_;
       } else {
+        ReleaseInFlightSlot();
         return;
       }
+    } else {
+      ReleaseInFlightSlot();
     }
   }
+}
+
+void StreamingPipeline::ReleaseInFlightSlot() {
+  {
+    std::lock_guard<std::mutex> lock(in_flight_mutex_);
+    if (in_flight_ > 0) --in_flight_;
+  }
+  in_flight_cv_.notify_one();
 }
 
 }  // namespace mlvc

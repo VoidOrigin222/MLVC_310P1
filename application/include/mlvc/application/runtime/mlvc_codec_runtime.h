@@ -40,10 +40,9 @@ class MlvcCodecRuntime {
  private:
   static mlvc::ModelManifest LoadVerifiedManifest(
       const std::filesystem::path& manifest_path);
-  static std::filesystem::path ResolveSidecarPath(const mlvc::ModelManifest& manifest);
 
-  // Declaration order is significant. Models use runtime_, sidecar uses the
-  // manifest owned by models_, and workspace uses models_. Destruction occurs
+  // Declaration order is significant. Models use runtime_, QP metadata comes
+  // from the model directory, and workspace uses models_. Destruction occurs
   // in the reverse order, preserving those dependencies.
   mlvc::StageRuntime runtime_;
   mlvc::StageModelSet models_;

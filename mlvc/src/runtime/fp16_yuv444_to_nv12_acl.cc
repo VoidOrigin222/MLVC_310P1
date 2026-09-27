@@ -79,12 +79,9 @@ bool Load() {
                               "op_api/lib/libcust_opapi.so");
     }
   }
-  // The custom operator package is built outside the MLVC runtime repository on
-  // the P1 deployment images.  Keep an explicit fallback so the operator is
-  // usable without requiring a shell-specific export before process startup.
-  candidates.emplace_back(
-      "/root/workplace/mlvc_20260903/mlvc_acl_cppv1/output/custom_opp/"
-      "mlvc_prior_ops/vendors/mlvc/op_api/lib/libcust_opapi.so");
+  // Allow standard loader paths as a final fallback; deployments that keep
+  // custom operators elsewhere should provide MLVC_VIDEO_OPAPI_LIB,
+  // MLVC_PRIOR_OPAPI_LIB, or MLVC_ACL_REPO_ROOT.
   candidates.emplace_back("libcust_opapi.so");
   for (const auto& candidate : candidates) {
     std::error_code fs_error;

@@ -2,6 +2,7 @@
 #define MLVC_RUNTIME_MODEL_MANIFEST_H_
 
 #include <filesystem>
+#include <array>
 #include <initializer_list>
 #include <map>
 #include <string>
@@ -67,6 +68,12 @@ class ModelManifest {
   std::vector<ModelRecord> models_;
   std::map<std::string, std::size_t> model_index_;
 };
+
+// Returns the deterministic identity of the verified codec bundle.  The
+// digest covers the manifest's semantic fields and every declared model and
+// sidecar byte/hash pair.  Callers must verify the files before using this
+// value as a wire compatibility token.
+std::array<uint8_t, 32> ComputeModelBundleSha256(const ModelManifest& manifest);
 
 }  // namespace mlvc
 

@@ -41,9 +41,9 @@ struct DecodeStreamOptions {
   std::string bitrate = "6500k";
   std::string preset = "medium";
   std::string execution_profile;
-  std::string output_transport_host;
   std::string output_transport_mode = "none";
   std::string output_transport_rtsp_url;
+  std::string output_transport_rtsp_encoder = "dvpp";
   std::string output_transport_rtsp_preset = "ultrafast";
   std::string output_transport_rtsp_transport = "udp";
   int output_transport_rtsp_crf = 0;
@@ -56,7 +56,7 @@ struct DecodeStreamOptions {
   int forced_ltr_recovery_frame = -1;
   int input_transport_port = 0;
   std::string input_transport_mode = "udp";
-  int output_transport_port = 0;
+  uint8_t input_transport_payload_type = 96;
   int output_transport_queue_capacity = 3;
   PipelineOptions pipeline;
 };

@@ -37,6 +37,13 @@ public:
         pipe_.InitBuffer(outputQueue_, 1, widthStride_ * sizeof(uint8_t));
         pipe_.InitBuffer(uBuffer_, visibleWidth_ * sizeof(uint8_t));
         pipe_.InitBuffer(vBuffer_, visibleWidth_ * sizeof(uint8_t));
+        // Keep the conversion arithmetic in vector registers.  The previous
+        // implementation converted every Y sample through GetValue/SetValue,
+        // which serialized 2M scalar operations for a 1080p frame.  Two rows
+        // of FP32 scratch are also used by the chroma path to preserve the
+        // scalar reference's FP32 accumulation order.
+        pipe_.InitBuffer(fp32Buffer_, 2U * inputWidth_ * sizeof(float));
+        pipe_.InitBuffer(int32Buffer_, inputWidth_ * sizeof(int32_t));
     }
 
     __aicore__ inline void Process()
@@ -77,8 +84,20 @@ private:
         if (outputRow < visibleHeight_) {
             CopyInputRow(0, outputRow);
             LocalTensor<half> input = inputQueue_.DeQue<half>();
+            // Keep the arithmetic in FP32 and use the device's RINT
+            // conversion so this path is byte-identical to ToByte().  The
+            // final narrow store remains scalar because 310P has no int32 ->
+            // uint8 vector conversion; all expensive FP16 conversion,
+            // scaling, clamping and rounding are nevertheless vectorized.
+            LocalTensor<float> values = fp32Buffer_.Get<float>();
+            LocalTensor<int32_t> rounded = int32Buffer_.Get<int32_t>();
+            Cast(values, input, RoundMode::CAST_NONE, visibleWidth_);
+            Muls(values, values, 255.0F, visibleWidth_);
+            Maxs(values, values, 0.0F, visibleWidth_);
+            Mins(values, values, 255.0F, visibleWidth_);
+            Cast(rounded, values, RoundMode::CAST_RINT, visibleWidth_);
             for (uint32_t x = 0; x < visibleWidth_; ++x) {
-                output.SetValue(x, ToByte(static_cast<float>(input.GetValue(x))));
+                output.SetValue(x, static_cast<uint8_t>(rounded.GetValue(x)));
             }
             inputQueue_.FreeTensor(input);
         }
@@ -95,13 +114,15 @@ private:
         CopyInputRow(plane, inputRow + 1U);
         LocalTensor<half> row0 = inputQueue_.DeQue<half>();
         LocalTensor<half> row1 = inputQueue_.DeQue<half>();
+        LocalTensor<float> row0Float = fp32Buffer_.Get<float>();
+        LocalTensor<float> row1Float = row0Float[inputWidth_];
+        Cast(row0Float, row0, RoundMode::CAST_NONE, visibleWidth_);
+        Cast(row1Float, row1, RoundMode::CAST_NONE, visibleWidth_);
+        Add(row0Float, row0Float, row1Float, visibleWidth_);
         for (uint32_t x = 0; x < visibleWidth_ / 2U; ++x) {
             const uint32_t sourceX = 2U * x;
             const float average =
-                (static_cast<float>(row0.GetValue(sourceX)) +
-                 static_cast<float>(row0.GetValue(sourceX + 1U)) +
-                 static_cast<float>(row1.GetValue(sourceX)) +
-                 static_cast<float>(row1.GetValue(sourceX + 1U))) * 0.25F;
+                (row0Float.GetValue(sourceX) + row0Float.GetValue(sourceX + 1U)) * 0.25F;
             bytes.SetValue(x, ToByte(average));
         }
         inputQueue_.FreeTensor(row0);
@@ -135,6 +156,8 @@ private:
     TQue<QuePosition::VECOUT, 1> outputQueue_;
     TBuf<QuePosition::VECCALC> uBuffer_;
     TBuf<QuePosition::VECCALC> vBuffer_;
+    TBuf<QuePosition::VECCALC> fp32Buffer_;
+    TBuf<QuePosition::VECCALC> int32Buffer_;
     GlobalTensor<half> inputGm_;
     GlobalTensor<uint8_t> outputGm_;
     uint32_t inputHeight_ = 0;
