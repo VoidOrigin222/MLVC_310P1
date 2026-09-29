@@ -197,7 +197,13 @@ void RtpMessageReceiver::ReceiveLoop() {
           media_header.unit_length != unit.size()) {
         throw std::runtime_error(context_ + ": RTP descriptor does not match media unit header");
       }
-      ValidateMediaUnit(unit);
+      try {
+        ValidateMediaUnit(unit);
+      } catch (const MlvcEfuCrcError&) {
+        // A complete but damaged EFU is a lost frame, not a fatal RTP session
+        // error. The frame-level receiver waits for a valid recovery point.
+        continue;
+      }
       if (media_header.unit_type == MlvcMediaUnitType::kScu) {
         const MlvcScu scu = ParseScu(unit);
         auto existing = std::find_if(

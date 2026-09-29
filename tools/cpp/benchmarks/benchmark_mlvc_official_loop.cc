@@ -288,8 +288,8 @@ int Run(const Options& options) {
       frames_to_attempt, options.frames, {}, options.input_frame_dir, frame_spec, source_info.width,
       source_info.height, &input_arena, nullptr, &graph_executor);
 
-  mlvc::MlvcOfficialEntropyEncoder entropy_encoder(model_directory);
-  mlvc::MlvcOfficialEntropyDecoder entropy_decoder(model_directory);
+  mlvc::MlvcOfficialEntropyEncoder entropy_encoder(models.manifest());
+  mlvc::MlvcOfficialEntropyDecoder entropy_decoder(models.manifest());
   std::optional<mlvc::io::OfficialMlvcBitstreamWriter> bitstream_writer;
   if (!options.output_bitstream_path.empty()) {
     bitstream_writer.emplace(options.output_bitstream_path);

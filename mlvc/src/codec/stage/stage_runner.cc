@@ -109,6 +109,24 @@ RunOutput RunStage(mlvc::StageModelSet* models, std::string_view name,
         }
         continue;
       }
+      if (input.tensor->has_external_buffer()) {
+        const mlvc::TensorView view = input.tensor->View();
+        input_views[input_count++] = mlvc::NamedTensorView{input.name, view};
+        if (profiler != nullptr) {
+          ScopedRepositoryAllocationTrackingPause allocation_pause;
+          profiler->AddCounter(
+              "io.acl_input_external." + std::string(name) + "." + input.name + ".bytes", "copy",
+              "copy", 0.0,
+              {mlvc::Profiler::Arg("stage", std::string(name)),
+               mlvc::Profiler::Arg("tensor", input.name),
+               mlvc::Profiler::Arg("reason", "external_device_buffer"),
+               mlvc::Profiler::Arg("location", view.location() == mlvc::MemoryLocation::kAcl
+                                                       ? "acl"
+                                                       : "pinned_cpu"),
+               mlvc::Profiler::Arg("bytes", static_cast<uint64_t>(input.tensor->ByteSize()))});
+        }
+        continue;
+      }
       if (g_stage_output_workspace != nullptr) {
         input_view = g_stage_output_workspace->InputViewForCpuMirror(input.tensor);
       }
@@ -121,7 +139,7 @@ RunOutput RunStage(mlvc::StageModelSet* models, std::string_view name,
               "copy", 0.0,
               {mlvc::Profiler::Arg("stage", std::string(name)),
                mlvc::Profiler::Arg("tensor", input.name),
-               mlvc::Profiler::Arg("bytes", static_cast<uint64_t>(input.tensor->bytes.size()))});
+                mlvc::Profiler::Arg("bytes", static_cast<uint64_t>(input.tensor->ByteSize()))});
         }
       } else {
         if (g_stage_output_workspace != nullptr) {

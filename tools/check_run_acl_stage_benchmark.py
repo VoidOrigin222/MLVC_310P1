@@ -43,6 +43,9 @@ def make_source_manifest(source_manifest: Path) -> None:
 
 def make_acl_manifest(root: Path) -> Path:
     sidecar = write_file(root / "sidecars.mlvcsc", b"s")
+    runtime_artifacts = []
+    for name in ("metadata.json", "gaussian_pmf.json", "bit_estimator_pmf.json"):
+        runtime_artifacts.append({"name": name, "file": name, **write_file(root / name, b"{}")})
     write_file(root / "onnx_original" / "stage_a.sim.onnx", b"o")
     write_file(root / "onnx_optimized" / "stage_a.sim.onnx", b"p")
     write_file(root / "om_atc" / "stage_a.sim.om", b"a")
@@ -56,6 +59,7 @@ def make_acl_manifest(root: Path) -> Path:
         "soc_version": "Ascend310P3",
         "dtype": "fp16",
         "sidecar": {"file": "sidecars.mlvcsc", **sidecar},
+        "runtime_artifacts": runtime_artifacts,
         "models": [
             {
                 "name": "stage_a",

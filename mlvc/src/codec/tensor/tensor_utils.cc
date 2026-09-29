@@ -38,6 +38,28 @@ constexpr auto kInt8ToFp16 = MakeInt8ToFp16Table();
 
 }  // namespace
 
+void TensorData::AttachExternalBuffer(void* data, std::size_t byte_count,
+                                      mlvc::MemoryLocation location,
+                                      std::shared_ptr<void> owner) {
+  mlvc::Check(data != nullptr, "external tensor buffer must not be null");
+  mlvc::Check(location != mlvc::MemoryLocation::kCpu,
+              "external tensor buffer must use a non-CPU memory location");
+  mlvc::Check(byte_count >= shape.NumElements() * mlvc::ElementSize(dtype),
+              "external tensor buffer is too small");
+  mlvc::Check(owner != nullptr, "external tensor buffer requires an owning lease");
+  external_data = data;
+  external_bytes = byte_count;
+  external_location = location;
+  external_owner = std::move(owner);
+}
+
+void TensorData::ClearExternalBuffer() {
+  external_owner.reset();
+  external_data = nullptr;
+  external_bytes = 0;
+  external_location = mlvc::MemoryLocation::kCpu;
+}
+
 uint32_t FloatToHalfBits(float value) {
   uint32_t bits = 0;
   std::memcpy(&bits, &value, sizeof(bits));
@@ -134,6 +156,8 @@ TensorData MakeTensorLike(const mlvc::TensorSpec& spec) {
 }
 
 TensorData CloneTensor(const TensorData& tensor) {
+  mlvc::Check(!tensor.has_external_buffer(),
+              "external tensor buffers must not be cloned into host memory implicitly");
   TensorData clone;
   clone.shape = tensor.shape;
   clone.dtype = tensor.dtype;
@@ -143,6 +167,8 @@ TensorData CloneTensor(const TensorData& tensor) {
 
 void CloneTensorInto(const TensorData& tensor, TensorData* output) {
   mlvc::Check(output != nullptr, "clone tensor output is required");
+  mlvc::Check(!tensor.has_external_buffer(),
+              "external tensor buffers must not be cloned into host memory implicitly");
   if (output->dtype != tensor.dtype || output->shape.dims() != tensor.shape.dims()) {
     output->shape = tensor.shape;
     output->dtype = tensor.dtype;

@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <array>
+#include <chrono>
 #include <deque>
 #include <map>
 #include <optional>
@@ -108,7 +109,9 @@ class RtpMlvcReceiver {
   void BufferFrameUnit(const std::vector<uint8_t>& unit, uint32_t frame_id);
   bool PopReadyFrame(std::vector<uint8_t>* unit);
   bool TryStartAtRandomAccess();
+  bool HasPendingCurrentFrameAfterExpected() const;
   std::optional<uint32_t> FindRecoveryFrame() const;
+  void MarkDependencyGap();
   void DiscardPendingFramesBefore(uint32_t frame_id);
   void RememberDecodedFrame(uint32_t frame_id, bool store_as_ltr);
 
@@ -123,6 +126,8 @@ class RtpMlvcReceiver {
   bool header_received_ = false;
   std::optional<uint32_t> eos_frame_count_;
   std::optional<std::vector<uint8_t>> pending_eos_unit_;
+  std::optional<std::chrono::steady_clock::time_point> reorder_deadline_;
+  bool waiting_for_recovery_ = false;
   std::size_t pending_frame_bytes_ = 0;
   std::deque<std::vector<uint8_t>> pending_config_units_;
   std::map<uint32_t, std::vector<uint8_t>> pending_frames_;

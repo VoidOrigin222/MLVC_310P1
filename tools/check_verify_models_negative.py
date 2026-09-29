@@ -25,6 +25,9 @@ def write_file(path: Path, payload: bytes) -> dict[str, object]:
 
 def base_manifest(root: Path) -> dict[str, object]:
     sidecar_meta = write_file(root / "sidecars.mlvcsc", b"sidecar")
+    runtime_artifacts = []
+    for name in ("metadata.json", "gaussian_pmf.json", "bit_estimator_pmf.json"):
+        runtime_artifacts.append({"name": name, "file": name, **write_file(root / name, b"{}")})
     om_meta = write_file(root / "om_aoe" / "stage.sim.om", b"aoe")
     write_file(root / "onnx_original" / "stage.sim.onnx", b"onnx")
     write_file(root / "onnx_optimized" / "stage.sim.onnx", b"optimized")
@@ -42,6 +45,7 @@ def base_manifest(root: Path) -> dict[str, object]:
             "bytes": sidecar_meta["bytes"],
             "sha256": sidecar_meta["sha256"],
         },
+        "runtime_artifacts": runtime_artifacts,
         "models": [
             {
                 "name": "stage",
@@ -90,8 +94,22 @@ def main() -> int:
         valid_path = write_manifest(temp_root, manifest, "valid.json")
         verify_models.verify_manifest(valid_path, strict_assets=False, allow_missing_fused=False)
 
-        checked_cases = 0
+        missing_runtime_artifact = copy.deepcopy(manifest)
+        missing_runtime_artifact["runtime_artifacts"].pop()  # type: ignore[index]
         cases: list[tuple[str, dict[str, object], str]] = []
+        cases.append(
+            ("missing_runtime_artifact.json", missing_runtime_artifact, "missing runtime artifacts")
+        )
+
+        tampered_root = temp_root / "tampered_runtime_artifact"
+        tampered_manifest = base_manifest(tampered_root)
+        write_file(tampered_root / "gaussian_pmf.json", b"tampered")
+        expect_failure(
+            write_manifest(tampered_root, tampered_manifest, "tampered.json"),
+            "runtime artifact gaussian_pmf.json byte mismatch",
+        )
+
+        checked_cases = 1
         bad_file = copy.deepcopy(manifest)
         bad_file["models"][0]["file"] = "om_atc/stage.sim.om"  # type: ignore[index]
         cases.append(("bad_file.json", bad_file, "file must point to om_aoe/*.om"))

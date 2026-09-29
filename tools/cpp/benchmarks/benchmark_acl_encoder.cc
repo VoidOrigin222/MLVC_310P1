@@ -312,7 +312,7 @@ int main(int argc, char** argv) {
     const int z_height = static_cast<int>(z_raw_spec.shape[2]);
     const int z_width = static_cast<int>(z_raw_spec.shape[3]);
     const int z_channel = static_cast<int>(z_raw_spec.shape[1]);
-    mlvc::MlvcOfficialEntropyEncoder official_entropy(model_directory);
+    mlvc::MlvcOfficialEntropyEncoder official_entropy(models.manifest());
     mlvc::codec::MlvcRateControlOptions rate_control_options;
     rate_control_options.width = source_width;
     rate_control_options.height = source_height;

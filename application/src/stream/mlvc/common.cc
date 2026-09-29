@@ -100,10 +100,21 @@ bool HasMlvcModels(const mlvc::ModelManifest& manifest) {
 
 SourceFrameGeometry ResolveSourceGeometry(const std::filesystem::path& input_video_path,
                                           const std::filesystem::path& input_frame_dir,
+                                          const std::optional<mlvc::io::CameraCaptureOptions>&
+                                              camera_options,
+                                          aclrtContext context,
                                           const mlvc::TensorSpec& frame_spec, double* fps) {
   SourceInfo info = ReadSourceInfo(input_frame_dir);
-  if (!input_video_path.empty()) {
-    mlvc::io::VideoFrameReader reader(input_video_path);
+  if (camera_options.has_value()) {
+    info.width = camera_options->width;
+    info.height = camera_options->height;
+    info.fps = camera_options->fps;
+  } else if (!input_video_path.empty()) {
+    mlvc::io::VideoFrameReader reader = camera_options.has_value()
+                                            ? mlvc::io::VideoFrameReader(input_video_path,
+                                                                          *camera_options,
+                                                                          context)
+                                            : mlvc::io::VideoFrameReader(input_video_path);
     const mlvc::io::VideoInfo& video_info = reader.info();
     info.width = video_info.width;
     info.height = video_info.height;
@@ -112,8 +123,13 @@ SourceFrameGeometry ResolveSourceGeometry(const std::filesystem::path& input_vid
   if (fps != nullptr) {
     *fps = info.fps;
   }
-  const int padded_height = static_cast<int>(frame_spec.shape.at(2));
-  const int padded_width = static_cast<int>(frame_spec.shape.at(3));
+  const bool aipp_camera = camera_options.has_value() && frame_spec.dtype == mlvc::DataType::kUInt8;
+  const int padded_height = aipp_camera
+                                ? static_cast<int>(frame_spec.shape.at(1) * 2 / 3)
+                                : static_cast<int>(frame_spec.shape.at(2));
+  const int padded_width = aipp_camera
+                               ? static_cast<int>(frame_spec.shape.at(2))
+                               : static_cast<int>(frame_spec.shape.at(3));
   Check(info.width <= padded_width && info.height <= padded_height,
         "input frame size exceeds model tensor shape");
   return SourceFrameGeometry{info.width, info.height, padded_width, padded_height};

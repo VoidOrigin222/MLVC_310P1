@@ -123,9 +123,14 @@ std::vector<int8_t> NarrowMlvcSymbols(const std::vector<int32_t>& values) {
 
 class MlvcOfficialEntropyEncoder::Impl {
  public:
-  explicit Impl(const std::filesystem::path& model_directory) {
-    const Pmf gaussian = LoadPmf(model_directory / "gaussian_pmf.json");
-    const Pmf bit_estimator = LoadPmf(model_directory / "bit_estimator_pmf.json");
+  explicit Impl(const ModelManifest& manifest) {
+    VerifyRuntimeArtifacts(manifest);
+    const auto artifact_path = [&manifest](const std::string& name) {
+      const auto& artifact = manifest.GetRuntimeArtifact(name);
+      return artifact.file.is_absolute() ? artifact.file : manifest.directory() / artifact.file;
+    };
+    const Pmf gaussian = LoadPmf(artifact_path("gaussian_pmf.json"));
+    const Pmf bit_estimator = LoadPmf(artifact_path("bit_estimator_pmf.json"));
     CheckRans(gaussian_.Initialize(msrtc_rans::RansVariant::RansByte, gaussian.lengths,
                                    gaussian.offsets, gaussian.table, 16, 2),
               "initialize MLVC Gaussian encoder");
@@ -138,8 +143,8 @@ class MlvcOfficialEntropyEncoder::Impl {
   msrtc_rans::EntropyEncoder z_;
 };
 
-MlvcOfficialEntropyEncoder::MlvcOfficialEntropyEncoder(const std::filesystem::path& model_directory)
-    : impl_(std::make_unique<Impl>(model_directory)) {}
+MlvcOfficialEntropyEncoder::MlvcOfficialEntropyEncoder(const ModelManifest& manifest)
+    : impl_(std::make_unique<Impl>(manifest)) {}
 
 MlvcOfficialEntropyEncoder::~MlvcOfficialEntropyEncoder() = default;
 
@@ -176,9 +181,14 @@ void MlvcOfficialEntropyEncoder::Encode(const std::vector<int8_t>& z, const std:
 
 class MlvcOfficialEntropyDecoder::Impl {
  public:
-  explicit Impl(const std::filesystem::path& model_directory) {
-    const Pmf gaussian = LoadPmf(model_directory / "gaussian_pmf.json");
-    const Pmf bit_estimator = LoadPmf(model_directory / "bit_estimator_pmf.json");
+  explicit Impl(const ModelManifest& manifest) {
+    VerifyRuntimeArtifacts(manifest);
+    const auto artifact_path = [&manifest](const std::string& name) {
+      const auto& artifact = manifest.GetRuntimeArtifact(name);
+      return artifact.file.is_absolute() ? artifact.file : manifest.directory() / artifact.file;
+    };
+    const Pmf gaussian = LoadPmf(artifact_path("gaussian_pmf.json"));
+    const Pmf bit_estimator = LoadPmf(artifact_path("bit_estimator_pmf.json"));
     CheckRans(gaussian_.Initialize(msrtc_rans::RansVariant::RansByte, gaussian.lengths,
                                    gaussian.offsets, gaussian.table, 16, 2),
               "initialize MLVC Gaussian decoder");
@@ -195,8 +205,8 @@ class MlvcOfficialEntropyDecoder::Impl {
   std::vector<std::byte> payload_;
 };
 
-MlvcOfficialEntropyDecoder::MlvcOfficialEntropyDecoder(const std::filesystem::path& model_directory)
-    : impl_(std::make_unique<Impl>(model_directory)) {}
+MlvcOfficialEntropyDecoder::MlvcOfficialEntropyDecoder(const ModelManifest& manifest)
+    : impl_(std::make_unique<Impl>(manifest)) {}
 
 MlvcOfficialEntropyDecoder::~MlvcOfficialEntropyDecoder() = default;
 

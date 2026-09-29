@@ -37,6 +37,10 @@ void CheckKnownKeys(const toml::table& table, std::initializer_list<std::string_
 void ValidateConfigKeys(const toml::table& config) {
   CheckKnownKeys(config,
                  {"mode", "input", "output", "input_frame_dir", "input_video",
+                  "input_camera_device", "input_synthetic", "camera_width", "camera_height", "camera_fps",
+                  "camera_pixel_format", "camera_rtsp_url", "camera_rtsp_transport",
+                  "camera_rtsp_bitrate_bps", "camera_rtsp_gop", "camera_rtsp_queue_capacity",
+                  "camera_preload_frames",
                   "execution_profile", "manifest", "qp", "gop", "reset_interval", "device",
                   "frame_num", "fps", "profile_warmup_frames", "profile_output",
                   "enable_stage_fusion", "ltr_start_idx", "ltr_period", "ltr_qp_shift",
@@ -145,6 +149,7 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
       GetString(config, "input_frame_dir", GetNestedString(config, "model", "input_frame_dir"));
   const std::string input_video =
       GetString(config, "input_video", GetNestedString(config, "model", "input_video"));
+  const std::string camera_device = GetString(config, "input_camera_device");
   const std::string execution_profile =
       GetString(config, "execution_profile", std::string(mlvc::codec::kCodecExecutionProfile));
   // Issue #7 fix: Validate execution_profile
@@ -166,6 +171,7 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
   options.device = GetInt(config, "device", 0);
   Check(options.device >= 0, "device must be non-negative");
   options.frame_num = GetInt(config, "frame_num", -1);
+  options.input_synthetic = GetBool(config, "input_synthetic", false);
   Check(options.frame_num == -1 || options.frame_num > 0,
         "frame_num must be -1 or a positive value");
   options.fps = GetDouble(config, "fps", 30.0);
@@ -187,9 +193,57 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
   Check(options.reset_interval > 0, "reset_interval must be positive");
 
   const std::string frame_input = input_frame_dir.empty() ? input : input_frame_dir;
+  Check(!options.input_synthetic ||
+            (camera_device.empty() && input_video.empty() && input_frame_dir.empty() &&
+             input.empty() && options.frame_num > 0),
+        "synthetic input requires a finite frame_num and no other input source");
+  Check(camera_device.empty() ||
+            (input_video.empty() && input_frame_dir.empty() && input.empty()),
+        "camera input cannot be combined with input_video or input_frame_dir");
+  if (!camera_device.empty()) {
+    options.input_camera_device = camera_device;
+    mlvc::io::CameraCaptureOptions camera_options;
+    camera_options.width = GetInt(config, "camera_width", 1920);
+    camera_options.height = GetInt(config, "camera_height", 1080);
+    camera_options.fps = GetDouble(config, "camera_fps", 30.0);
+    camera_options.pixel_format = GetString(config, "camera_pixel_format", "MJPG");
+    camera_options.rtsp_url = GetString(config, "camera_rtsp_url");
+    camera_options.rtsp_transport = GetString(config, "camera_rtsp_transport", "tcp");
+    const int camera_rtsp_bitrate = GetInt(config, "camera_rtsp_bitrate_bps", 8'000'000);
+    const int camera_rtsp_gop = GetInt(config, "camera_rtsp_gop", 96);
+    const int camera_rtsp_queue_capacity = GetInt(config, "camera_rtsp_queue_capacity", 3);
+    const int camera_preload_frames = GetInt(config, "camera_preload_frames", 0);
+    Check(camera_options.width > 0 && camera_options.height > 0 &&
+              camera_options.width % 2 == 0 && camera_options.height % 2 == 0,
+          "camera dimensions must be positive and even");
+    Check(std::isfinite(camera_options.fps) && camera_options.fps > 0.0 &&
+              camera_options.fps <= 240.0,
+          "camera_fps must be in (0, 240]");
+    Check(camera_options.pixel_format == "MJPG", "camera_pixel_format must be MJPG");
+    Check(camera_options.rtsp_transport == "tcp" || camera_options.rtsp_transport == "udp",
+          "camera_rtsp_transport must be tcp or udp");
+    Check(camera_rtsp_bitrate >= 2'000 && camera_rtsp_bitrate <= 614'400'000,
+          "camera_rtsp_bitrate_bps must be in [2000, 614400000]");
+    Check(camera_rtsp_gop > 0, "camera_rtsp_gop must be positive");
+    Check(camera_rtsp_queue_capacity > 0, "camera_rtsp_queue_capacity must be positive");
+    Check(camera_preload_frames >= 0 && camera_preload_frames <= 3000,
+          "camera_preload_frames must be in [0, 3000]");
+    Check(camera_preload_frames == 0 || options.frame_num > 0,
+          "camera preload benchmark requires a finite frame_num");
+    Check(camera_preload_frames == 0 || camera_options.rtsp_url.empty(),
+          "camera preload benchmark cannot publish RTSP");
+    camera_options.rtsp_bitrate_bps = static_cast<uint32_t>(camera_rtsp_bitrate);
+    camera_options.rtsp_gop = static_cast<uint32_t>(camera_rtsp_gop);
+    camera_options.rtsp_queue_capacity = static_cast<std::size_t>(camera_rtsp_queue_capacity);
+    camera_options.preload_frames = static_cast<std::size_t>(camera_preload_frames);
+    options.camera_options = camera_options;
+    options.input_video_path = camera_device;
+  }
   const std::string video_input =
       input_video.empty() && mlvc::io::IsVideoPath(input) ? input : input_video;
-  if (!video_input.empty()) {
+  if (!camera_device.empty()) {
+    // Camera input has already been selected above.
+  } else if (!video_input.empty()) {
     options.input_video_path = video_input;
   } else {
     options.input_frame_dir = frame_input;

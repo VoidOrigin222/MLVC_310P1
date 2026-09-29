@@ -6,6 +6,8 @@
 #include <memory>
 #include <vector>
 
+#include "mlvc/runtime/model_manifest.h"
+
 namespace mlvc {
 
 class Profiler;
@@ -14,7 +16,7 @@ std::vector<int8_t> NarrowMlvcSymbols(const std::vector<int32_t>& values);
 
 class MlvcOfficialEntropyEncoder {
  public:
-  explicit MlvcOfficialEntropyEncoder(const std::filesystem::path& model_directory);
+  explicit MlvcOfficialEntropyEncoder(const ModelManifest& manifest);
   ~MlvcOfficialEntropyEncoder();
   MlvcOfficialEntropyEncoder(const MlvcOfficialEntropyEncoder&) = delete;
   MlvcOfficialEntropyEncoder& operator=(const MlvcOfficialEntropyEncoder&) = delete;
@@ -31,7 +33,7 @@ class MlvcOfficialEntropyEncoder {
 
 class MlvcOfficialEntropyDecoder {
  public:
-  explicit MlvcOfficialEntropyDecoder(const std::filesystem::path& model_directory);
+  explicit MlvcOfficialEntropyDecoder(const ModelManifest& manifest);
   ~MlvcOfficialEntropyDecoder();
   MlvcOfficialEntropyDecoder(const MlvcOfficialEntropyDecoder&) = delete;
   MlvcOfficialEntropyDecoder& operator=(const MlvcOfficialEntropyDecoder&) = delete;

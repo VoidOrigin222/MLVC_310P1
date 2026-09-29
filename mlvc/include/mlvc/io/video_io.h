@@ -2,6 +2,7 @@
 #define MLVC_IO_VIDEO_IO_H_
 
 #include <mlvc/codec/tensor_data.h>
+#include <acl/acl.h>
 
 #include <condition_variable>
 #include <cstddef>
@@ -14,6 +15,7 @@
 #include <mutex>
 #include <opencv2/core/mat.hpp>
 #include <string>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -26,15 +28,32 @@ struct VideoInfo {
   double fps = 30.0;
 };
 
+struct CameraCaptureOptions {
+  int width = 1920;
+  int height = 1080;
+  double fps = 30.0;
+  std::string pixel_format = "MJPG";
+  std::string rtsp_url;
+  std::string rtsp_transport = "tcp";
+  uint32_t rtsp_bitrate_bps = 8'000'000;
+  uint32_t rtsp_gop = 96;
+  std::size_t rtsp_queue_capacity = 3;
+  // Benchmark only: capture this many native MJPEG frames before timed processing.
+  std::size_t preload_frames = 0;
+};
+
 class VideoFrameReader {
  public:
   explicit VideoFrameReader(const std::filesystem::path& input_path);
+  VideoFrameReader(const std::filesystem::path& input_path,
+                   const CameraCaptureOptions& camera_options, aclrtContext context);
   VideoFrameReader(const VideoFrameReader&) = delete;
   VideoFrameReader& operator=(const VideoFrameReader&) = delete;
   ~VideoFrameReader();
 
   const VideoInfo& info() const { return info_; }
   bool ReadFrameAsTensor(const mlvc::TensorSpec& frame_spec, codec::TensorData* tensor);
+  void Close();
 
  private:
   class Impl;

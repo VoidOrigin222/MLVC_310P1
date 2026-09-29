@@ -3,9 +3,15 @@
 
 #include <array>
 #include <cstdint>
+#include <stdexcept>
 #include <vector>
 
 namespace mlvc::transport {
+
+class MlvcEfuCrcError : public std::runtime_error {
+ public:
+  MlvcEfuCrcError() : std::runtime_error("MLVC EFU CRC-32C mismatch") {}
+};
 
 constexpr uint8_t kMlvcMediaUnitVersion = 1;
 constexpr std::size_t kMlvcMediaUnitCommonHeaderBytes = 20;

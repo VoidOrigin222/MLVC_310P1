@@ -232,7 +232,7 @@ int main(int argc, char** argv) {
     const int z_height = static_cast<int>(z_raw_spec.shape[2]);
     const int z_width = static_cast<int>(z_raw_spec.shape[3]);
     const int z_channel = static_cast<int>(z_raw_spec.shape[1]);
-    mlvc::MlvcOfficialEntropyDecoder official_entropy(model_directory);
+    mlvc::MlvcOfficialEntropyDecoder official_entropy(models.manifest());
 
     mlvc::codec::TensorData ref_feature = mlvc::codec::MakeTensorLike(ref_feature_spec);
     mlvc::codec::TensorData ltr_feature = mlvc::codec::MakeTensorLike(ref_feature_spec);

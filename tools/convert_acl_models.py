@@ -34,6 +34,7 @@ AOE_WORKSPACE_RETENTION = {
     "policy": "preserve",
     "reason": "AOE workspaces and tuning caches may speed up later retries.",
 }
+RUNTIME_ARTIFACT_NAMES = ("metadata.json", "gaussian_pmf.json", "bit_estimator_pmf.json")
 
 
 def require_onnx_modules() -> tuple[Any, Any]:
@@ -55,6 +56,22 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def copy_runtime_artifacts(source_root: Path, output_root: Path) -> list[dict[str, Any]]:
+    artifacts: list[dict[str, Any]] = []
+    for name in RUNTIME_ARTIFACT_NAMES:
+        source = source_root / name
+        if not source.is_file():
+            raise RuntimeError(f"missing required runtime artifact: {source}")
+        target = output_root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if source.resolve() != target.resolve():
+            shutil.copy2(source, target)
+        artifacts.append(
+            {"name": name, "file": name, "bytes": target.stat().st_size, "sha256": sha256(target)}
+        )
+    return artifacts
 
 
 def run_command(
@@ -304,6 +321,7 @@ def rebuild_partial_manifest_from_artifacts(
             "bytes": target_sidecar.stat().st_size,
             "sha256": sha256(target_sidecar),
         },
+        "runtime_artifacts": copy_runtime_artifacts(source_root, output_root),
         "models": [],
     }
     for record in select_records(manifest, requested_stages):
@@ -676,6 +694,7 @@ def main() -> None:
             "bytes": target_sidecar.stat().st_size,
             "sha256": sha256(target_sidecar),
         },
+        "runtime_artifacts": copy_runtime_artifacts(source_root, output_root),
         "models": [],
     }
 

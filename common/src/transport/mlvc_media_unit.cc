@@ -473,7 +473,7 @@ MlvcEfu ParseEfu(const std::vector<uint8_t>& unit) {
   }
   efu.tlvs = ParseTlvs(unit, offset, common.header_length);
   efu.entropy_payload.assign(unit.begin() + common.header_length, unit.end());
-  if (MlvcCrc32c(efu.entropy_payload) != payload_crc) Fail("MLVC EFU CRC-32C mismatch");
+  if (MlvcCrc32c(efu.entropy_payload) != payload_crc) throw MlvcEfuCrcError();
   ValidateReferenceIds(efu);
   return efu;
 }

@@ -12,9 +12,12 @@ namespace mlvc::io {
 class FrameSource {
  public:
   FrameSource(int configured_frame_num, std::filesystem::path input_video_path,
-              std::filesystem::path input_frame_dir, mlvc::TensorSpec frame_spec);
+              std::filesystem::path input_frame_dir, mlvc::TensorSpec frame_spec,
+              std::optional<CameraCaptureOptions> camera_options = std::nullopt,
+              aclrtContext context = nullptr);
 
   bool ReadFrame(int frame_index, codec::TensorData* frame);
+  void Close();
   bool has_video_input() const { return video_reader_.has_value(); }
   const std::filesystem::path& input_frame_dir() const { return input_frame_dir_; }
 

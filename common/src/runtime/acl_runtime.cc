@@ -149,8 +149,9 @@ void ValidateAclTensorSpecs(const std::vector<TensorSpec>& specs, const std::str
   for (const TensorSpec& spec : specs) {
     Check(!spec.name.empty(), "ACL runtime requires named " + std::string(label) +
                                   " tensors for model record: " + record_name);
-    Check(spec.dtype == DataType::kFloat16 || spec.dtype == DataType::kInt32,
-          "ACL runtime requires FP16 or INT32 " + std::string(label) +
+    Check(spec.dtype == DataType::kFloat16 || spec.dtype == DataType::kInt32 ||
+              (std::strcmp(label, "input") == 0 && spec.dtype == DataType::kUInt8),
+          "ACL runtime requires FP16, INT32, or UINT8 input " + std::string(label) +
               " tensors for model record: " + record_name + "." + spec.name);
     Check(!spec.shape.empty(), "ACL runtime requires static " + std::string(label) +
                                    " tensor shapes for model record: " + record_name + "." +
@@ -358,7 +359,10 @@ TensorSpec AclStage::ReadInputSpec(aclmdlDesc* desc, std::size_t index) {
   spec.name = name != nullptr ? name : "input_" + std::to_string(index);
   spec.dtype = MlvcDataType(aclmdlGetInputDataType(desc, index));
   aclmdlIODims dims{};
-  CheckAcl(aclmdlGetInputDims(desc, index, &dims), "aclmdlGetInputDims");
+  CheckAcl(spec.dtype == DataType::kUInt8
+               ? aclmdlGetInputDimsV2(desc, index, &dims)
+               : aclmdlGetInputDims(desc, index, &dims),
+           "aclmdlGetInputDims");
   spec.shape = DimsVector(dims);
   return spec;
 }

@@ -18,7 +18,8 @@ class FrameBufferPool {
 
 class FrameInputArena final : public FrameBufferPool {
  public:
-  FrameInputArena(const mlvc::TensorSpec& frame_spec, int slot_count);
+  FrameInputArena(const mlvc::TensorSpec& frame_spec, int slot_count,
+                  bool allocate_host_buffers = true);
 
   codec::TensorData& Get(std::size_t slot_index) override { return slots_.at(slot_index); }
   const codec::TensorData& Get(std::size_t slot_index) const override {

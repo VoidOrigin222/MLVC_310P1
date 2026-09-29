@@ -11,8 +11,20 @@ void ValidateEncodeInput(const EncodeStreamOptions& options) {
   Check(mlvc::codec::IsCodecExecutionProfile(options.execution_profile),
         "unsupported codec execution profile: " + options.execution_profile);
   Check(!options.manifest_path.empty(), "encode stream requires a manifest path");
-  Check(!options.input_video_path.empty() || !options.input_frame_dir.empty(),
-        "MLVC encode requires input_frame_dir or input_video; synthetic frames are disabled");
+  Check(options.input_synthetic || !options.input_camera_device.empty() || !options.input_video_path.empty() ||
+            !options.input_frame_dir.empty(),
+        "MLVC encode requires input_synthetic, input_camera_device, input_frame_dir, or input_video");
+  if (options.input_synthetic) {
+    Check(options.input_camera_device.empty() && options.input_video_path.empty() &&
+              options.input_frame_dir.empty() && options.frame_num > 0,
+          "synthetic input requires a finite frame count and no other source");
+    return;
+  }
+  if (!options.input_camera_device.empty()) {
+    Check(options.camera_options.has_value(), "camera options are required for camera input");
+    Check(options.input_camera_device == options.input_video_path,
+          "camera device and selected input path must match");
+  }
   if (!options.input_video_path.empty()) {
     Check(std::filesystem::exists(options.input_video_path),
           "MLVC input video does not exist: " + options.input_video_path.string());

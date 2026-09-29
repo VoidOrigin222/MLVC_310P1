@@ -4,7 +4,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
+
+#include <mlvc/io/video_io.h>
 
 namespace mlvc::codec {
 
@@ -20,6 +23,9 @@ struct EncodeStreamOptions {
   std::filesystem::path manifest_path;
   std::filesystem::path input_frame_dir;
   std::filesystem::path input_video_path;
+  std::filesystem::path input_camera_device;
+  bool input_synthetic = false;
+  std::optional<mlvc::io::CameraCaptureOptions> camera_options;
   std::filesystem::path output_bitstream_path;
   std::filesystem::path profile_output_path;
   std::string execution_profile;

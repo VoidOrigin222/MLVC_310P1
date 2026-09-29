@@ -9,12 +9,18 @@ namespace mlvc::io {
 namespace codec = mlvc::codec;
 
 FrameSource::FrameSource(int configured_frame_num, std::filesystem::path input_video_path,
-                         std::filesystem::path input_frame_dir, mlvc::TensorSpec frame_spec)
+                         std::filesystem::path input_frame_dir, mlvc::TensorSpec frame_spec,
+                         std::optional<CameraCaptureOptions> camera_options,
+                         aclrtContext context)
     : configured_frame_num_(configured_frame_num),
       input_frame_dir_(std::move(input_frame_dir)),
       frame_spec_(std::move(frame_spec)) {
   if (!input_video_path.empty()) {
-    video_reader_.emplace(input_video_path);
+    if (camera_options.has_value()) {
+      video_reader_.emplace(input_video_path, *camera_options, context);
+    } else {
+      video_reader_.emplace(input_video_path);
+    }
   }
 }
 
@@ -44,6 +50,10 @@ bool FrameSource::ReadFrame(int frame_index, codec::TensorData* frame) {
   }
   codec::ReadTensorFileInto(frame_path, frame);
   return true;
+}
+
+void FrameSource::Close() {
+  if (video_reader_.has_value()) video_reader_->Close();
 }
 
 }  // namespace mlvc::io

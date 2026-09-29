@@ -41,6 +41,13 @@ struct SidecarRecord {
   std::string sha256;
 };
 
+struct RuntimeArtifactRecord {
+  std::string name;
+  std::filesystem::path file;
+  uint64_t bytes = 0;
+  std::string sha256;
+};
+
 class ModelManifest {
  public:
   static ModelManifest Load(const std::filesystem::path& manifest_path);
@@ -51,12 +58,17 @@ class ModelManifest {
   const std::string& soc_version() const { return soc_version_; }
   const std::string& dtype() const { return dtype_; }
   const SidecarRecord& sidecar() const { return sidecar_; }
+  const std::vector<RuntimeArtifactRecord>& runtime_artifacts() const {
+    return runtime_artifacts_;
+  }
+  std::vector<RuntimeArtifactRecord>& runtime_artifacts() { return runtime_artifacts_; }
   const std::vector<ModelRecord>& models() const { return models_; }
   std::vector<ModelRecord>& models() { return models_; }
   bool HasModel(const std::string& name) const;
   const ModelRecord* FindModel(const std::string& name) const;
   const ModelRecord* FindFusionCandidate(std::initializer_list<std::string_view> replaces) const;
   const ModelRecord& GetModel(const std::string& name) const;
+  const RuntimeArtifactRecord& GetRuntimeArtifact(const std::string& name) const;
 
  private:
   std::filesystem::path path_;
@@ -65,15 +77,20 @@ class ModelManifest {
   std::string soc_version_;
   std::string dtype_;
   SidecarRecord sidecar_;
+  std::vector<RuntimeArtifactRecord> runtime_artifacts_;
   std::vector<ModelRecord> models_;
   std::map<std::string, std::size_t> model_index_;
 };
 
 // Returns the deterministic identity of the verified codec bundle.  The
-// digest covers the manifest's semantic fields and every declared model and
-// sidecar byte/hash pair.  Callers must verify the files before using this
-// value as a wire compatibility token.
+// digest covers the manifest's semantic fields, model and sidecar records,
+// and all runtime artifacts (metadata and entropy PMFs). Callers must verify
+// the files before using this value as a wire compatibility token.
 std::array<uint8_t, 32> ComputeModelBundleSha256(const ModelManifest& manifest);
+
+// Validates metadata.json and the entropy PMFs against the manifest before
+// either is read by the codec.
+void VerifyRuntimeArtifacts(const ModelManifest& manifest);
 
 }  // namespace mlvc
 

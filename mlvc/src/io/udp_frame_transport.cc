@@ -7,6 +7,7 @@
 #include <limits>
 #include <numeric>
 #include <random>
+#include <sstream>
 #include <string>
 #include <utility>
 
@@ -18,6 +19,24 @@ namespace {
 constexpr uint8_t kHeaderMessage = 1;
 constexpr uint8_t kFrameMessage = 2;
 constexpr uint8_t kEndMessage = 3;
+constexpr std::size_t kMaxPendingRtpFrames = 64;
+constexpr std::size_t kMaxPendingRtpFrameBytes = 128u * 1024u * 1024u;
+constexpr auto kRtpFrameReorderWait = std::chrono::milliseconds(100);
+
+bool IsRandomAccessEfu(const mlvc::transport::MlvcEfu& efu) {
+  return efu.frame_type == static_cast<uint8_t>(mlvc::codec::MlvcFrameType::kIFrame) &&
+         (efu.unit_flags & (mlvc::transport::kEfuRandomAccess |
+                            mlvc::transport::kEfuResetReference)) ==
+             (mlvc::transport::kEfuRandomAccess | mlvc::transport::kEfuResetReference);
+}
+
+std::string FormatBundleHash(const std::array<uint8_t, 32>& hash) {
+  std::ostringstream output;
+  output << std::hex;
+  for (uint8_t byte : hash) output << static_cast<unsigned>(byte >> 4)
+                                    << static_cast<unsigned>(byte & 0x0f);
+  return output.str();
+}
 
 void PutU32(std::vector<uint8_t>* out, uint32_t value) {
   for (int shift = 0; shift < 32; shift += 8) {
@@ -418,8 +437,10 @@ void RtpMlvcReceiver::HandleConfigurationUnit(const std::vector<uint8_t>& unit) 
   const auto scu = mlvc::transport::ParseScu(unit);
   if (std::any_of(expected_bundle_hash_.begin(), expected_bundle_hash_.end(),
                   [](uint8_t byte) { return byte != 0; })) {
-    Check(scu.codec_bundle_sha256 == expected_bundle_hash_,
-          "RTP configuration uses a different model bundle");
+      Check(scu.codec_bundle_sha256 == expected_bundle_hash_,
+            "RTP configuration uses a different model bundle (received=" +
+                FormatBundleHash(scu.codec_bundle_sha256) + ", expected=" +
+                FormatBundleHash(expected_bundle_hash_) + ")");
   }
   const auto config_order = mlvc::transport::CompareMlvcSerial32(scu.config_id, config_id_);
   if (config_order == mlvc::transport::MlvcSerial32Order::kAmbiguous) {
@@ -437,6 +458,8 @@ void RtpMlvcReceiver::HandleConfigurationUnit(const std::vector<uint8_t>& unit) 
   config_id_ = scu.config_id;
   active_config_unit_ = unit;
   pending_config_id_ = config_id_;
+  reorder_deadline_.reset();
+  waiting_for_recovery_ = false;
   eos_frame_count_.reset();
   max_payload_size_ = std::min<uint64_t>(scu.max_frame_bytes,
                                          MaxMlvcFramePayloadBytes(header_.width, header_.height));
@@ -494,20 +517,15 @@ void RtpMlvcReceiver::BufferFrameUnit(const std::vector<uint8_t>& unit, uint32_t
     // A live receiver can join well after frame zero.  Before the matching
     // SCU and random-access EFU arrive, discard dependent frames instead of
     // growing the reorder window toward an arbitrary frame number.
-    const bool is_random_access = efu.frame_type == 0 &&
-        (efu.unit_flags & (mlvc::transport::kEfuRandomAccess |
-                           mlvc::transport::kEfuResetReference)) ==
-            (mlvc::transport::kEfuRandomAccess | mlvc::transport::kEfuResetReference);
+    const bool is_random_access = IsRandomAccessEfu(efu);
     if (!is_random_access) return;
-    constexpr std::size_t kMaxPendingFrames = 64;
-    constexpr std::size_t kMaxPendingFrameBytes = 128u * 1024u * 1024u;
     const auto existing = pending_frames_.find(frame_id);
     if (existing != pending_frames_.end()) {
       Check(existing->second == unit, "conflicting duplicate RTP random-access EFU");
       return;
     }
-    Check(pending_frames_.size() < kMaxPendingFrames &&
-              unit.size() <= kMaxPendingFrameBytes - pending_frame_bytes_,
+    Check(pending_frames_.size() < kMaxPendingRtpFrames &&
+              unit.size() <= kMaxPendingRtpFrameBytes - pending_frame_bytes_,
           "RTP initial random-access window is full");
     pending_frame_bytes_ += unit.size();
     pending_frames_.emplace(frame_id, unit);
@@ -523,8 +541,6 @@ void RtpMlvcReceiver::BufferFrameUnit(const std::vector<uint8_t>& unit, uint32_t
   if (frame_config_order == mlvc::transport::MlvcSerial32Order::kOlder) return;
   Check(frame_config_order != mlvc::transport::MlvcSerial32Order::kAmbiguous,
         "RTP EFU configuration ID is serial-number ambiguous");
-  constexpr std::size_t kMaxPendingFrames = 64;
-  constexpr std::size_t kMaxPendingFrameBytes = 128u * 1024u * 1024u;
   if (frame_id < static_cast<uint32_t>(expected_frame_index_)) {
     const auto recent = recent_frames_.find(frame_id);
     if (recent != recent_frames_.end()) {
@@ -536,18 +552,32 @@ void RtpMlvcReceiver::BufferFrameUnit(const std::vector<uint8_t>& unit, uint32_t
   }
   const uint64_t frame_distance = static_cast<uint64_t>(frame_id) -
                                   static_cast<uint64_t>(expected_frame_index_);
-  const bool can_recover_gap =
-      efu.frame_type == 0 || efu.frame_type == static_cast<uint8_t>(mlvc::codec::MlvcFrameType::kLtrRecovery);
-  Check(can_recover_gap || frame_distance < kMaxPendingFrames,
-        "RTP frame is outside the configured reorder window");
+  const bool random_access = IsRandomAccessEfu(efu);
+  const bool ltr_recovery = efu.config_id == config_id_ &&
+      efu.frame_type == static_cast<uint8_t>(mlvc::codec::MlvcFrameType::kLtrRecovery) &&
+      ltr_frame_ids_.find(efu.long_ref_frame_id) != ltr_frame_ids_.end();
+  const bool can_recover_gap = random_access || ltr_recovery;
+  if (waiting_for_recovery_ && frame_id > static_cast<uint32_t>(expected_frame_index_) &&
+      !can_recover_gap) {
+    return;
+  }
+  if (!can_recover_gap && frame_distance >= kMaxPendingRtpFrames) {
+    MarkDependencyGap();
+    return;
+  }
   const auto existing = pending_frames_.find(frame_id);
   if (existing != pending_frames_.end()) {
     Check(existing->second == unit, "conflicting duplicate RTP media unit");
     return;
   }
-  Check(pending_frames_.size() < kMaxPendingFrames &&
-            unit.size() <= kMaxPendingFrameBytes - pending_frame_bytes_,
-        "RTP frame reorder window is full");
+  if (pending_frames_.size() >= kMaxPendingRtpFrames ||
+      unit.size() > kMaxPendingRtpFrameBytes - pending_frame_bytes_) {
+    MarkDependencyGap();
+    if (!can_recover_gap && frame_id > static_cast<uint32_t>(expected_frame_index_)) return;
+  }
+  Check(pending_frames_.size() < kMaxPendingRtpFrames &&
+            unit.size() <= kMaxPendingRtpFrameBytes - pending_frame_bytes_,
+        "RTP pending frame resource limit exceeded");
   pending_frame_bytes_ += unit.size();
   pending_frames_.emplace(frame_id, unit);
 }
@@ -564,7 +594,18 @@ bool RtpMlvcReceiver::PopReadyFrame(std::vector<uint8_t>* unit) {
   pending_frame_bytes_ -= it->second.size();
   *unit = std::move(it->second);
   pending_frames_.erase(it);
+  reorder_deadline_.reset();
+  waiting_for_recovery_ = false;
   return true;
+}
+
+bool RtpMlvcReceiver::HasPendingCurrentFrameAfterExpected() const {
+  const auto expected = static_cast<uint32_t>(expected_frame_index_);
+  for (auto it = pending_frames_.upper_bound(expected); it != pending_frames_.end(); ++it) {
+    const auto header = mlvc::transport::ParseMediaUnitHeader(it->second);
+    if (header.config_id == config_id_) return true;
+  }
+  return false;
 }
 
 bool RtpMlvcReceiver::TryStartAtRandomAccess() {
@@ -584,10 +625,7 @@ bool RtpMlvcReceiver::TryStartAtRandomAccess() {
       ++it;
       continue;
     }
-    if (efu.frame_type == 0 &&
-        (efu.unit_flags & (mlvc::transport::kEfuRandomAccess |
-                           mlvc::transport::kEfuResetReference)) ==
-            (mlvc::transport::kEfuRandomAccess | mlvc::transport::kEfuResetReference)) {
+    if (IsRandomAccessEfu(efu)) {
       expected_frame_index_ = static_cast<int>(efu.frame_id);
       for (auto stale = pending_frames_.begin(); stale != it;) {
         pending_frame_bytes_ -= stale->second.size();
@@ -595,6 +633,8 @@ bool RtpMlvcReceiver::TryStartAtRandomAccess() {
       }
       header_received_ = true;
       pending_config_id_ = 0;
+      reorder_deadline_.reset();
+      waiting_for_recovery_ = false;
       return true;
     }
     pending_frame_bytes_ -= it->second.size();
@@ -620,16 +660,37 @@ std::optional<uint32_t> RtpMlvcReceiver::FindRecoveryFrame() const {
           });
     }
     if (!config_available) continue;
-    const bool random_access = efu.frame_type == 0 &&
-        (efu.unit_flags & (mlvc::transport::kEfuRandomAccess |
-                           mlvc::transport::kEfuResetReference)) ==
-            (mlvc::transport::kEfuRandomAccess | mlvc::transport::kEfuResetReference);
+    const bool random_access = IsRandomAccessEfu(efu);
     const bool ltr_recovery = efu.config_id == config_id_ &&
         efu.frame_type == static_cast<uint8_t>(mlvc::codec::MlvcFrameType::kLtrRecovery) &&
         ltr_frame_ids_.find(efu.long_ref_frame_id) != ltr_frame_ids_.end();
     if (random_access || ltr_recovery) return it->first;
   }
   return std::nullopt;
+}
+
+void RtpMlvcReceiver::MarkDependencyGap() {
+  waiting_for_recovery_ = true;
+  reorder_deadline_.reset();
+  const uint32_t expected = static_cast<uint32_t>(expected_frame_index_);
+  for (auto it = pending_frames_.begin(); it != pending_frames_.end();) {
+    if (it->first == expected) {
+      ++it;
+      continue;
+    }
+    const auto efu = mlvc::transport::ParseEfu(it->second);
+    const bool random_access = IsRandomAccessEfu(efu);
+    const bool usable_ltr_recovery =
+        efu.config_id == config_id_ &&
+        efu.frame_type == static_cast<uint8_t>(mlvc::codec::MlvcFrameType::kLtrRecovery) &&
+        ltr_frame_ids_.find(efu.long_ref_frame_id) != ltr_frame_ids_.end();
+    if (random_access || usable_ltr_recovery) {
+      ++it;
+    } else {
+      pending_frame_bytes_ -= it->second.size();
+      it = pending_frames_.erase(it);
+    }
+  }
 }
 
 void RtpMlvcReceiver::DiscardPendingFramesBefore(uint32_t frame_id) {
@@ -683,7 +744,9 @@ MlvcBitstreamHeader RtpMlvcReceiver::ReceiveHeader() {
     if (std::any_of(expected_bundle_hash_.begin(), expected_bundle_hash_.end(),
                     [](uint8_t byte) { return byte != 0; })) {
       Check(scu.codec_bundle_sha256 == expected_bundle_hash_,
-            "RTP SCU model bundle hash does not match the local manifest");
+            "RTP SCU model bundle hash does not match the local manifest (received=" +
+                FormatBundleHash(scu.codec_bundle_sha256) + ", expected=" +
+                FormatBundleHash(expected_bundle_hash_) + ")");
     }
     config_id_ = scu.config_id;
     active_config_unit_ = unit;
@@ -776,6 +839,23 @@ bool RtpMlvcReceiver::ReceiveFrame(int* frame_index, mlvc::codec::MlvcFrameType*
           target_config_id = recovery_header.config_id;
         }
       }
+      if (target_config_id != 0 &&
+          pending_frames_.find(static_cast<uint32_t>(expected_frame_index_)) ==
+              pending_frames_.end() &&
+          !waiting_for_recovery_) {
+        if (!reorder_deadline_.has_value()) {
+          reorder_deadline_ = std::chrono::steady_clock::now() + kRtpFrameReorderWait;
+        }
+        if (std::chrono::steady_clock::now() < *reorder_deadline_) {
+          target_config_id = 0;
+        } else {
+          MarkDependencyGap();
+        }
+      }
+      const bool switching_past_missing_frame =
+          target_config_id != 0 &&
+          pending_frames_.find(static_cast<uint32_t>(expected_frame_index_)) ==
+              pending_frames_.end();
       if (target_config_id != 0) {
         auto target = std::find_if(
             pending_config_units_.begin(), pending_config_units_.end(),
@@ -805,12 +885,23 @@ bool RtpMlvcReceiver::ReceiveFrame(int* frame_index, mlvc::codec::MlvcFrameType*
           message = std::move(*target);
           pending_config_units_.erase(target);
           HandleConfigurationUnit(message);
+          if (switching_past_missing_frame) waiting_for_recovery_ = true;
           continue;
         }
       }
     }
-    if (pending_frames_.find(static_cast<uint32_t>(expected_frame_index_)) ==
-        pending_frames_.end()) {
+    const bool expected_frame_pending =
+        pending_frames_.find(static_cast<uint32_t>(expected_frame_index_)) != pending_frames_.end();
+    if (!expected_frame_pending && HasPendingCurrentFrameAfterExpected() &&
+        !waiting_for_recovery_ && !reorder_deadline_.has_value()) {
+      reorder_deadline_ = std::chrono::steady_clock::now() + kRtpFrameReorderWait;
+    }
+    if (!expected_frame_pending && reorder_deadline_.has_value() &&
+        std::chrono::steady_clock::now() >= *reorder_deadline_) {
+      MarkDependencyGap();
+      continue;
+    }
+    if (!expected_frame_pending && waiting_for_recovery_) {
       const auto recovery = FindRecoveryFrame();
       if (recovery.has_value()) {
         const auto recovery_header =
@@ -818,6 +909,8 @@ bool RtpMlvcReceiver::ReceiveFrame(int* frame_index, mlvc::codec::MlvcFrameType*
         if (recovery_header.config_id == config_id_) {
           expected_frame_index_ = static_cast<int>(*recovery);
           DiscardPendingFramesBefore(*recovery);
+          waiting_for_recovery_ = false;
+          reorder_deadline_.reset();
           continue;
         }
       }
@@ -829,7 +922,19 @@ bool RtpMlvcReceiver::ReceiveFrame(int* frame_index, mlvc::codec::MlvcFrameType*
         return false;
       }
       bool received = false;
-      if (eos_frame_count_.has_value()) {
+      if (reorder_deadline_.has_value()) {
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+            *reorder_deadline_ - std::chrono::steady_clock::now());
+        if (remaining <= std::chrono::milliseconds::zero()) {
+          MarkDependencyGap();
+          continue;
+        }
+        received = receiver_.ReceiveFor(&message, remaining);
+        if (!received) {
+          MarkDependencyGap();
+          continue;
+        }
+      } else if (eos_frame_count_.has_value()) {
         received = receiver_.ReceiveFor(&message, std::chrono::seconds(2));
         Check(received,
               "RTP EOS frame boundary was not reached before the missing-frame timeout");

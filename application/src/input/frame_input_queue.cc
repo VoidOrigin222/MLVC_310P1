@@ -1,6 +1,8 @@
 #include <mlvc/application/input/frame_input_queue.h>
 
+#include <algorithm>
 #include <chrono>
+#include <utility>
 
 #include "mlvc/core/status.h"
 #include "mlvc/framework/profile_range.h"
@@ -20,17 +22,27 @@ void AddPrepareProfileEvent(mlvc::Profiler* profiler, std::string name, double s
 
 }  // namespace
 
-FrameInputArena::FrameInputArena(const mlvc::TensorSpec& frame_spec, int slot_count) {
+FrameInputArena::FrameInputArena(const mlvc::TensorSpec& frame_spec, int slot_count,
+                                 bool allocate_host_buffers) {
   mlvc::Check(slot_count > 0, "frame prepare arena requires at least one slot");
   slots_.reserve(static_cast<std::size_t>(slot_count));
   for (int slot = 0; slot < slot_count; ++slot) {
-    slots_.push_back(codec::MakeTensorLike(frame_spec));
+    if (allocate_host_buffers) {
+      slots_.push_back(codec::MakeTensorLike(frame_spec));
+    } else {
+      codec::TensorData tensor;
+      tensor.shape = mlvc::TensorShape(frame_spec.shape);
+      tensor.dtype = frame_spec.dtype;
+      slots_.push_back(std::move(tensor));
+    }
   }
 }
 
 AsyncFrameInputQueue::AsyncFrameInputQueue(int frames_to_attempt, int configured_frame_num,
                                            const std::filesystem::path& input_video_path,
                                            const std::filesystem::path& input_frame_dir,
+                                           std::optional<mlvc::io::CameraCaptureOptions> camera_options,
+                                           aclrtContext context,
                                            const mlvc::TensorSpec& frame_spec, int width,
                                            int height, FrameBufferPool* arena,
                                            mlvc::Profiler* profiler,
@@ -41,7 +53,8 @@ AsyncFrameInputQueue::AsyncFrameInputQueue(int frames_to_attempt, int configured
       input_frame_dir_(input_frame_dir),
       frame_spec_(frame_spec),
       frame_source_(std::make_unique<mlvc::io::FrameSource>(configured_frame_num, input_video_path,
-                                                            input_frame_dir, frame_spec)),
+                                                            input_frame_dir, frame_spec,
+                                                            std::move(camera_options), context)),
       width_(width),
       height_(height),
       arena_(arena),
@@ -70,6 +83,7 @@ AsyncFrameInputQueue::~AsyncFrameInputQueue() {
 InputFrame AsyncFrameInputQueue::Pop() {
   const auto wait_begin = std::chrono::steady_clock::now();
   std::unique_lock<std::mutex> lock(mutex_);
+  const bool was_empty = ready_slots_.empty();
   consumer_condition_.wait(
       lock, [this] { return !ready_slots_.empty() || producer_done_ || exception_ != nullptr; });
   const auto wait_end = std::chrono::steady_clock::now();
@@ -77,6 +91,12 @@ InputFrame AsyncFrameInputQueue::Pop() {
     const double wait_ms = std::chrono::duration<double, std::milli>(wait_end - wait_begin).count();
     stats_.consumer_wait_ms += wait_ms;
     ++stats_.consumer_wait_count;
+    if (was_empty) {
+      ++stats_.consumer_empty_wait_count;
+      stats_.consumer_empty_wait_ms += wait_ms;
+      stats_.consumer_empty_wait_max_ms =
+          std::max(stats_.consumer_empty_wait_max_ms, wait_ms);
+    }
   }
   if (exception_ != nullptr) {
     std::rethrow_exception(exception_);
@@ -96,6 +116,9 @@ InputFrame AsyncFrameInputQueue::Pop() {
 void AsyncFrameInputQueue::Release(InputFrame* frame) {
   if (frame == nullptr || frame->slot_index < 0) {
     return;
+  }
+  if (frame->frame != nullptr) {
+    frame->frame->ClearExternalBuffer();
   }
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -126,6 +149,7 @@ void AsyncFrameInputQueue::WorkerMain() {
       }
       PushReady(ReadySlot{frame_index, slot_index});
     }
+    frame_source_->Close();
   } catch (...) {
     std::lock_guard<std::mutex> lock(mutex_);
     exception_ = std::current_exception();
@@ -168,7 +192,7 @@ bool AsyncFrameInputQueue::PrepareOne(int frame_index, codec::TensorData* frame)
         profiler_ != nullptr ? profiler_->DurationMs(video_read_begin, video_read_end) : 0.0,
         {mlvc::Profiler::Arg("frame_index", frame_index), mlvc::Profiler::Arg("width", width_),
          mlvc::Profiler::Arg("height", height_),
-         mlvc::Profiler::Arg("bytes", static_cast<uint64_t>(frame->bytes.size())),
+         mlvc::Profiler::Arg("bytes", static_cast<uint64_t>(frame->ByteSize())),
          mlvc::Profiler::Arg("prepare_mode", "async_queue")});
     const auto prepare_end = std::chrono::steady_clock::now();
     {
@@ -202,7 +226,7 @@ bool AsyncFrameInputQueue::PrepareOne(int frame_index, codec::TensorData* frame)
         profiler_ != nullptr ? profiler_->StartMs(video_synth_begin) : 0.0,
         profiler_ != nullptr ? profiler_->DurationMs(video_synth_begin, video_synth_end) : 0.0,
         {mlvc::Profiler::Arg("frame_index", frame_index),
-         mlvc::Profiler::Arg("bytes", static_cast<uint64_t>(frame->bytes.size())),
+          mlvc::Profiler::Arg("bytes", static_cast<uint64_t>(frame->ByteSize())),
          mlvc::Profiler::Arg("prepare_mode", "async_queue")});
     const auto prepare_end = std::chrono::steady_clock::now();
     {
@@ -239,7 +263,7 @@ bool AsyncFrameInputQueue::PrepareOne(int frame_index, codec::TensorData* frame)
       profiler_ != nullptr ? profiler_->DurationMs(frame_read_begin, frame_read_end) : 0.0,
       {mlvc::Profiler::Arg("frame_index", frame_index),
        mlvc::Profiler::Arg("path", frame_path.string()),
-       mlvc::Profiler::Arg("bytes", static_cast<uint64_t>(frame->bytes.size())),
+       mlvc::Profiler::Arg("bytes", static_cast<uint64_t>(frame->ByteSize())),
        mlvc::Profiler::Arg("prepare_mode", "async_queue")});
   const auto prepare_end = std::chrono::steady_clock::now();
   {
@@ -255,6 +279,7 @@ bool AsyncFrameInputQueue::PrepareOne(int frame_index, codec::TensorData* frame)
 int AsyncFrameInputQueue::AcquireFreeSlot() {
   const auto wait_begin = std::chrono::steady_clock::now();
   std::unique_lock<std::mutex> lock(mutex_);
+  const bool was_full = free_slots_.empty();
   producer_condition_.wait(lock, [this] { return stop_ || !free_slots_.empty(); });
   const auto wait_end = std::chrono::steady_clock::now();
   if (stop_) {
@@ -264,6 +289,12 @@ int AsyncFrameInputQueue::AcquireFreeSlot() {
     const double wait_ms = std::chrono::duration<double, std::milli>(wait_end - wait_begin).count();
     stats_.producer_wait_ms += wait_ms;
     ++stats_.producer_wait_count;
+    if (was_full) {
+      ++stats_.producer_full_wait_count;
+      stats_.producer_full_wait_ms += wait_ms;
+      stats_.producer_full_wait_max_ms =
+          std::max(stats_.producer_full_wait_max_ms, wait_ms);
+    }
   }
   const int slot_index = free_slots_.front();
   free_slots_.pop_front();
@@ -286,6 +317,7 @@ void AsyncFrameInputQueue::PushReady(ReadySlot ready) {
       return;
     }
     ready_slots_.push_back(ready);
+    stats_.ready_max_depth = std::max(stats_.ready_max_depth, ready_slots_.size());
   }
   consumer_condition_.notify_one();
 }

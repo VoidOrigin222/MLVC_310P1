@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <string_view>
 #include <vector>
 
@@ -16,15 +17,31 @@ struct TensorData {
   mlvc::TensorShape shape;
   mlvc::DataType dtype = mlvc::DataType::kFloat16;
   std::vector<uint8_t> bytes;
+  void* external_data = nullptr;
+  std::size_t external_bytes = 0;
+  mlvc::MemoryLocation external_location = mlvc::MemoryLocation::kCpu;
+  std::shared_ptr<void> external_owner;
 
   mlvc::TensorView View() {
+    if (external_data != nullptr) {
+      return mlvc::TensorView::Borrowed(external_data, &shape, dtype, external_location);
+    }
     return mlvc::TensorView::Borrowed(bytes.data(), &shape, dtype, mlvc::MemoryLocation::kCpu);
   }
 
   mlvc::TensorView View() const {
+    if (external_data != nullptr) {
+      return mlvc::TensorView::Borrowed(external_data, &shape, dtype, external_location);
+    }
     return mlvc::TensorView::Borrowed(const_cast<uint8_t*>(bytes.data()), &shape, dtype,
                                       mlvc::MemoryLocation::kCpu);
   }
+
+  void AttachExternalBuffer(void* data, std::size_t byte_count,
+                            mlvc::MemoryLocation location, std::shared_ptr<void> owner);
+  void ClearExternalBuffer();
+  std::size_t ByteSize() const { return external_data != nullptr ? external_bytes : bytes.size(); }
+  bool has_external_buffer() const { return external_data != nullptr; }
 
   std::size_t Elements() const { return shape.NumElements(); }
 };

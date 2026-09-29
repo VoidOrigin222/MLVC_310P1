@@ -578,7 +578,8 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
     std::vector<std::unique_ptr<MlvcOfficialEntropyDecoder>> entropy_decoders;
     entropy_decoders.reserve(options.pipeline.entropy_workers);
     for (std::size_t i = 0; i < options.pipeline.entropy_workers; ++i) {
-      entropy_decoders.emplace_back(std::make_unique<MlvcOfficialEntropyDecoder>(model_directory));
+      entropy_decoders.emplace_back(
+          std::make_unique<MlvcOfficialEntropyDecoder>(models.manifest()));
     }
     mlvc::app::OrderedFutureWindow<DecodedEntropyFrame> entropy_window(
         options.pipeline.entropy_workers);

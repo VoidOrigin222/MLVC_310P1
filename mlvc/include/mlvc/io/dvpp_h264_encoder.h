@@ -18,11 +18,13 @@ struct DvppH264EncoderConfig {
   uint32_t gop = 96;
   uint32_t bitrate = 8'000'000;
   uint32_t output_buffer_bytes = 0;
+  bool zero_copy_input = false;
 };
 
 // Synchronous one-frame interface backed by the device MPI VENC API. The
 // input may be produced by an ACL stream; ready_event establishes the
-// dependency before the frame is copied into the MPI-owned DVPP buffer.
+// dependency before the frame is submitted. zero_copy_input keeps the source
+// surface alive through the synchronous VENC call and avoids a device copy.
 class DvppH264Encoder {
  public:
   DvppH264Encoder(aclrtContext context, DvppH264EncoderConfig config);

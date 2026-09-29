@@ -3,6 +3,7 @@
 #include <mlvc/io/video_io.h>
 
 #include <cstdint>
+#include <chrono>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
@@ -11,6 +12,7 @@
 #include <iterator>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #if defined(_WIN32)
@@ -84,6 +86,24 @@ int main() {
            "RTSP H.264 publisher did not select H.264 input");
     Expect(h264_argument_text.find("-c:v\ncopy\n") != std::string::npos,
            "RTSP H.264 publisher did not copy the encoded stream");
+
+    {
+      std::ofstream file(script);
+      file << "#!/bin/sh\nexit 0\n";
+    }
+    chmod(script.c_str(), 0755);
+    mlvc::io::RtspVideoPublisher broken_pipe_publisher(
+        "rtsp://127.0.0.1:8554/mlvc", 30.0, 2, 2, "ultrafast", 0, 2, "udp", true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    broken_pipe_publisher.WriteH264Frame(std::vector<std::uint8_t>(1U << 20, 0x55));
+    bool broken_pipe_reported = false;
+    try {
+      broken_pipe_publisher.Close();
+    } catch (const std::exception&) {
+      broken_pipe_reported = true;
+    }
+    Expect(broken_pipe_reported,
+           "RTSP publisher should report an exited FFmpeg child as a local pipe error");
     std::cout << "rtsp video publisher test passed\n";
     return 0;
   } catch (const std::exception& error) {

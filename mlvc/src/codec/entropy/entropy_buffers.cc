@@ -11,7 +11,7 @@
 
 namespace mlvc::codec {
 
-std::size_t TensorBytes(const TensorData& tensor) { return tensor.bytes.size(); }
+std::size_t TensorBytes(const TensorData& tensor) { return tensor.ByteSize(); }
 
 std::size_t EntropyInputBytes(const TensorData& z_symbols, const RunOutput& spatial,
                               int part_count) {

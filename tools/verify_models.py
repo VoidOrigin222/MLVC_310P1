@@ -10,6 +10,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+RUNTIME_ARTIFACT_NAMES = ("metadata.json", "gaussian_pmf.json", "bit_estimator_pmf.json")
+
 
 def sha256_file(path: Path) -> tuple[int, str]:
     digest = hashlib.sha256()
@@ -202,11 +204,38 @@ def verify_manifest(manifest_path: Path, strict_assets: bool, allow_missing_fuse
         "sidecar",
     )
 
+    artifacts = manifest.get("runtime_artifacts")
+    if not isinstance(artifacts, list):
+        raise ValueError(f"{manifest_path} missing runtime_artifacts array")
+    expected_assets = {sidecar_path.resolve()}
+    seen_artifacts: set[str] = set()
+    for index, artifact in enumerate(artifacts):
+        label = f"runtime_artifacts[{index}]"
+        if not isinstance(artifact, dict):
+            raise ValueError(f"{manifest_path} {label} is not an object")
+        name = require_string(artifact, "name", label)
+        if name in seen_artifacts:
+            raise ValueError(f"{manifest_path} duplicated runtime artifact: {name}")
+        seen_artifacts.add(name)
+        artifact_file = require_string(artifact, "file", label)
+        artifact_path = resolve_asset(model_dir, artifact_file)
+        verify_file(
+            artifact_path,
+            require_int(artifact, "bytes", label),
+            require_string(artifact, "sha256", label),
+            f"runtime artifact {name}",
+        )
+        expected_assets.add(artifact_path.resolve())
+    missing_artifacts = set(RUNTIME_ARTIFACT_NAMES) - seen_artifacts
+    if missing_artifacts:
+        raise ValueError(
+            f"{manifest_path} missing runtime artifacts: {', '.join(sorted(missing_artifacts))}"
+        )
+
     models = manifest.get("models")
     if not isinstance(models, list) or not models:
         raise ValueError(f"{manifest_path} missing non-empty models array")
 
-    expected_assets = {sidecar_path.resolve()}
     seen_names: set[str] = set()
     model_records: list[dict[str, Any]] = []
     for index, model in enumerate(models):
@@ -247,6 +276,9 @@ def verify_manifest(manifest_path: Path, strict_assets: bool, allow_missing_fuse
         if runtime == "acl":
             patterns = (
                 "*.mlvcsc",
+                "metadata.json",
+                "gaussian_pmf.json",
+                "bit_estimator_pmf.json",
                 "onnx_original/*.onnx",
                 "onnx_optimized/*.onnx",
                 "om_atc/*.om",
@@ -255,7 +287,13 @@ def verify_manifest(manifest_path: Path, strict_assets: bool, allow_missing_fuse
                 "reports/rewrite/*.json",
             )
         else:
-            patterns = ("*.onnx", "*.mlvcsc")
+            patterns = (
+                "*.onnx",
+                "*.mlvcsc",
+                "metadata.json",
+                "gaussian_pmf.json",
+                "bit_estimator_pmf.json",
+            )
         actual_assets = {
             path.resolve() for pattern in patterns for path in model_dir.glob(pattern) if path.is_file()
         }

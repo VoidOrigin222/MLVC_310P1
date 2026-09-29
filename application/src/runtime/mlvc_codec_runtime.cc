@@ -139,6 +139,7 @@ void VerifyFile(const std::filesystem::path& path, uint64_t expected_bytes,
 }
 
 void VerifyManifestFiles(const mlvc::ModelManifest& manifest) {
+  mlvc::VerifyRuntimeArtifacts(manifest);
   const auto& sidecar = manifest.sidecar();
   const std::filesystem::path sidecar_path = sidecar.file.is_absolute()
                                                 ? sidecar.file
@@ -151,6 +152,12 @@ void VerifyManifestFiles(const mlvc::ModelManifest& manifest) {
     VerifyFile(model_path, model.bytes, model.sha256,
                "model " + model.name);
   }
+}
+
+std::filesystem::path RuntimeArtifactPath(const mlvc::ModelManifest& manifest,
+                                          const std::string& name) {
+  const auto& artifact = manifest.GetRuntimeArtifact(name);
+  return artifact.file.is_absolute() ? artifact.file : manifest.directory() / artifact.file;
 }
 
 }  // namespace
@@ -167,7 +174,7 @@ MlvcCodecRuntime::MlvcCodecRuntime(const std::filesystem::path& manifest_path, i
     : runtime_(device),
       models_(&runtime_, LoadVerifiedManifest(manifest_path)),
       sidecar_(mlvc::RuntimeSidecar::LoadQpShiftMetadata(
-          models_.manifest().directory() / "metadata.json")),
+          RuntimeArtifactPath(models_.manifest(), "metadata.json"))),
       workspace_(&models_, binding_mode) {}
 
 }  // namespace mlvc::app

@@ -70,15 +70,15 @@ mlvc::codec::DecodedEntropyFrame DecodePacket(mlvc::MlvcOfficialEntropyDecoder* 
                                              profiler);
 }
 
-void CheckParallelEquivalence(const std::filesystem::path& model_directory,
+void CheckParallelEquivalence(const mlvc::ModelManifest& manifest,
                               const mlvc::ModelRecord& decoder_record,
                               const std::vector<Packet>& packets) {
-  mlvc::MlvcOfficialEntropyDecoder sequential_decoder(model_directory);
+  mlvc::MlvcOfficialEntropyDecoder sequential_decoder(manifest);
   std::vector<std::unique_ptr<mlvc::MlvcOfficialEntropyDecoder>> parallel_decoders;
   parallel_decoders.emplace_back(
-      std::make_unique<mlvc::MlvcOfficialEntropyDecoder>(model_directory));
+      std::make_unique<mlvc::MlvcOfficialEntropyDecoder>(manifest));
   parallel_decoders.emplace_back(
-      std::make_unique<mlvc::MlvcOfficialEntropyDecoder>(model_directory));
+      std::make_unique<mlvc::MlvcOfficialEntropyDecoder>(manifest));
   mlvc::EntropyWorker worker(2);
   mlvc::Profiler profiler;
   mlvc::app::OrderedFutureWindow<mlvc::codec::DecodedEntropyFrame> window(2);
@@ -103,9 +103,9 @@ void CheckParallelEquivalence(const std::filesystem::path& model_directory,
   mlvc::Check(expected.empty(), "parallel entropy results were not fully compared");
 }
 
-void CheckDetailedProfileEvents(const std::filesystem::path& model_directory,
+void CheckDetailedProfileEvents(const mlvc::ModelManifest& manifest,
                                 const mlvc::ModelRecord& decoder_record, const Packet& packet) {
-  mlvc::MlvcOfficialEntropyDecoder decoder(model_directory);
+  mlvc::MlvcOfficialEntropyDecoder decoder(manifest);
   mlvc::Profiler profiler;
   (void)DecodePacket(&decoder, decoder_record, packet, &profiler);
 
@@ -127,10 +127,10 @@ void CheckDetailedProfileEvents(const std::filesystem::path& model_directory,
   }
 }
 
-double MeasureSequential(const std::filesystem::path& model_directory,
+double MeasureSequential(const mlvc::ModelManifest& manifest,
                          const mlvc::ModelRecord& decoder_record,
                          const std::vector<Packet>& packets) {
-  mlvc::MlvcOfficialEntropyDecoder decoder(model_directory);
+  mlvc::MlvcOfficialEntropyDecoder decoder(manifest);
   mlvc::Profiler profiler;
   const auto begin = std::chrono::steady_clock::now();
   for (const Packet& packet : packets) {
@@ -139,12 +139,12 @@ double MeasureSequential(const std::filesystem::path& model_directory,
   return std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
 }
 
-double MeasureParallel(const std::filesystem::path& model_directory,
+double MeasureParallel(const mlvc::ModelManifest& manifest,
                        const mlvc::ModelRecord& decoder_record,
                        const std::vector<Packet>& packets) {
   std::vector<std::unique_ptr<mlvc::MlvcOfficialEntropyDecoder>> decoders;
-  decoders.emplace_back(std::make_unique<mlvc::MlvcOfficialEntropyDecoder>(model_directory));
-  decoders.emplace_back(std::make_unique<mlvc::MlvcOfficialEntropyDecoder>(model_directory));
+  decoders.emplace_back(std::make_unique<mlvc::MlvcOfficialEntropyDecoder>(manifest));
+  decoders.emplace_back(std::make_unique<mlvc::MlvcOfficialEntropyDecoder>(manifest));
   mlvc::EntropyWorker worker(2);
   mlvc::Profiler profiler;
   mlvc::app::OrderedFutureWindow<mlvc::codec::DecodedEntropyFrame> window(2);
@@ -177,11 +177,10 @@ int main(int argc, char** argv) {
     const mlvc::ModelRecord& decoder_record = manifest.GetModel("MLVCDecoder");
     const std::vector<Packet> packets = ReadPackets(argv[2], frame_limit);
 
-    CheckDetailedProfileEvents(manifest.directory(), decoder_record, packets.front());
-    CheckParallelEquivalence(manifest.directory(), decoder_record, packets);
-    const double sequential_seconds =
-        MeasureSequential(manifest.directory(), decoder_record, packets);
-    const double parallel_seconds = MeasureParallel(manifest.directory(), decoder_record, packets);
+    CheckDetailedProfileEvents(manifest, decoder_record, packets.front());
+    CheckParallelEquivalence(manifest, decoder_record, packets);
+    const double sequential_seconds = MeasureSequential(manifest, decoder_record, packets);
+    const double parallel_seconds = MeasureParallel(manifest, decoder_record, packets);
     const double frames = static_cast<double>(packets.size());
     std::cout << "frames=" << packets.size() << "\n";
     std::cout << "sequential_entropy_fps=" << frames / sequential_seconds << "\n";

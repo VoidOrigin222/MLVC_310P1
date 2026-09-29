@@ -59,7 +59,8 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
     const mlvc::TensorSpec& frame_spec = encoder_record.inputs.at(0);
     double fps = options.fps;
     const SourceFrameGeometry source_geometry =
-        ResolveSourceGeometry(options.input_video_path, options.input_frame_dir, frame_spec, &fps);
+        ResolveSourceGeometry(options.input_video_path, options.input_frame_dir,
+                              options.camera_options, runtime.context(), frame_spec, &fps);
     const EncodeDimensions dimensions{
         static_cast<int>(encoder_record.outputs.at(2).shape.at(1) * 2),
         static_cast<int>(encoder_record.outputs.at(2).shape.at(2)),
@@ -111,7 +112,7 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
     rate_options.min_q_index = options.min_qp;
     rate_options.max_q_index = options.max_qp;
     EncodeOutput output(options, header, rate_options, &profiler);
-    MlvcOfficialEntropyEncoder entropy_encoder(models.manifest().directory());
+    MlvcOfficialEntropyEncoder entropy_encoder(models.manifest());
     EncodeState state(encoder_record.outputs.at(0).shape);
     EncodeFrameProcessor frame_processor(options, &models, &sidecar, &profiler, &entropy_worker,
                                          &state, &output.rate_controller(), &entropy_encoder,
@@ -119,11 +120,13 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
 
     const int frames_to_attempt =
         options.frame_num > 0 ? options.frame_num : std::numeric_limits<int>::max();
-    mlvc::app::FrameInputArena frame_prepare_arena(frame_spec, options.pipeline.frame_buffer_slots);
+    mlvc::app::FrameInputArena frame_prepare_arena(
+        frame_spec, options.pipeline.frame_buffer_slots, !options.camera_options.has_value());
     mlvc::app::AsyncFrameInputQueue prepare_queue(
         frames_to_attempt, options.frame_num, options.input_video_path, options.input_frame_dir,
-        frame_spec, source_geometry.width, source_geometry.height, &frame_prepare_arena, &profiler,
-        &graph_executor);
+        options.camera_options, runtime.context(), frame_spec, source_geometry.width,
+        source_geometry.height,
+        &frame_prepare_arena, &profiler, &graph_executor);
     std::atomic<bool> frame_pipeline_running{true};
     mlvc::StreamingPipeline frame_pipeline(options.pipeline.stream_workers,
                                            options.pipeline.queue_capacity);
@@ -147,6 +150,8 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
     uint64_t q_index_sum = 0;
     int min_q_index_used = std::numeric_limits<int>::max();
     int max_q_index_used = std::numeric_limits<int>::min();
+    auto progress_start = std::chrono::steady_clock::now();
+    int progress_frame = 0;
     auto consume_frame = [&](const std::shared_ptr<mlvc::DataObject>& data) {
       PendingEncodedFrame pending = frame_processor.Process(data, encoded_frames);
       if (pending.frame_type == MlvcFrameType::kIFrame) {
@@ -168,6 +173,24 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
       if (!timing_started && encoded_frames >= options.profile_warmup_frames) {
         encode_start = std::chrono::steady_clock::now();
         timing_started = true;
+      }
+      if (encoded_frames % 900 == 0) {
+        const auto now = std::chrono::steady_clock::now();
+        const double interval_seconds =
+            std::chrono::duration<double>(now - progress_start).count();
+        const auto input_stats = prepare_queue.stats();
+        std::cerr << "encode_progress frames=" << encoded_frames
+                  << " interval_fps="
+                  << (interval_seconds > 0.0
+                          ? static_cast<double>(encoded_frames - progress_frame) /
+                                interval_seconds
+                          : 0.0)
+                  << " input_ready_max_depth=" << input_stats.ready_max_depth
+                  << " input_full_waits=" << input_stats.producer_full_wait_count
+                  << " input_empty_waits=" << input_stats.consumer_empty_wait_count
+                  << std::endl;
+        progress_start = now;
+        progress_frame = encoded_frames;
       }
     };
     mlvc::app::CallbackDataConsumer frame_consumer(frame_pipeline, frame_pipeline_running,
@@ -213,6 +236,16 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
               << "\n";
     std::cout << "encode_fps="
               << (seconds > 0.0 ? static_cast<double>(measured_frames) / seconds : 0.0) << "\n";
+    const auto input_stats = prepare_queue.stats();
+    std::cout << "input_queue prepared_frames=" << input_stats.prepared_frames
+              << " ready_max_depth=" << input_stats.ready_max_depth
+              << " producer_full_waits=" << input_stats.producer_full_wait_count
+              << " producer_full_wait_total_ms=" << input_stats.producer_full_wait_ms
+              << " producer_full_wait_max_ms=" << input_stats.producer_full_wait_max_ms
+              << " consumer_empty_waits=" << input_stats.consumer_empty_wait_count
+              << " consumer_empty_wait_total_ms=" << input_stats.consumer_empty_wait_ms
+              << " consumer_empty_wait_max_ms=" << input_stats.consumer_empty_wait_max_ms
+              << "\n";
     std::cout << "bitstream_bytes=" << output.file_bytes() << "\n";
     std::cout << "payload_bytes=" << output.payload_bytes() << "\n";
     std::cout << "q_index_min=" << (encoded_frames > 0 ? min_q_index_used : 0) << "\n";

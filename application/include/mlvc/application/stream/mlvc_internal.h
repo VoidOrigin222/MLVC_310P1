@@ -9,12 +9,14 @@
 #include <mlvc/codec/tensor_data.h>
 #include <mlvc/framework/profiler.h>
 #include <mlvc/io/mlvc_bitstream.h>
+#include <mlvc/io/video_io.h>
 #include <mlvc/runtime/model_manifest.h>
 
 #include <cstdint>
 #include <filesystem>
 #include <future>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -50,6 +52,9 @@ SourceInfo ReadSourceInfo(const std::filesystem::path& frame_dir);
 bool HasMlvcModels(const mlvc::ModelManifest& manifest);
 SourceFrameGeometry ResolveSourceGeometry(const std::filesystem::path& input_video_path,
                                           const std::filesystem::path& input_frame_dir,
+                                          const std::optional<mlvc::io::CameraCaptureOptions>&
+                                              camera_options,
+                                          aclrtContext context,
                                           const mlvc::TensorSpec& frame_spec, double* fps);
 void ConfigureRuntimeState(mlvc::codec::StageOutputWorkspace* stage_output_workspace,
                            mlvc::StageRuntime& runtime, bool enable_stage_fusion);

@@ -167,6 +167,110 @@ void TestCompletedFrameDuplicateIsIgnored() {
   ::close(socket);
 }
 
+void TestDamagedEfuDoesNotTerminateReceiver() {
+  mlvc::io::RtpMlvcReceiver receiver(0);
+  const int socket = ::socket(AF_INET, SOCK_DGRAM, 0);
+  assert(socket >= 0);
+  uint16_t sequence = 3000;
+  SendUnit(socket, receiver.local_port(), &sequence, 0, MakeScu(1));
+  SendUnit(socket, receiver.local_port(), &sequence, 0,
+           MakeEfu(1, 0, MlvcFrameType::kIFrame,
+                   mlvc::transport::kMlvcNoReference,
+                   mlvc::transport::kMlvcNoReference));
+  (void)receiver.ReceiveHeader();
+  ExpectFrame(&receiver, 0, MlvcFrameType::kIFrame);
+
+  auto damaged = MakeEfu(1, 1, MlvcFrameType::kPFrame, 0,
+                         mlvc::transport::kMlvcNoReference);
+  damaged.back() ^= 0x80;
+  SendUnit(socket, receiver.local_port(), &sequence, 3000, damaged);
+  SendUnit(socket, receiver.local_port(), &sequence, 6000,
+           MakeEfu(1, 2, MlvcFrameType::kIFrame,
+                   mlvc::transport::kMlvcNoReference,
+                   mlvc::transport::kMlvcNoReference));
+  ExpectFrame(&receiver, 2, MlvcFrameType::kIFrame);
+
+  SendUnit(socket, receiver.local_port(), &sequence, 9000,
+           mlvc::transport::SerializeEos(1, 3));
+  int frame_index = -1;
+  MlvcFrameType frame_type = MlvcFrameType::kPFrame;
+  int q_index = -1;
+  std::vector<uint8_t> payload;
+  assert(!receiver.ReceiveFrame(&frame_index, &frame_type, &q_index, &payload));
+  ::close(socket);
+}
+
+void TestRandomAccessReorderKeepsLatePredecessor() {
+  mlvc::io::RtpMlvcReceiver receiver(0);
+  const int socket = ::socket(AF_INET, SOCK_DGRAM, 0);
+  assert(socket >= 0);
+  uint16_t sequence = 4000;
+  SendUnit(socket, receiver.local_port(), &sequence, 0, MakeScu(1));
+  SendUnit(socket, receiver.local_port(), &sequence, 0,
+           MakeEfu(1, 0, MlvcFrameType::kIFrame,
+                   mlvc::transport::kMlvcNoReference,
+                   mlvc::transport::kMlvcNoReference));
+  (void)receiver.ReceiveHeader();
+  ExpectFrame(&receiver, 0, MlvcFrameType::kIFrame);
+
+  SendUnit(socket, receiver.local_port(), &sequence, 6000,
+           MakeEfu(1, 2, MlvcFrameType::kIFrame,
+                   mlvc::transport::kMlvcNoReference,
+                   mlvc::transport::kMlvcNoReference));
+  std::thread delayed_middle_frame([&] {
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    SendUnit(socket, receiver.local_port(), &sequence, 3000,
+             MakeEfu(1, 1, MlvcFrameType::kPFrame, 0,
+                     mlvc::transport::kMlvcNoReference));
+    SendUnit(socket, receiver.local_port(), &sequence, 9000,
+             mlvc::transport::SerializeEos(1, 3));
+  });
+
+  ExpectFrame(&receiver, 1, MlvcFrameType::kPFrame);
+  delayed_middle_frame.join();
+  ExpectFrame(&receiver, 2, MlvcFrameType::kIFrame);
+  int frame_index = -1;
+  MlvcFrameType frame_type = MlvcFrameType::kPFrame;
+  int q_index = -1;
+  std::vector<uint8_t> payload;
+  assert(!receiver.ReceiveFrame(&frame_index, &frame_type, &q_index, &payload));
+  ::close(socket);
+}
+
+void TestLongGopGapWaitsForRecovery() {
+  mlvc::io::RtpMlvcReceiver receiver(0);
+  const int socket = ::socket(AF_INET, SOCK_DGRAM, 0);
+  assert(socket >= 0);
+  uint16_t sequence = 5000;
+  SendUnit(socket, receiver.local_port(), &sequence, 0, MakeScu(1));
+  SendUnit(socket, receiver.local_port(), &sequence, 0,
+           MakeEfu(1, 0, MlvcFrameType::kIFrame,
+                   mlvc::transport::kMlvcNoReference,
+                   mlvc::transport::kMlvcNoReference));
+  (void)receiver.ReceiveHeader();
+  ExpectFrame(&receiver, 0, MlvcFrameType::kIFrame);
+
+  for (uint32_t frame = 2; frame < 96; ++frame) {
+    SendUnit(socket, receiver.local_port(), &sequence, frame * 3000,
+             MakeEfu(1, frame, MlvcFrameType::kPFrame, frame - 1,
+                     mlvc::transport::kMlvcNoReference));
+  }
+  SendUnit(socket, receiver.local_port(), &sequence, 96 * 3000,
+           MakeEfu(1, 96, MlvcFrameType::kIFrame,
+                   mlvc::transport::kMlvcNoReference,
+                   mlvc::transport::kMlvcNoReference));
+  SendUnit(socket, receiver.local_port(), &sequence, 97 * 3000,
+           mlvc::transport::SerializeEos(1, 97));
+
+  ExpectFrame(&receiver, 96, MlvcFrameType::kIFrame);
+  int frame_index = -1;
+  MlvcFrameType frame_type = MlvcFrameType::kPFrame;
+  int q_index = -1;
+  std::vector<uint8_t> payload;
+  assert(!receiver.ReceiveFrame(&frame_index, &frame_type, &q_index, &payload));
+  ::close(socket);
+}
+
 }  // namespace
 
 int main() {
@@ -267,5 +371,8 @@ int main() {
   ::close(socket);
   TestEosWaitsForReorderedFrames();
   TestCompletedFrameDuplicateIsIgnored();
+  TestDamagedEfuDoesNotTerminateReceiver();
+  TestRandomAccessReorderKeepsLatePredecessor();
+  TestLongGopGapWaitsForRecovery();
   return 0;
 }

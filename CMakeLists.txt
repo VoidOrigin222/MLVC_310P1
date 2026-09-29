@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.22)
 project(mlvc_acl_cpp LANGUAGES CXX)
 
 option(MLVC_BUILD_APPS "Build MLVC command-line applications" ON)
+option(MLVC_BUILD_CAMERA_PROBE "Build the standalone V4L2 camera capture probe" OFF)
 set(MLVC_APP_SUFFIX "" CACHE STRING "Suffix for isolated deployment executables")
 
 set(CMAKE_CXX_STANDARD 17)
@@ -68,6 +69,11 @@ if(BUILD_TESTING)
   target_link_libraries(test_mlvc_media_unit PRIVATE mlvc_common)
   target_include_directories(test_mlvc_media_unit PRIVATE common/include)
   add_test(NAME mlvc_media_unit COMMAND test_mlvc_media_unit)
+  add_executable(test_model_bundle_integrity
+    tools/cpp/tests/test_model_bundle_integrity.cc
+  )
+  target_link_libraries(test_model_bundle_integrity PRIVATE mlvc_common)
+  add_test(NAME model_bundle_integrity COMMAND test_model_bundle_integrity)
   add_executable(test_rtp_reassembler tools/cpp/tests/test_rtp_reassembler.cc)
   target_link_libraries(test_rtp_reassembler PRIVATE mlvc_common)
   add_test(NAME rtp_reassembler COMMAND test_rtp_reassembler)
@@ -169,6 +175,7 @@ add_library(mlvc_codec
   mlvc/src/io/frame_source.cc
   mlvc/src/io/fp16_yuv444_to_nv12.cc
   mlvc/src/io/dvpp_jpeg_encoder.cc
+  mlvc/src/io/dvpp_jpeg_decoder.cc
   mlvc/src/io/dvpp_h264_encoder.cc
   mlvc/src/io/mlvc_bitstream.cc
   mlvc/src/io/udp_frame_transport.cc
@@ -238,6 +245,13 @@ target_compile_options(mlvc_application PRIVATE
 )
 
 if(MLVC_BUILD_APPS)
+  if(MLVC_BUILD_CAMERA_PROBE)
+    add_executable(camera_v4l2_probe tools/cpp/validation/camera_v4l2_probe.cc)
+    target_compile_options(camera_v4l2_probe PRIVATE
+      $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
+    )
+  endif()
+
   add_executable(benchmark_acl_stage tools/cpp/benchmarks/benchmark_acl_stage.cc)
   target_link_libraries(benchmark_acl_stage PRIVATE mlvc_common)
   target_compile_options(benchmark_acl_stage PRIVATE

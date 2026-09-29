@@ -27,6 +27,9 @@ DEFAULT_CONFIG="${ROOT}/configs/decoder.toml"
 CONFIG="${1:-${DEFAULT_CONFIG}}"
 VECTOR_OPAPI_LIB="${MLVC_VECTOR_OPAPI_LIB:-}"
 FFMPEG_BIN="${MLVC_FFMPEG_BIN:-}"
+if [[ -z "${FFMPEG_BIN}" && -x "${ROOT}/third_party/ffmpeg/bin/ffmpeg" ]]; then
+  FFMPEG_BIN="${ROOT}/third_party/ffmpeg/bin"
+fi
 
 if [[ ! -f "${CANN_HOME}/set_env.sh" && -f /usr/local/Ascend/cann/set_env.sh ]]; then
   CANN_HOME=/usr/local/Ascend/cann
@@ -47,6 +50,26 @@ fi
 set +u
 source "${CANN_HOME}/set_env.sh"
 set -u
+
+# Load the device-local/custom operator environment inside this entry point so
+# the decoder can be started with one command. Keep CANN_HOME explicit while
+# sourcing the helper: acl_env.sh otherwise falls back to /usr/local/Ascend/cann
+# even when the caller selected another CANN installation through
+# MLVC_CANN_HOME.
+export CANN_HOME
+if [[ -f "${SCRIPT_DIR}/acl_env.sh" ]]; then
+  # shellcheck disable=SC1090
+  set +u
+  source "${SCRIPT_DIR}/acl_env.sh"
+  set -u
+fi
+
+# MLVC_VECTOR_OPAPI_LIB is an optional explicit override. When it is omitted,
+# acl_env.sh populates MLVC_PRIOR_OPAPI_LIB from the isolated package under
+# output/custom_opp, if that package is installed on this device.
+if [[ -z "${VECTOR_OPAPI_LIB}" && -n "${MLVC_PRIOR_OPAPI_LIB:-}" ]]; then
+  VECTOR_OPAPI_LIB="${MLVC_PRIOR_OPAPI_LIB}"
+fi
 if [[ -n "${VECTOR_OPAPI_LIB}" ]]; then
   if [[ ! -f "${VECTOR_OPAPI_LIB}" ]]; then
     echo "Vectorized operator library not found: ${VECTOR_OPAPI_LIB}" >&2

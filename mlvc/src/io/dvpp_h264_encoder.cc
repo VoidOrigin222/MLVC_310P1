@@ -61,12 +61,14 @@ class DvppH264Encoder::Impl {
       mpi_initialized_ = true;
       CreateChannel();
       StartChannel();
-      for (void*& input_buffer : input_buffers_) {
-        CheckMpi(hi_mpi_dvpp_malloc(0, &input_buffer, input_bytes_),
-                 "hi_mpi_dvpp_malloc VENC input");
-        Check(input_buffer != nullptr, "hi_mpi_dvpp_malloc returned a null VENC input buffer");
+      if (!config_.zero_copy_input) {
+        for (void*& input_buffer : input_buffers_) {
+          CheckMpi(hi_mpi_dvpp_malloc(0, &input_buffer, input_bytes_),
+                   "hi_mpi_dvpp_malloc VENC input");
+          Check(input_buffer != nullptr, "hi_mpi_dvpp_malloc returned a null VENC input buffer");
+        }
+        input_buffer_ = input_buffers_.front();
       }
-      input_buffer_ = input_buffers_.front();
       ConfigureFrame();
     } catch (...) {
       Cleanup();
@@ -88,13 +90,17 @@ class DvppH264Encoder::Impl {
     if (ready_event != nullptr) {
       CheckAcl(aclrtSynchronizeEvent(ready_event), "aclrtSynchronizeEvent MPI VENC input");
     }
-    input_buffer_ = input_buffers_[frame_index_ % input_buffers_.size()];
+    input_buffer_ = config_.zero_copy_input
+                        ? const_cast<void*>(nv12_device)
+                        : input_buffers_[frame_index_ % input_buffers_.size()];
     // Keep the public frame metadata fresh for each MPI submission. Some vendor
     // runtimes update bookkeeping in the frame descriptor despite its const API.
     ConfigureFrame();
-    CheckAcl(aclrtMemcpy(input_buffer_, input_bytes_, nv12_device, input_bytes_,
-                         ACL_MEMCPY_DEVICE_TO_DEVICE),
-             "aclrtMemcpy NV12 to MPI VENC input");
+    if (!config_.zero_copy_input) {
+      CheckAcl(aclrtMemcpy(input_buffer_, input_bytes_, nv12_device, input_bytes_,
+                           ACL_MEMCPY_DEVICE_TO_DEVICE),
+               "aclrtMemcpy NV12 to MPI VENC input");
+    }
 
     // Keep timestamps fixed for the first multi-frame driver probe. This
     // isolates whether this MPI build accepts a timestamped second frame.

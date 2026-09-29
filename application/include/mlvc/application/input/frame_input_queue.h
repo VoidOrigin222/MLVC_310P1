@@ -42,11 +42,20 @@ class AsyncFrameInputQueue {
     int prepared_frames = 0;
     int producer_wait_count = 0;
     int consumer_wait_count = 0;
+    int producer_full_wait_count = 0;
+    double producer_full_wait_ms = 0.0;
+    double producer_full_wait_max_ms = 0.0;
+    int consumer_empty_wait_count = 0;
+    double consumer_empty_wait_ms = 0.0;
+    double consumer_empty_wait_max_ms = 0.0;
+    std::size_t ready_max_depth = 0;
   };
 
   AsyncFrameInputQueue(int frames_to_attempt, int configured_frame_num,
                        const std::filesystem::path& input_video_path,
                        const std::filesystem::path& input_frame_dir,
+                       std::optional<mlvc::io::CameraCaptureOptions> camera_options,
+                       aclrtContext context,
                        const mlvc::TensorSpec& frame_spec, int width, int height,
                        FrameBufferPool* arena, mlvc::Profiler* profiler,
                        mlvc::CodecGraphExecutor* graph_executor);

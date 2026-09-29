@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export MLVC_ACL_REPO_ROOT="${MLVC_ACL_REPO_ROOT:-${ROOT}}"
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   echo "Usage: bash scripts/bash_run_encode.sh [encoder-config.toml]"
   exit 0

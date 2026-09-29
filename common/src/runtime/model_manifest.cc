@@ -4,8 +4,10 @@
 #include <array>
 #include <cstdint>
 #include <fstream>
+#include <iomanip>
 #include <limits>
 #include <regex>
+#include <set>
 #include <sstream>
 #include <string_view>
 #include <utility>
@@ -207,6 +209,61 @@ std::vector<std::string> ExtractModelBlocks(const std::string& text) {
   return blocks;
 }
 
+std::vector<std::string> ExtractRuntimeArtifactBlocks(const std::string& text) {
+  const std::string key = "\"runtime_artifacts\"";
+  const std::size_t key_pos = text.find(key);
+  if (key_pos == std::string::npos) return {};
+  const std::size_t array_start = text.find('[', key_pos + key.size());
+  Check(array_start != std::string::npos, "manifest runtime_artifacts is not an array");
+
+  std::vector<std::string> blocks;
+  int depth = 0;
+  std::size_t block_start = std::string::npos;
+  for (std::size_t i = array_start + 1; i < text.size(); ++i) {
+    if (text[i] == '{') {
+      if (depth == 0) block_start = i;
+      ++depth;
+    } else if (text[i] == '}') {
+      Check(depth > 0, "malformed manifest runtime_artifacts array");
+      --depth;
+      if (depth == 0 && block_start != std::string::npos) {
+        blocks.push_back(text.substr(block_start, i - block_start + 1));
+        block_start = std::string::npos;
+      }
+    } else if (text[i] == ']' && depth == 0) {
+      return blocks;
+    }
+  }
+  throw Error("unterminated manifest runtime_artifacts array");
+}
+
+std::string Sha256Hex(const std::vector<uint8_t>& bytes) {
+  const auto digest = Sha256(bytes);
+  std::ostringstream formatted;
+  formatted << std::hex << std::setfill('0');
+  for (uint8_t byte : digest) formatted << std::setw(2) << static_cast<unsigned>(byte);
+  return formatted.str();
+}
+
+std::filesystem::path ResolveArtifactPath(const ModelManifest& manifest,
+                                          const RuntimeArtifactRecord& artifact) {
+  return artifact.file.is_absolute() ? artifact.file : manifest.directory() / artifact.file;
+}
+
+void ValidateRuntimeArtifactSet(const ModelManifest& manifest) {
+  const std::set<std::string> required = {
+      "metadata.json", "gaussian_pmf.json", "bit_estimator_pmf.json"};
+  std::set<std::string> found;
+  for (const RuntimeArtifactRecord& artifact : manifest.runtime_artifacts()) {
+    Check(!artifact.name.empty(), "manifest runtime artifact name must not be empty");
+    Check(found.insert(artifact.name).second,
+          "duplicated manifest runtime artifact: " + artifact.name);
+  }
+  for (const std::string& name : required) {
+    Check(found.find(name) != found.end(), "manifest missing runtime artifact: " + name);
+  }
+}
+
 std::vector<std::string> ExtractOptionalStringArrayField(const std::string& text,
                                                          const std::string& key) {
   const std::string quoted_key = "\"" + key + "\"";
@@ -368,6 +425,18 @@ ModelManifest ModelManifest::Load(const std::filesystem::path& manifest_path) {
   manifest.dtype_ = ExtractStringField(text, "dtype");
   manifest.sidecar_ = ParseSidecar(text);
 
+  std::set<std::string> runtime_artifact_names;
+  for (const std::string& block : ExtractRuntimeArtifactBlocks(text)) {
+    RuntimeArtifactRecord artifact;
+    artifact.name = ExtractStringField(block, "name");
+    Check(runtime_artifact_names.insert(artifact.name).second,
+          "duplicated manifest runtime artifact: " + artifact.name);
+    artifact.file = ExtractStringField(block, "file");
+    artifact.bytes = ExtractUIntField(block, "bytes");
+    artifact.sha256 = ExtractStringField(block, "sha256");
+    manifest.runtime_artifacts_.push_back(std::move(artifact));
+  }
+
   for (const std::string& block : ExtractModelBlocks(text)) {
     ModelRecord record;
     record.name = ExtractModelName(block);
@@ -425,17 +494,70 @@ const ModelRecord& ModelManifest::GetModel(const std::string& name) const {
   return models_.at(it->second);
 }
 
+const RuntimeArtifactRecord& ModelManifest::GetRuntimeArtifact(const std::string& name) const {
+  const auto it = std::find_if(runtime_artifacts_.begin(), runtime_artifacts_.end(),
+                               [&name](const RuntimeArtifactRecord& artifact) {
+                                 return artifact.name == name;
+                               });
+  Check(it != runtime_artifacts_.end(), "unknown runtime artifact in manifest: " + name);
+  return *it;
+}
+
+void VerifyRuntimeArtifacts(const ModelManifest& manifest) {
+  ValidateRuntimeArtifactSet(manifest);
+  for (const RuntimeArtifactRecord& artifact : manifest.runtime_artifacts()) {
+    Check(artifact.bytes <= 64u * 1024u * 1024u,
+          "manifest runtime artifact exceeds the verification size limit: " + artifact.name);
+    const std::filesystem::path path = ResolveArtifactPath(manifest, artifact);
+    std::error_code error;
+    Check(std::filesystem::is_regular_file(path, error) && !error,
+          "manifest runtime artifact is not a regular file: " + path.string());
+    error.clear();
+    const uintmax_t actual_bytes = std::filesystem::file_size(path, error);
+    Check(!error, "failed to stat manifest runtime artifact: " + path.string());
+    Check(actual_bytes == artifact.bytes,
+          "manifest runtime artifact byte count mismatch: " + path.string());
+    std::ifstream input(path, std::ios::binary);
+    Check(input.good(), "failed to open manifest runtime artifact: " + path.string());
+    const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(input)),
+                                     std::istreambuf_iterator<char>());
+    Check(!input.bad(), "failed to read manifest runtime artifact: " + path.string());
+    Check(bytes.size() == artifact.bytes,
+          "manifest runtime artifact size changed during verification: " + path.string());
+    Check(Sha256Hex(bytes) == artifact.sha256,
+          "manifest runtime artifact sha256 mismatch: " + path.string());
+  }
+}
+
 std::array<uint8_t, 32> ComputeModelBundleSha256(const ModelManifest& manifest) {
   // Length-prefix every field so that two different manifests cannot collide
   // merely because their textual fields happen to concatenate identically.
   std::vector<uint8_t> canonical;
-  AppendString(&canonical, "MLVC-MODEL-BUNDLE-V1");
+  AppendString(&canonical, "MLVC-MODEL-BUNDLE-V2");
   AppendString(&canonical, manifest.runtime());
   AppendString(&canonical, manifest.soc_version());
   AppendString(&canonical, manifest.dtype());
   const SidecarRecord& sidecar = manifest.sidecar();
   AppendU64(&canonical, sidecar.bytes);
   AppendString(&canonical, sidecar.sha256);
+  ValidateRuntimeArtifactSet(manifest);
+  std::vector<const RuntimeArtifactRecord*> artifacts;
+  artifacts.reserve(manifest.runtime_artifacts().size());
+  for (const RuntimeArtifactRecord& artifact : manifest.runtime_artifacts()) {
+    artifacts.push_back(&artifact);
+  }
+  std::sort(artifacts.begin(), artifacts.end(),
+            [](const RuntimeArtifactRecord* left, const RuntimeArtifactRecord* right) {
+              return left->name < right->name;
+            });
+  Check(artifacts.size() <= std::numeric_limits<uint32_t>::max(),
+        "manifest runtime artifact list is too large for bundle hash");
+  AppendU32(&canonical, static_cast<uint32_t>(artifacts.size()));
+  for (const RuntimeArtifactRecord* artifact : artifacts) {
+    AppendString(&canonical, artifact->name);
+    AppendU64(&canonical, artifact->bytes);
+    AppendString(&canonical, artifact->sha256);
+  }
   Check(manifest.models().size() <= std::numeric_limits<uint32_t>::max(),
         "manifest model list is too large for bundle hash");
   AppendU32(&canonical, static_cast<uint32_t>(manifest.models().size()));
