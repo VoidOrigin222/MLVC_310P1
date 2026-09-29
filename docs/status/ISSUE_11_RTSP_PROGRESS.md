@@ -1,14 +1,21 @@
 ﻿# Issue #11 RTSP 输出进度
 
-更新时间：2026-09-26
+更新时间：2026-09-30
 
 ## 实现
 
-解码器支持 `output_transport_mode = "rtsp"`。`RtspVideoPublisher` 将 FP16 YUV444 转为 BGR 后交给后台线程，在线程内写入 FFmpeg/libx264 管道。发布队列有界，队列满时累计 `dropped_frames`；工作线程和 FFmpeg 错误通过 `Close()` 传播。
+解码器支持 `output_transport_mode = "rtsp"`。`RtspVideoPublisher` 在板端通过
+`libavformat` 直接完成 RTSP 控制、SDP、RTP/RTCP 封装和网络写入，不再启动 FFmpeg
+子进程或通过 `pipe` 传输。`dvpp` 模式直接发布 DVPP 生成的 H.264 Annex-B 帧；
+`libx264` 模式通过 libavcodec 编码 NV12 帧后交给 libavformat。发布队列有界，工作线程
+和 libavformat/libavcodec 错误通过 `Close()` 传播。
+
+没有安装 FFmpeg 开发库的主机仍保留旧的 FFmpeg 子进程兼容路径；310P1 板端安装
+`ffmpeg-devel` 后构建时会显示 `RTSP publisher backend: libavformat`。
 
 RTSP 发布默认使用 UDP 媒体传输（RTSP 控制连接仍使用 TCP 8554，RTP/RTCP 使用 MediaMTX 的 UDP 8000/8001）。
 
-当前实现保持单后台线程：颜色转换和管道写入在同一线程串行执行。此前尝试的两级异步队列已回退，因为实测没有带来端到端收益。
+当前实现保持单后台线程：颜色转换/编码和网络写入在同一线程串行执行，队列仍受容量限制。
 
 示例配置：
 
@@ -25,7 +32,9 @@ cmake --build build -j2
 ctest --output-on-failure
 ```
 
-两端均成功构建；`rtsp_video_publisher` 测试通过。解码端回退构建还伴随 Ascend 头文件的既有 `-Wpedantic` 零长度数组警告和时钟偏移提示，不影响构建结果。
+板端 `build-direct` 成功构建；`rtsp_video_publisher` 通过本地 RTSP 握手服务器，实际验证
+OPTIONS/ANNOUNCE/SETUP/RECORD、TCP 交错 RTP 数据、H.264 直通和 NV12/libx264 两条路径。
+全量 CTest 23/23 通过。
 
 ## MediaMTX 实测（2026-09-13）
 
@@ -60,5 +69,6 @@ RTSP 输出使用解码板已有的精简 FFmpeg runtime，并由 `output_transp
 不能据此判定解码或 DVPP 丢帧。验收摘要见
 [`acceptance/issue11-venc-20260925/fullchain-537-39220-20260925/实测说明.md`](../../acceptance/issue11-venc-20260925/fullchain-537-39220-20260925/实测说明.md)；原始日志和配置仅保留在本地验收目录。
 
-Issue #11 的 RTSP 显示功能和 30 FPS 级别的 1080P 实测已完成；GitHub issue 仍保持开放，
-本轮未发布验收评论或关闭 issue。RTSP demo 不作为核心编解码路径的性能指标。
+Issue #11 的 RTSP 显示功能和 30 FPS 级别的 1080P 实测已完成。针对后续“应直接使用
+libavformat”的反馈，当前板端版本已改为直接 API 后端；旧 pipe 仅作为未安装开发库主机的
+兼容路径保留。RTSP demo 不作为核心编解码路径的性能指标。

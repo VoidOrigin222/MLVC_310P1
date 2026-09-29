@@ -21,6 +21,26 @@ include(CTest)
 find_package(OpenCV REQUIRED)
 find_package(Threads REQUIRED)
 
+# RTSP publishing uses the libavformat/libavcodec API when the development
+# libraries are available (the 310P1 board installs these from openEuler).
+# Keep the existing FFmpeg executable path as a build-time fallback for hosts
+# that only have the runtime binary installed.
+find_path(FFMPEG_INCLUDE_DIR
+  NAMES libavformat/avformat.h
+  PATH_SUFFIXES ffmpeg
+)
+find_library(FFMPEG_AVFORMAT_LIBRARY NAMES avformat)
+find_library(FFMPEG_AVCODEC_LIBRARY NAMES avcodec)
+find_library(FFMPEG_AVUTIL_LIBRARY NAMES avutil)
+set(MLVC_HAS_LIBAVFORMAT OFF)
+if(FFMPEG_INCLUDE_DIR AND FFMPEG_AVFORMAT_LIBRARY AND FFMPEG_AVCODEC_LIBRARY AND
+   FFMPEG_AVUTIL_LIBRARY)
+  set(MLVC_HAS_LIBAVFORMAT ON)
+  message(STATUS "RTSP publisher backend: libavformat")
+else()
+  message(STATUS "RTSP publisher backend: FFmpeg subprocess fallback")
+endif()
+
 set(MLVC_MSRTC_RANS_DIR "${MLVC_VENDOR_ROOT}/msrtc_rans")
 if(NOT EXISTS "${TOMLPLUSPLUS_INCLUDE_DIR}/toml++/toml.h")
   message(FATAL_ERROR "Missing vendored toml++ headers under ${TOMLPLUSPLUS_INCLUDE_DIR}")
@@ -193,6 +213,11 @@ target_include_directories(mlvc_codec
     ${OpenCV_INCLUDE_DIRS}
 )
 
+if(MLVC_HAS_LIBAVFORMAT)
+  target_include_directories(mlvc_codec PRIVATE "${FFMPEG_INCLUDE_DIR}")
+  target_compile_definitions(mlvc_codec PRIVATE MLVC_HAS_LIBAVFORMAT=1)
+endif()
+
 target_link_libraries(mlvc_codec PUBLIC
   mlvc_common
   mlvc_msrtc_rans
@@ -200,6 +225,14 @@ target_link_libraries(mlvc_codec PUBLIC
   acl_dvpp_mpi
   ${OpenCV_LIBS}
 )
+
+if(MLVC_HAS_LIBAVFORMAT)
+  target_link_libraries(mlvc_codec PUBLIC
+    "${FFMPEG_AVFORMAT_LIBRARY}"
+    "${FFMPEG_AVCODEC_LIBRARY}"
+    "${FFMPEG_AVUTIL_LIBRARY}"
+  )
+endif()
 
 target_compile_definitions(mlvc_codec PRIVATE ENABLE_DVPP_INTERFACE)
 
@@ -357,6 +390,9 @@ if(MLVC_BUILD_APPS)
       tools/cpp/tests/test_rtsp_video_publisher.cc
     )
     target_link_libraries(test_rtsp_video_publisher PRIVATE mlvc_codec)
+    if(MLVC_HAS_LIBAVFORMAT)
+      target_compile_definitions(test_rtsp_video_publisher PRIVATE MLVC_HAS_LIBAVFORMAT=1)
+    endif()
     target_compile_options(test_rtsp_video_publisher PRIVATE
       $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
     )

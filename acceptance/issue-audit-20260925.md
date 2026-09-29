@@ -69,9 +69,13 @@ GitHub 状态：open。结论：功能实现与 1080p 全链路验收已记录�
 - `application/src/cli/decode_config.cc:129-151`：RTSP 输出与 `dvpp`/`libx264` 后端配置。
 - `application/src/stream/mlvc/decode.cc:72-185,500-537,771-809`：异步 NV12/VENC 发布、显式关闭和丢帧统计。
 - `mlvc/src/io/dvpp_h264_encoder.cc`：DVPP H.264 VENC 生命周期和编码路径。
+- `mlvc/src/io/video_io.cc`：板端检测到 FFmpeg 开发库时，`RtspVideoPublisher` 通过
+  libavformat/libavcodec 直接完成 RTSP 发布；没有开发库的主机才使用兼容子进程路径。
+- `tools/cpp/tests/test_rtsp_video_publisher.cc`：本地 RTSP 握手服务器验证直通 H.264、
+  NV12/libx264 编码和交错 RTP 数据写出。
 - `acceptance/issue11-venc-20260925/fullchain-537-39220-20260925/实测说明.md`：537/537 解码帧、29.7511 FPS、VENC 发布 537 帧、`forward_dropped_frames=0`。
 
-对抗性审查：PC RTSP 客户端日志只有 486 帧，但客户端在流已开始后才完成握手；设备日志证明发布端 537 帧且转发丢帧为 0，因此不能据此认定 PC 侧或 decoder 丢了 51 帧。该数据来自归档实测，不是本轮重跑。
+对抗性审查：PC RTSP 客户端日志只有 486 帧，但客户端在流已开始后才完成握手；设备日志证明发布端 537 帧且转发丢帧为 0，因此不能据此认定 PC 侧或 decoder 丢了 51 帧。该数据来自归档实测，不是本轮重跑。针对后续“不能使用 pipe、应直接使用 libavformat”的反馈，板端已安装 `ffmpeg-devel`，构建显示 `RTSP publisher backend: libavformat`，直连测试和 23 项 CTest 全部通过。
 
 ## #12 流水线重排表绕过配置的有界队列
 

@@ -88,9 +88,8 @@ class DecodedVideoWriter {
   int frame_count_ = 0;
 };
 
-// Publishes decoded frames to a MediaMTX RTSP endpoint through FFmpeg.
-// Conversion and pipe writes run on a dedicated worker so decode is not
-// blocked by network backpressure.
+// Publishes decoded frames to a MediaMTX RTSP endpoint through libavformat
+// when available. Conversion and network writes run on a dedicated worker.
 class RtspVideoPublisher {
  public:
   RtspVideoPublisher(const std::string& url, double fps, int width, int height,
@@ -109,7 +108,9 @@ class RtspVideoPublisher {
   uint64_t dropped_frames() const { return dropped_frames_; }
 
  private:
+  struct DirectState;
   FILE* pipe_ = nullptr;
+  std::unique_ptr<DirectState> direct_state_;
   int width_ = 0;
   int height_ = 0;
   int frame_count_ = 0;
