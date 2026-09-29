@@ -57,6 +57,10 @@ isolates processing capacity from the camera's 30 FPS delivery limit.
 
 The deployed AIPP binary completed a separate live 180 frame test (20 warmup)
 at 29.7905 FPS and `encode=ok`; this reflects the camera's 30 FPS limit.
+After building the release branch from Git on the encoder board, the new binary
+also completed a 60-frame native live smoke run with `encode=ok`. Its separate
+400-frame, 20-warmup, 120-frame-preload AIPP run measured **34.2227 FPS** and
+`encode=ok`.
 The one-off benchmark configurations were removed from the board after the
 results were recorded. The local acceptance directory retains their logs.
 

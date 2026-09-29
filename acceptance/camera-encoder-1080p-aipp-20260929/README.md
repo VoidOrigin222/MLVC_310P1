@@ -20,6 +20,11 @@ was faster in all three measured independent runs. CPU and AIPP use different
 preprocessing numerics; the AIPP OM is not bit-identical to the original model.
 No decoder-side quality or frame receipt was tested.
 
+The source committed on `release/encoder-1080p-aipp-20260929` was rebuilt on
+the encoder board. Its AIPP binary completed a new 60-frame native camera
+smoke run with `encode=ok` and a 400-frame independent processing run with
+120 preloaded frames, 20 warmup frames, **34.2227 FPS**, and `encode=ok`.
+
 ## Sustained live test
 
 With the production 1080p camera/RTP settings, 9,300 frames ran for 5 min
