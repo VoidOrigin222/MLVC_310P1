@@ -25,8 +25,8 @@ The isolated binary and AIPP bundle are under
 `build/mlvc_encode` and `configs/encoder.toml` were not replaced. The AIPP OM
 SHA-256 is `9bd673907a7c85e8f054823c74c9dbf56d34e4d4d63c1e42961a266b4d245a18`.
 A complete local copy of the model bundle and build inputs is in the ignored
-`artifacts/camera_1080p_aipp/` directory. The board also has a source archive
-at `camera_1080p_aipp/source_20260929.tar.gz`.
+`artifacts/camera_1080p_aipp/` directory. The board keeps the versioned source
+checkout at `camera_1080p_aipp/source-git/` and a portable `source.bundle`.
 
 The Git version is `release/encoder-1080p-aipp-20260929` with tag
 `encoder-1080p-aipp-20260929`. The board's `camera_1080p_aipp/VERSION` records
