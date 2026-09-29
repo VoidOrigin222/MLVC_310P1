@@ -326,7 +326,7 @@ int main(int argc, char** argv) {
     mlvc::CodecGraphExecutor graph_executor(2);
     mlvc::app::FrameInputArena frame_prepare_arena(frame_spec, 3);
     mlvc::app::AsyncFrameInputQueue prepare_queue(
-        frames_to_attempt, frames, input_path, input_frame_dir, frame_spec, source_width,
+        frames_to_attempt, frames, input_path, input_frame_dir, std::nullopt, nullptr, frame_spec, source_width,
         source_height, &frame_prepare_arena, nullptr, &graph_executor);
 
     mlvc::codec::TensorData ref_feature = mlvc::codec::MakeTensorLike(ref_feature_spec);

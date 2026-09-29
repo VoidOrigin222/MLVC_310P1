@@ -285,7 +285,7 @@ int Run(const Options& options) {
   mlvc::CodecGraphExecutor graph_executor(2);
   mlvc::app::FrameInputArena input_arena(frame_spec, 3);
   mlvc::app::AsyncFrameInputQueue input_queue(
-      frames_to_attempt, options.frames, {}, options.input_frame_dir, frame_spec, source_info.width,
+      frames_to_attempt, options.frames, {}, options.input_frame_dir, std::nullopt, nullptr, frame_spec, source_info.width,
       source_info.height, &input_arena, nullptr, &graph_executor);
 
   mlvc::MlvcOfficialEntropyEncoder entropy_encoder(models.manifest());

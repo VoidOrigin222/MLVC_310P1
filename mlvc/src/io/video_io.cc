@@ -671,6 +671,7 @@ class VideoFrameReader::Impl {
                 << " cpu_bgr_fp16_ms=" << cpu_bgr_fp16_ms_ / std::max<uint64_t>(1, converted_frames_)
                 << " aipp_nv12_pad_ms=" << aipp_pad_ms_ / std::max<uint64_t>(1, converted_frames_)
                 << " v4l2_sequence_gaps=" << v4l2_sequence_gaps_
+                << " jpeg_decode_errors=" << jpeg_decode_errors_
                 << " camera_queue_max_depth=" << camera_queue_max_depth_
                 << " camera_queue_full_waits=" << camera_queue_full_waits_
                 << " camera_queue_full_wait_total_ms=" << camera_queue_full_wait_total_ms_
@@ -734,9 +735,27 @@ class VideoFrameReader::Impl {
           }
           const auto capture_end = std::chrono::steady_clock::now();
           const auto jpegd_begin = std::chrono::steady_clock::now();
-          DvppJpegDecodedFrame nv12 = replay != nullptr
-                                            ? jpeg_decoder_->DecodeDevice(replay->data(), replay->size())
-                                            : jpeg_decoder_->DecodeDevice(jpeg->data(), jpeg->bytes());
+          DvppJpegDecodedFrame nv12;
+          try {
+            nv12 = replay != nullptr
+                       ? jpeg_decoder_->DecodeDevice(replay->data(), replay->size())
+                       : jpeg_decoder_->DecodeDevice(jpeg->data(), jpeg->bytes());
+          } catch (const std::exception& decode_error) {
+            if (jpeg.has_value()) jpeg->Release();
+            const std::string message = decode_error.what();
+            if (message.find("acldvppJpegPredictDecSize") == std::string::npos) {
+              throw;
+            }
+            {
+              std::lock_guard<std::mutex> stats_lock(stats_mutex_);
+              ++jpeg_decode_errors_;
+              if (jpeg_decode_errors_ <= 5 || jpeg_decode_errors_ % 100 == 0) {
+                std::cerr << "camera_jpeg_drop count=" << jpeg_decode_errors_
+                          << " reason=" << message << std::endl;
+              }
+            }
+            continue;
+          }
           if (jpeg.has_value()) jpeg->Release();
           const auto jpegd_end = std::chrono::steady_clock::now();
           {
@@ -942,6 +961,7 @@ class VideoFrameReader::Impl {
   mutable std::mutex stats_mutex_;
   uint64_t camera_frames_ = 0;
   uint64_t v4l2_sequence_gaps_ = 0;
+  uint64_t jpeg_decode_errors_ = 0;
   uint32_t last_v4l2_sequence_ = 0;
   bool have_v4l2_sequence_ = false;
   std::size_t camera_queue_max_depth_ = 0;
