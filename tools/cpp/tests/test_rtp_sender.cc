@@ -5,6 +5,7 @@
 #include <cstring>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -16,7 +17,8 @@ int main() {
   constexpr uint8_t kPayloadType = 110;
   mlvc::transport::RtpMessageReceiver receiver(0, "sender test receiver", kPayloadType);
   mlvc::transport::RtpMlvcSender sender("127.0.0.1", receiver.local_port(), 0x01020304u,
-                                        0, 4096, 4u * 1024u * 1024u, 1000, kPayloadType);
+                                        0, 4096, 4u * 1024u * 1024u, 1000, kPayloadType,
+                                        std::chrono::milliseconds(100));
   std::vector<uint8_t> input(5000);
   for (std::size_t i = 0; i < input.size(); ++i) input[i] = static_cast<uint8_t>(i * 31u);
   mlvc::transport::MlvcEfu efu;
@@ -51,6 +53,17 @@ int main() {
   assert(output == input_unit);
   assert(receiver.lost_packets() == 0);
   assert(receiver.duplicate_packets() == 0);
+  const auto rtcp_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (std::chrono::steady_clock::now() < rtcp_deadline &&
+         (sender.Stats().rtcp_packets_sent == 0 ||
+          sender.Stats().rtcp_packets_received == 0 ||
+          receiver.rtcp_receiver_reports_sent() == 0)) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  assert(sender.Stats().rtcp_packets_sent > 0);
+  assert(sender.Stats().rtcp_packets_received > 0);
+  assert(receiver.rtcp_sender_reports_received() > 0);
+  assert(receiver.rtcp_receiver_reports_sent() > 0);
 
   mlvc::transport::RtpMlvcSender random_sender("127.0.0.1", receiver.local_port(), 0,
                                                0, 4096, 4u * 1024u * 1024u, 1000,

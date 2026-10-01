@@ -1,5 +1,7 @@
 ﻿#include "mlvc/transport/rtp_mlvc.h"
 
+#include "mlvc/transport/rtcp_session.h"
+
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <sys/socket.h>
@@ -13,10 +15,13 @@
 #include <deque>
 #include <exception>
 #include <iterator>
+#include <limits>
 #include <mutex>
+#include <map>
 #include <stdexcept>
 #include <thread>
 #include <random>
+#include <set>
 #include "mlvc/transport/mlvc_media_unit.h"
 namespace mlvc::transport {
 namespace {
@@ -311,6 +316,10 @@ struct RtpMlvcSender::Impl {
   uint32_t ssrc = 0;
   uint8_t payload_type = 96;
   std::unique_ptr<UdpPacer> pacer;
+  std::unique_ptr<RtcpUdpEndpoint> rtcp_endpoint;
+  std::chrono::milliseconds rtcp_interval{5000};
+  std::atomic<bool> rtcp_stopping{false};
+  std::thread rtcp_thread;
   uint64_t pacing_rate_bps = 0;
   std::size_t max_queue_bytes = 0;
   uint64_t max_queue_delay_ms = 0;
@@ -335,6 +344,20 @@ struct RtpMlvcSender::Impl {
   std::atomic<uint64_t> queue_delay_total_us{0};
   std::atomic<uint64_t> queue_delay_samples{0};
   std::atomic<uint64_t> socket_block_us{0};
+  std::atomic<uint64_t> rtp_octets_sent{0};
+  std::atomic<uint32_t> last_rtp_timestamp{0};
+  std::atomic<uint64_t> rtcp_packets_sent{0};
+  std::atomic<uint64_t> rtcp_packets_received{0};
+  std::atomic<uint64_t> random_access_requests{0};
+  std::mutex control_mutex;
+  std::deque<MlvcControlMessage> control_queue;
+  std::set<uint32_t> seen_control_transactions;
+  std::atomic<uint32_t> remote_control_ssrc{0};
+  std::mutex packet_history_mutex;
+  std::map<uint16_t, std::vector<uint8_t>> packet_history;
+  std::deque<uint16_t> packet_history_order;
+  std::map<uint16_t, std::chrono::steady_clock::time_point> last_retransmit_time;
+  static constexpr std::size_t kPacketHistoryLimit = 2048;
 
   ~Impl() {
     try {
@@ -347,6 +370,9 @@ struct RtpMlvcSender::Impl {
     }
     queue_cv.notify_all();
     if (send_thread.joinable()) send_thread.join();
+    rtcp_stopping.store(true);
+    if (rtcp_thread.joinable()) rtcp_thread.join();
+    if (rtcp_endpoint) rtcp_endpoint->Close();
     if (socket >= 0) ::close(socket);
   }
 
@@ -376,6 +402,116 @@ struct RtpMlvcSender::Impl {
     std::lock_guard<std::mutex> lock(queue_mutex);
     if (bytes <= queued_bytes) queued_bytes -= bytes;
     queue_cv.notify_all();
+  }
+
+  void RememberRtpPacket(const std::vector<uint8_t>& packet) {
+    if (packet.size() < 12) return;
+    const uint16_t packet_sequence = static_cast<uint16_t>(
+        (static_cast<uint16_t>(packet[2]) << 8) | packet[3]);
+    std::lock_guard<std::mutex> lock(packet_history_mutex);
+    const auto existing = packet_history.find(packet_sequence);
+    if (existing == packet_history.end()) packet_history_order.push_back(packet_sequence);
+    packet_history[packet_sequence] = packet;
+    while (packet_history_order.size() > kPacketHistoryLimit) {
+      const uint16_t expired = packet_history_order.front();
+      packet_history_order.pop_front();
+      packet_history.erase(expired);
+      last_retransmit_time.erase(expired);
+    }
+  }
+
+  void QueueRetransmissions(const std::vector<uint16_t>& requested_sequences) {
+    const auto now = std::chrono::steady_clock::now();
+    std::vector<PendingPacket> packets;
+    packets.reserve(std::min<std::size_t>(requested_sequences.size(), 64));
+    {
+      std::lock_guard<std::mutex> lock(packet_history_mutex);
+      for (uint16_t requested : requested_sequences) {
+        if (packets.size() >= 64) break;
+        const auto history = packet_history.find(requested);
+        if (history == packet_history.end()) continue;
+        const auto last = last_retransmit_time.find(requested);
+        if (last != last_retransmit_time.end() &&
+            now - last->second < std::chrono::milliseconds(100)) {
+          continue;
+        }
+        last_retransmit_time[requested] = now;
+        packets.push_back(PendingPacket{history->second, now});
+      }
+    }
+    if (packets.empty()) return;
+    std::size_t reservation = 0;
+    for (const auto& packet : packets) {
+      const std::size_t packet_bytes = packet.bytes.size() + kIpv4UdpOverheadBytes;
+      if (reservation > std::numeric_limits<std::size_t>::max() - packet_bytes) return;
+      reservation += packet_bytes;
+    }
+    std::lock_guard<std::mutex> lock(queue_mutex);
+    if (stopping || send_error != nullptr || reservation > max_queue_bytes ||
+        queued_bytes > max_queue_bytes - reservation) {
+      return;
+    }
+    if (pacing_rate_bps > 0 && max_queue_delay_ms > 0) {
+      const long double estimated_us = static_cast<long double>(queued_bytes + reservation) *
+                                       8000000.0L / pacing_rate_bps;
+      if (estimated_us > static_cast<long double>(max_queue_delay_ms) * 1000.0L) return;
+    }
+    queued_bytes += reservation;
+    for (auto& packet : packets) queue.push_back(std::move(packet));
+    queue_cv.notify_one();
+  }
+
+  void HandleRtcpPacket(const std::vector<uint8_t>& packet) {
+    const RtcpCompoundContents compound = DecodeRtcpCompound(packet);
+    uint32_t receiver_ssrc = compound.receiver_report.has_value()
+                                 ? compound.receiver_report->sender_ssrc
+                                 : 0;
+    if (receiver_ssrc == 0 && !compound.plis.empty()) receiver_ssrc = compound.plis.front().sender_ssrc;
+    if (receiver_ssrc == 0 && !compound.firs.empty()) receiver_ssrc = compound.firs.front().sender_ssrc;
+    if (receiver_ssrc == 0) return;
+    uint32_t expected_receiver_ssrc = remote_control_ssrc.load();
+    if (expected_receiver_ssrc == 0) {
+      remote_control_ssrc.compare_exchange_strong(expected_receiver_ssrc, receiver_ssrc);
+      expected_receiver_ssrc = remote_control_ssrc.load();
+    }
+    if (receiver_ssrc == 0 || receiver_ssrc != expected_receiver_ssrc) return;
+    if (compound.receiver_report.has_value() &&
+        std::none_of(compound.receiver_report->reports.begin(),
+                     compound.receiver_report->reports.end(), [this](const auto& report) {
+                       return report.source_ssrc == ssrc;
+                     }) && compound.plis.empty() && compound.firs.empty()) {
+      return;
+    }
+    ++rtcp_packets_received;
+    {
+      std::lock_guard<std::mutex> lock(control_mutex);
+      for (const auto& control : compound.mlvc_controls) {
+        if ((control.media_ssrc == 0 || control.media_ssrc == ssrc) &&
+            control.transaction_id != 0 &&
+            seen_control_transactions.insert(control.transaction_id).second)
+          control_queue.push_back(control);
+      }
+      while (control_queue.size() > 32) control_queue.pop_front();
+    }
+    for (const auto& pli : compound.plis) {
+      if (pli.sender_ssrc == receiver_ssrc && pli.media_ssrc == ssrc)
+        random_access_requests.fetch_add(1);
+    }
+    for (const auto& fir : compound.firs) {
+      if (fir.sender_ssrc == receiver_ssrc && fir.media_ssrc == ssrc)
+        random_access_requests.fetch_add(1);
+    }
+    std::vector<uint16_t> requested_sequences;
+    for (const auto& nack : compound.nacks) {
+      if (nack.sender_ssrc != receiver_ssrc || nack.media_ssrc != ssrc) continue;
+      requested_sequences.push_back(nack.pid);
+      for (uint8_t bit = 0; bit < 16; ++bit) {
+        if ((nack.blp & (1u << bit)) != 0) {
+          requested_sequences.push_back(static_cast<uint16_t>(nack.pid + bit + 1u));
+        }
+      }
+    }
+    if (!requested_sequences.empty()) QueueRetransmissions(requested_sequences);
   }
 
   void EnqueueReserved(std::vector<PendingPacket> packets) {
@@ -575,6 +711,12 @@ struct RtpMlvcSender::Impl {
         socket_block_us.fetch_add(static_cast<uint64_t>(blocked.count()));
         wire_bytes_sent.fetch_add(estimated_wire_packet_size);
         packets_sent.fetch_add(1);
+        rtp_octets_sent.fetch_add(pending.bytes.size() >= 12 ? pending.bytes.size() - 12 : 0);
+        last_rtp_timestamp.store((static_cast<uint32_t>(pending.bytes[4]) << 24) |
+                                 (static_cast<uint32_t>(pending.bytes[5]) << 16) |
+                                 (static_cast<uint32_t>(pending.bytes[6]) << 8) |
+                                 static_cast<uint32_t>(pending.bytes[7]));
+        RememberRtpPacket(pending.bytes);
         const uint64_t burst = delay.count() > 0
                                    ? estimated_wire_packet_size
                                    : burst_bytes.fetch_add(estimated_wire_packet_size) +
@@ -602,14 +744,60 @@ struct RtpMlvcSender::Impl {
       }
     }
   }
+
+  void SendRtcpLoop() {
+    const auto cname = std::string("mlvc-") + std::to_string(ssrc);
+    auto next_report = std::chrono::steady_clock::now() + rtcp_interval;
+    while (!rtcp_stopping.load()) {
+      const auto now = std::chrono::steady_clock::now();
+      try {
+        if (now >= next_report) {
+          if (packets_sent.load() != 0) {
+            const auto wall_now = std::chrono::system_clock::now().time_since_epoch();
+            const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(wall_now);
+            const auto nanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                wall_now - seconds);
+            constexpr uint64_t kNtpEpochOffset = 2208988800ull;
+            RtcpSenderReport report;
+            report.sender_ssrc = ssrc;
+            report.ntp_seconds = static_cast<uint32_t>(
+                static_cast<uint64_t>(seconds.count()) + kNtpEpochOffset);
+            report.ntp_fraction = static_cast<uint32_t>(
+                (static_cast<uint64_t>(nanoseconds.count()) << 32) / 1000000000ull);
+            report.rtp_timestamp = last_rtp_timestamp.load();
+            report.packet_count = static_cast<uint32_t>(packets_sent.load());
+            report.octet_count = static_cast<uint32_t>(rtp_octets_sent.load());
+            rtcp_endpoint->Send(EncodeRtcpSenderReport(report, cname));
+            ++rtcp_packets_sent;
+          }
+          next_report = std::chrono::steady_clock::now() + rtcp_interval;
+        }
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+            next_report - std::chrono::steady_clock::now());
+        const auto timeout = std::max(std::chrono::milliseconds(1),
+                                      std::min(std::chrono::milliseconds(100), remaining));
+        std::vector<uint8_t> packet;
+        if (!rtcp_endpoint->Receive(&packet, timeout)) continue;
+        HandleRtcpPacket(packet);
+      } catch (...) {
+        if (rtcp_stopping.load()) return;
+        // Malformed, unexpected or temporarily undeliverable RTCP must not
+        // terminate the media sender. The next report interval retries.
+      }
+    }
+  }
 };
 RtpMlvcSender::RtpMlvcSender(const std::string& host, uint16_t port, uint32_t ssrc,
                              uint64_t pacing_rate_bps, std::size_t max_burst_bytes,
                              std::size_t max_queue_bytes, uint64_t max_queue_delay_ms,
-                             uint8_t payload_type) {
+                             uint8_t payload_type, std::chrono::milliseconds rtcp_interval) {
   impl_ = std::make_unique<Impl>();
   if (payload_type < 96 || payload_type > 127)
     throw std::invalid_argument("RTP payload type must be in [96, 127]");
+  if (port == std::numeric_limits<uint16_t>::max())
+    throw std::invalid_argument("RTP destination port 65535 has no adjacent RTCP port");
+  if (rtcp_interval.count() <= 0)
+    throw std::invalid_argument("RTCP sender-report interval must be positive");
   std::random_device rd;
   if (ssrc == 0) {
     ssrc = (static_cast<uint32_t>(rd()) << 16) ^ static_cast<uint32_t>(rd());
@@ -618,6 +806,7 @@ RtpMlvcSender::RtpMlvcSender(const std::string& host, uint16_t port, uint32_t ss
   impl_->sequence = static_cast<uint16_t>(rd());
   impl_->ssrc = ssrc;
   impl_->payload_type = payload_type;
+  impl_->rtcp_interval = rtcp_interval;
   impl_->pacer = std::make_unique<UdpPacer>(pacing_rate_bps, max_burst_bytes);
   impl_->pacing_rate_bps = pacing_rate_bps;
   impl_->max_queue_bytes = max_queue_bytes;
@@ -638,9 +827,45 @@ RtpMlvcSender::RtpMlvcSender(const std::string& host, uint16_t port, uint32_t ss
   std::memcpy(&impl_->address, result->ai_addr, result->ai_addrlen);
   impl_->address_length = static_cast<socklen_t>(result->ai_addrlen);
   freeaddrinfo(result);
-  impl_->socket = ::socket(AF_INET, SOCK_DGRAM, 0);
-  if (impl_->socket < 0) throw std::runtime_error("failed to create RTP socket");
+  std::exception_ptr last_bind_error;
+  for (int attempt = 0; attempt < 32; ++attempt) {
+    const int candidate = ::socket(AF_INET, SOCK_DGRAM, 0);
+    if (candidate < 0) throw std::runtime_error("failed to create RTP socket");
+    sockaddr_in local{};
+    local.sin_family = AF_INET;
+    local.sin_addr.s_addr = htonl(INADDR_ANY);
+    local.sin_port = 0;
+    if (::bind(candidate, reinterpret_cast<sockaddr*>(&local), sizeof(local)) < 0) {
+      ::close(candidate);
+      continue;
+    }
+    socklen_t local_length = sizeof(local);
+    if (::getsockname(candidate, reinterpret_cast<sockaddr*>(&local), &local_length) < 0) {
+      ::close(candidate);
+      continue;
+    }
+    const uint16_t local_rtp_port = ntohs(local.sin_port);
+    if ((local_rtp_port & 1u) != 0 || local_rtp_port == 0 || local_rtp_port >= 65534) {
+      ::close(candidate);
+      continue;
+    }
+    try {
+      impl_->rtcp_endpoint = std::make_unique<RtcpUdpEndpoint>(
+          static_cast<uint16_t>(local_rtp_port + 1), host,
+          static_cast<uint16_t>(port + 1));
+      impl_->socket = candidate;
+      break;
+    } catch (...) {
+      last_bind_error = std::current_exception();
+      ::close(candidate);
+    }
+  }
+  if (impl_->socket < 0) {
+    if (last_bind_error) std::rethrow_exception(last_bind_error);
+    throw std::runtime_error("failed to bind a paired RTP/RTCP UDP port");
+  }
   impl_->send_thread = std::thread([impl = impl_.get()] { impl->SendLoop(); });
+  impl_->rtcp_thread = std::thread([impl = impl_.get()] { impl->SendRtcpLoop(); });
 }
 RtpMlvcSender::~RtpMlvcSender() = default;
 void RtpMlvcSender::SendUnit(RtpUnitType type, uint8_t flags, uint32_t config_id, uint32_t unit_id,
@@ -670,7 +895,24 @@ RtpTransportStats RtpMlvcSender::Stats() const {
   const uint64_t samples = impl_->queue_delay_samples.load();
   stats.average_queue_delay_us = samples == 0 ? 0 : impl_->queue_delay_total_us.load() / samples;
   stats.socket_block_us = impl_->socket_block_us.load();
+  stats.rtcp_packets_sent = impl_->rtcp_packets_sent.load();
+  stats.rtcp_packets_received = impl_->rtcp_packets_received.load();
   return stats;
+}
+bool RtpMlvcSender::ConsumeRandomAccessRequest() {
+  uint64_t pending = impl_->random_access_requests.load();
+  while (pending != 0 &&
+         !impl_->random_access_requests.compare_exchange_weak(pending, pending - 1)) {
+  }
+  return pending != 0;
+}
+bool RtpMlvcSender::PopMlvcControl(MlvcControlMessage* message) {
+  if (message == nullptr) return false;
+  std::lock_guard<std::mutex> lock(impl_->control_mutex);
+  if (impl_->control_queue.empty()) return false;
+  *message = std::move(impl_->control_queue.front());
+  impl_->control_queue.pop_front();
+  return true;
 }
 RtpPacket DecodeRtpPacket(const std::vector<uint8_t>& b, uint8_t expected_payload_type) {
   if (b.size() < 12 || (b[0] >> 6) != 2) throw std::runtime_error("invalid RTP packet");

@@ -150,9 +150,17 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
     uint64_t q_index_sum = 0;
     int min_q_index_used = std::numeric_limits<int>::max();
     int max_q_index_used = std::numeric_limits<int>::min();
+    std::deque<mlvc::transport::MlvcControlMessage> pending_controls;
     auto progress_start = std::chrono::steady_clock::now();
     int progress_frame = 0;
     auto consume_frame = [&](const std::shared_ptr<mlvc::DataObject>& data) {
+      mlvc::transport::MlvcControlMessage control;
+      while (output.PopMlvcControl(&control)) pending_controls.push_back(std::move(control));
+      for (auto it = pending_controls.begin(); it != pending_controls.end();) {
+        if (state.ApplyControl(*it, encoded_frames)) it = pending_controls.erase(it);
+        else ++it;
+      }
+      state.SetForceRandomAccess(output.ConsumeRandomAccessRequest());
       PendingEncodedFrame pending = frame_processor.Process(data, encoded_frames);
       if (pending.frame_type == MlvcFrameType::kIFrame) {
         ++i_frames;

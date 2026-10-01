@@ -97,6 +97,13 @@ void EncodeOutput::SendEnd() {
   if (rtp_sender_.has_value()) rtp_sender_->SendEnd();
 }
 
+bool EncodeOutput::ConsumeRandomAccessRequest() {
+  return rtp_sender_.has_value() && rtp_sender_->ConsumeRandomAccessRequest();
+}
+bool EncodeOutput::PopMlvcControl(mlvc::transport::MlvcControlMessage* message) {
+  return rtp_sender_.has_value() && rtp_sender_->PopMlvcControl(message);
+}
+
 uint64_t EncodeOutput::file_bytes() const {
   if (!options_.output_bitstream_path.empty() &&
       std::filesystem::exists(options_.output_bitstream_path)) {

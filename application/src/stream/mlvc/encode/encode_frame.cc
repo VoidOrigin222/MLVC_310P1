@@ -50,7 +50,9 @@ PendingEncodedFrame EncodeFrameProcessor::Process(const std::shared_ptr<mlvc::Da
       base_q_index +
           (decision.frame_type == MlvcFrameType::kLtrRecovery ? options_.ltr_qp_shift : 0),
       options_.min_qp, options_.max_qp);
-  const int q_index_shifted = sidecar_->ShiftedQp(frame_q_index, frame_adaptation_index);
+  const int controlled_q_index =
+      std::clamp(state_->EffectiveQIndex(frame_q_index), options_.min_qp, options_.max_qp);
+  const int q_index_shifted = sidecar_->ShiftedQp(controlled_q_index, frame_adaptation_index);
   TensorData q_index_shifted_tensor = MakeInt32ScalarTensor(q_index_shifted);
   const StageInput ref_feature_input =
       BuildReferenceFeatureInput(state_->reference(), state_->zero_feature());
@@ -63,7 +65,7 @@ PendingEncodedFrame EncodeFrameProcessor::Process(const std::shared_ptr<mlvc::Da
   const TensorData encoder_y_raw_0 = CloneTensor(encoder_output.At("y_raw_0"));
   const TensorData encoder_y_raw_1 = CloneTensor(encoder_output.At("y_raw_1"));
   std::future<std::vector<uint8_t>> entropy_future = entropy_worker_->Submit(
-      [this, encoder_z_raw, encoder_y_raw_0, encoder_y_raw_1, frame_q_index]() mutable {
+      [this, encoder_z_raw, encoder_y_raw_0, encoder_y_raw_1, controlled_q_index]() mutable {
         mlvc::ScopedCpuTimer timer(profiler_, "entropy.rans_encode");
         std::vector<int8_t> z_symbols;
         std::vector<int8_t> y_symbols_0;
@@ -78,7 +80,7 @@ PendingEncodedFrame EncodeFrameProcessor::Process(const std::shared_ptr<mlvc::Da
                                       &scales_1);
         std::vector<uint8_t> result;
         entropy_encoder_->Encode(
-            z_symbols, y_symbols_0, y_symbols_1, scales_0, scales_1, frame_q_index,
+            z_symbols, y_symbols_0, y_symbols_1, scales_0, scales_1, controlled_q_index,
             static_cast<int>(z_symbols.size() / (static_cast<std::size_t>(dimensions_.z_height) *
                                                  dimensions_.z_width)),
             dimensions_.z_height, dimensions_.z_width, &result);
@@ -109,7 +111,7 @@ PendingEncodedFrame EncodeFrameProcessor::Process(const std::shared_ptr<mlvc::Da
   if (decision.reset_reference) metadata.unit_flags |= mlvc::transport::kEfuResetReference;
   if (decision.mark_as_ltr) metadata.unit_flags |= mlvc::transport::kEfuStoreAsLtr;
   packet->Release();
-  return PendingEncodedFrame{frame_index, frame_type, frame_q_index, metadata,
+  return PendingEncodedFrame{frame_index, frame_type, controlled_q_index, metadata,
                              std::move(entropy_future)};
 }
 

@@ -27,6 +27,8 @@ class EncodeOutput {
   void Flush(PendingEncodedFrame pending);
   void Close();
   void SendEnd();
+  bool ConsumeRandomAccessRequest();
+  bool PopMlvcControl(mlvc::transport::MlvcControlMessage* message);
 
   MlvcRateController& rate_controller() { return rate_controller_; }
 

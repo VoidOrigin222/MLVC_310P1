@@ -11,9 +11,12 @@ EncodeState::EncodeState(const std::vector<int64_t>& feature_shape)
       ltr_feature_(CloneTensor(zero_feature_)) {}
 
 EncodeFrameDecision EncodeState::BeginFrame(int frame_index, const EncodeStreamOptions& options) {
-  const bool is_i_frame = IsMlvcIFrame(frame_index, options.gop, options.reset_interval);
-  const int gop_cycle_index = options.gop > 0 ? frame_index % options.gop : frame_index;
-  if (ShouldResetReferenceFeature(frame_index, options.gop, options.reset_interval)) {
+  const int effective_gop = gop_override_ > 0 ? gop_override_ : options.gop;
+  const bool is_i_frame = force_random_access_ ||
+                          IsMlvcIFrame(frame_index, effective_gop, options.reset_interval);
+  force_random_access_ = false;
+  const int gop_cycle_index = effective_gop > 0 ? frame_index % effective_gop : frame_index;
+  if (ShouldResetReferenceFeature(frame_index, effective_gop, options.reset_interval)) {
     reference_.ResetFeature();
   }
   if (is_i_frame) {
@@ -38,7 +41,29 @@ EncodeFrameDecision EncodeState::BeginFrame(int frame_index, const EncodeStreamO
       is_i_frame ? MlvcFrameType::kIFrame
                  : (use_ltr_recovery ? MlvcFrameType::kLtrRecovery : MlvcFrameType::kPFrame),
       is_i_frame, mark_as_ltr,
-      ShouldResetReferenceFeature(frame_index, options.gop, options.reset_interval), -1};
+      ShouldResetReferenceFeature(frame_index, effective_gop, options.reset_interval), -1};
+}
+
+bool EncodeState::ApplyControl(const mlvc::transport::MlvcControlMessage& message,
+                               int frame_index) {
+  if (message.type != mlvc::transport::MlvcControlType::kCommand ||
+      (message.flags & mlvc::transport::kMlvcControlAtomic) == 0 ||
+      (message.apply_after_frame_id != 0xffffffffu &&
+      frame_index < static_cast<int>(message.apply_after_frame_id))) return false;
+  for (const auto& tlv : message.tlvs) {
+    if (tlv.type == 1 && tlv.value.size() == 4) {
+      fixed_q_index_ = (static_cast<int>(tlv.value[0]) << 24) |
+                       (static_cast<int>(tlv.value[1]) << 16) |
+                       (static_cast<int>(tlv.value[2]) << 8) | static_cast<int>(tlv.value[3]);
+    } else if (tlv.type == 3 && tlv.value.size() == 4) {
+      gop_override_ = (static_cast<int>(tlv.value[0]) << 24) |
+                      (static_cast<int>(tlv.value[1]) << 16) |
+                      (static_cast<int>(tlv.value[2]) << 8) | static_cast<int>(tlv.value[3]);
+    } else if (tlv.type == 4) {
+      force_random_access_ = true;
+    }
+  }
+  return true;
 }
 
 void EncodeState::PrepareLtrRecovery(int frame_index, const EncodeStreamOptions& options,

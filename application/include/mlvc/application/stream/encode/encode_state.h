@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <map>
 #include <vector>
+#include <mlvc/transport/rtcp_session.h>
 
 namespace mlvc::codec {
 
@@ -27,6 +28,9 @@ class EncodeState {
   explicit EncodeState(const std::vector<int64_t>& feature_shape);
 
   EncodeFrameDecision BeginFrame(int frame_index, const EncodeStreamOptions& options);
+  void SetForceRandomAccess(bool requested) { force_random_access_ = requested; }
+  bool ApplyControl(const mlvc::transport::MlvcControlMessage& message, int frame_index);
+  int EffectiveQIndex(int fallback) const { return fixed_q_index_ >= 0 ? fixed_q_index_ : fallback; }
   void PrepareLtrRecovery(int frame_index, const EncodeStreamOptions& options,
                           const EncodeFrameDecision& decision);
   void UpdateAfterEncode(int frame_index, const EncodeFrameDecision& decision,
@@ -43,6 +47,9 @@ class EncodeState {
   bool has_ltr_feature_ = false;
   std::map<int, TensorData> ltr_features_;
   int current_ltr_reference_frame_ = -1;
+  bool force_random_access_ = false;
+  int fixed_q_index_ = -1;
+  int gop_override_ = -1;
 };
 
 }  // namespace mlvc::codec

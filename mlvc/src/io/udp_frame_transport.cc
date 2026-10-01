@@ -428,6 +428,13 @@ void RtpMlvcSender::Close() {
   closed_ = true;
 }
 
+bool RtpMlvcSender::ConsumeRandomAccessRequest() {
+  return sender_.ConsumeRandomAccessRequest();
+}
+bool RtpMlvcSender::PopMlvcControl(mlvc::transport::MlvcControlMessage* message) {
+  return sender_.PopMlvcControl(message);
+}
+
 RtpMlvcReceiver::RtpMlvcReceiver(uint16_t port, std::array<uint8_t, 32> expected_bundle_hash,
                                  uint8_t payload_type)
     : receiver_(port, "MLVC RTP", payload_type), expected_bundle_hash_(expected_bundle_hash) {}

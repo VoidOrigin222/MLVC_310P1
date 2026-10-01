@@ -6,6 +6,7 @@
 #include <string>
 #include <tuple>
 #include <vector>
+#include "mlvc/transport/rtcp_session.h"
 #include <chrono>
 
 #include "mlvc/transport/udp_pacer.h"
@@ -18,6 +19,8 @@ struct RtpTransportStats {
   uint64_t max_queue_delay_us = 0;
   uint64_t average_queue_delay_us = 0;
   uint64_t socket_block_us = 0;
+  uint64_t rtcp_packets_sent = 0;
+  uint64_t rtcp_packets_received = 0;
 };
 using RtpUnitType = MlvcMediaUnitType;
 constexpr uint8_t kRtpMlvcStart = 0x80;
@@ -76,7 +79,8 @@ class RtpMlvcSender {
   RtpMlvcSender(const std::string& host, uint16_t port, uint32_t ssrc = 0,
                 uint64_t pacing_rate_bps = 0, std::size_t max_burst_bytes = 4096,
                 std::size_t max_queue_bytes = 4u * 1024u * 1024u,
-                uint64_t max_queue_delay_ms = 1000, uint8_t payload_type = 96);
+                uint64_t max_queue_delay_ms = 1000, uint8_t payload_type = 96,
+                std::chrono::milliseconds rtcp_interval = std::chrono::seconds(5));
   ~RtpMlvcSender();
   RtpMlvcSender(const RtpMlvcSender&) = delete;
   RtpMlvcSender& operator=(const RtpMlvcSender&) = delete;
@@ -87,6 +91,8 @@ class RtpMlvcSender {
   void ResendSessionConfig(uint32_t timestamp);
   void Flush();
   void Close();
+  bool ConsumeRandomAccessRequest();
+  bool PopMlvcControl(MlvcControlMessage* message);
   RtpTransportStats Stats() const;
 
  private:

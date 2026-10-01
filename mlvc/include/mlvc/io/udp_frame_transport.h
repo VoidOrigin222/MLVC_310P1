@@ -76,6 +76,8 @@ class RtpMlvcSender {
                  const MlvcFrameMetadata& metadata, const std::vector<uint8_t>& payload);
   void SendEnd();
   void Close();
+  bool ConsumeRandomAccessRequest();
+  bool PopMlvcControl(mlvc::transport::MlvcControlMessage* message);
 
  private:
   mlvc::transport::RtpMlvcSender sender_;
