@@ -21,10 +21,8 @@ include(CTest)
 find_package(OpenCV REQUIRED)
 find_package(Threads REQUIRED)
 
-# RTSP publishing uses the libavformat/libavcodec API when the development
-# libraries are available (the 310P1 board installs these from openEuler).
-# Keep the existing FFmpeg executable path as a build-time fallback for hosts
-# that only have the runtime binary installed.
+# RTSP publishing uses the libavformat/libavcodec API directly. The development
+# libraries are required at build time; there is no FFmpeg subprocess fallback.
 find_path(FFMPEG_INCLUDE_DIR
   NAMES libavformat/avformat.h
   PATH_SUFFIXES ffmpeg
@@ -32,14 +30,12 @@ find_path(FFMPEG_INCLUDE_DIR
 find_library(FFMPEG_AVFORMAT_LIBRARY NAMES avformat)
 find_library(FFMPEG_AVCODEC_LIBRARY NAMES avcodec)
 find_library(FFMPEG_AVUTIL_LIBRARY NAMES avutil)
-set(MLVC_HAS_LIBAVFORMAT OFF)
-if(FFMPEG_INCLUDE_DIR AND FFMPEG_AVFORMAT_LIBRARY AND FFMPEG_AVCODEC_LIBRARY AND
-   FFMPEG_AVUTIL_LIBRARY)
-  set(MLVC_HAS_LIBAVFORMAT ON)
-  message(STATUS "RTSP publisher backend: libavformat")
-else()
-  message(STATUS "RTSP publisher backend: FFmpeg subprocess fallback")
+if(NOT FFMPEG_INCLUDE_DIR OR NOT FFMPEG_AVFORMAT_LIBRARY OR NOT FFMPEG_AVCODEC_LIBRARY OR
+   NOT FFMPEG_AVUTIL_LIBRARY)
+  message(FATAL_ERROR "FFmpeg development libraries are required for direct libavformat RTSP publishing")
 endif()
+set(MLVC_HAS_LIBAVFORMAT ON)
+message(STATUS "RTSP publisher backend: libavformat (required)")
 
 set(MLVC_MSRTC_RANS_DIR "${MLVC_VENDOR_ROOT}/msrtc_rans")
 if(NOT EXISTS "${TOMLPLUSPLUS_INCLUDE_DIR}/toml++/toml.h")

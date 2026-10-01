@@ -109,7 +109,6 @@ class RtspVideoPublisher {
 
  private:
   struct DirectState;
-  FILE* pipe_ = nullptr;
   std::unique_ptr<DirectState> direct_state_;
   int width_ = 0;
   int height_ = 0;

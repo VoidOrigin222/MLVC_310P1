@@ -32,7 +32,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-#if defined(MLVC_HAS_LIBAVFORMAT)
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -41,7 +40,6 @@ extern "C" {
 #include <libavutil/opt.h>
 #include <libavutil/rational.h>
 }
-#endif
 
 #include "mlvc/core/status.h"
 #include "mlvc/core/buffer.h"
@@ -53,15 +51,6 @@ namespace mlvc::io {
 namespace codec = mlvc::codec;
 namespace {
 
-#if !defined(MLVC_HAS_LIBAVFORMAT)
-void IgnoreSigpipeForSubprocessPipes() {
-  static std::once_flag once;
-  std::call_once(once, [] {
-    Check(std::signal(SIGPIPE, SIG_IGN) != SIG_ERR,
-          "failed to ignore SIGPIPE for RTSP subprocess pipe");
-  });
-}
-#endif
 
 struct V4l2Buffer {
   void* address = MAP_FAILED;
@@ -333,21 +322,13 @@ class AclFrameBufferPool : public std::enable_shared_from_this<AclFrameBufferPoo
 class CameraRtspPipeline {
  public:
   CameraRtspPipeline(aclrtContext context, const CameraCaptureOptions& options)
-      : queue_capacity_(options.rtsp_queue_capacity) {
+      : context_(context), width_(options.width), height_(options.height),
+        queue_capacity_(options.rtsp_queue_capacity) {
     Check(!options.rtsp_url.empty(), "camera RTSP output URL must not be empty");
     Check(queue_capacity_ > 0, "camera RTSP queue capacity must be positive");
-    const Nv12Layout layout{options.width, options.height, Align16(options.width),
-                            Align16(options.height)};
-    DvppH264EncoderConfig encoder_config;
-    encoder_config.layout = layout;
-    encoder_config.fps = static_cast<uint32_t>(std::lround(options.fps));
-    encoder_config.gop = options.rtsp_gop;
-    encoder_config.bitrate = options.rtsp_bitrate_bps;
-    encoder_config.zero_copy_input = true;
     publisher_ = std::make_unique<RtspVideoPublisher>(
-        options.rtsp_url, options.fps, options.width, options.height, "ultrafast", 0,
-        queue_capacity_, options.rtsp_transport, true);
-    encoder_ = std::make_unique<DvppH264Encoder>(context, encoder_config);
+        options.rtsp_url, options.fps, options.width, options.height, "ultrafast", 18,
+        queue_capacity_, options.rtsp_transport, false);
     worker_ = std::thread([this] { WorkerMain(); });
   }
 
@@ -422,6 +403,7 @@ class CameraRtspPipeline {
  private:
   void WorkerMain() {
     try {
+      CheckAcl(aclrtSetCurrentContext(context_), "aclrtSetCurrentContext camera RTSP worker");
       for (;;) {
         DvppJpegDecodedFrame frame;
         {
@@ -431,9 +413,26 @@ class CameraRtspPipeline {
           frame = std::move(queue_.front());
           queue_.pop_front();
         }
-        std::vector<uint8_t> h264 = encoder_->EncodeDevice(
-            frame.device_data(), frame.bytes(), nullptr, false);
-        publisher_->WriteH264Frame(std::move(h264));
+        std::vector<uint8_t> padded_nv12(frame.bytes());
+        CheckAcl(aclrtMemcpy(padded_nv12.data(), padded_nv12.size(), frame.device_data(),
+                             frame.bytes(), ACL_MEMCPY_DEVICE_TO_HOST),
+                 "copy camera NV12 to host for RTSP encoder");
+        const std::size_t output_y_bytes = static_cast<std::size_t>(width_) * height_;
+        std::vector<uint8_t> packed_nv12(output_y_bytes + output_y_bytes / 2);
+        const std::size_t source_y_bytes =
+            static_cast<std::size_t>(frame.width_stride()) * frame.height_stride();
+        for (int row = 0; row < height_; ++row) {
+          std::memcpy(packed_nv12.data() + static_cast<std::size_t>(row) * width_,
+                      padded_nv12.data() + static_cast<std::size_t>(row) * frame.width_stride(),
+                      width_);
+        }
+        uint8_t* output_uv = packed_nv12.data() + output_y_bytes;
+        const uint8_t* source_uv = padded_nv12.data() + source_y_bytes;
+        for (int row = 0; row < height_ / 2; ++row) {
+          std::memcpy(output_uv + static_cast<std::size_t>(row) * width_,
+                      source_uv + static_cast<std::size_t>(row) * frame.width_stride(), width_);
+        }
+        publisher_->WriteNv12Frame(std::move(packed_nv12));
         std::lock_guard<std::mutex> lock(mutex_);
         ++frames_;
       }
@@ -446,9 +445,11 @@ class CameraRtspPipeline {
     }
   }
 
+  aclrtContext context_ = nullptr;
+  int width_ = 0;
+  int height_ = 0;
   std::size_t queue_capacity_ = 3;
   std::unique_ptr<RtspVideoPublisher> publisher_;
-  std::unique_ptr<DvppH264Encoder> encoder_;
   std::deque<DvppJpegDecodedFrame> queue_;
   mutable std::mutex mutex_;
   std::condition_variable cv_;
@@ -562,34 +563,9 @@ std::string BuildFfmpegCommand(const std::filesystem::path& output_path, double 
   return command.str();
 }
 
-#if !defined(MLVC_HAS_LIBAVFORMAT)
-std::string BuildRtspCommand(const std::string& url, double fps, int width, int height,
-                             const std::string& preset, int crf, const std::string& transport,
-                             bool h264_copy) {
-  Check(!url.empty(), "RTSP output URL must not be empty");
-  Check(fps > 0.0 && std::isfinite(fps), "RTSP FPS must be finite and positive");
-  Check(width > 0 && height > 0, "RTSP dimensions must be positive");
-  Check(!preset.empty(), "RTSP encoder preset must not be empty");
-  Check(crf >= 0 && crf <= 51, "RTSP encoder CRF must be in [0, 51]");
-  Check(transport == "tcp" || transport == "udp", "RTSP transport must be tcp or udp");
-  std::ostringstream command;
-  command << "ffmpeg -hide_banner -loglevel error";
-  if (h264_copy) {
-    command << " -r " << fps << " -f h264 -i pipe:0 -an -c:v copy";
-  } else {
-    command << " -f rawvideo -pix_fmt nv12 -s " << width << "x" << height << " -r " << fps
-            << " -i pipe:0 -an -c:v libx264 -preset " << preset << " -tune zerolatency"
-            << " -crf " << crf << " -pix_fmt yuv420p";
-  }
-  command << " -f rtsp -rtsp_transport " << transport << " "
-          << ShellQuote(std::filesystem::path(url));
-  return command.str();
-}
-#endif
 
 }  // namespace
 
-#if defined(MLVC_HAS_LIBAVFORMAT)
 struct RtspVideoPublisher::DirectState {
   AVFormatContext* format = nullptr;
   AVStream* stream = nullptr;
@@ -611,11 +587,7 @@ struct RtspVideoPublisher::DirectState {
     }
   }
 };
-#else
-struct RtspVideoPublisher::DirectState {};
-#endif
 
-#if defined(MLVC_HAS_LIBAVFORMAT)
 std::string AvErrorText(int error) {
   char buffer[AV_ERROR_MAX_STRING_SIZE] = {};
   av_strerror(error, buffer, sizeof(buffer));
@@ -629,8 +601,9 @@ void CheckAv(int error, const std::string& operation) {
 }
 
 AVRational FpsRational(double fps) {
-  AVRational result = av_d2q(fps, 100000);
-  Check(result.num > 0 && result.den > 0, "RTSP FPS rational is invalid");
+  Check(fps > 0.0, "RTSP FPS must be positive");
+  AVRational result = av_d2q(1.0 / fps, 100000);
+  Check(result.num > 0 && result.den > 0, "RTSP frame time base is invalid");
   return result;
 }
 
@@ -670,6 +643,25 @@ std::vector<std::pair<const uint8_t*, std::size_t>> FindAnnexBNals(
       nals.emplace_back(frame.data() + nal_begin, frame.size() - nal_begin);
     }
   }
+  const bool annexb_prefix = frame.size() >= 3 && frame[0] == 0 && frame[1] == 0 &&
+                             (frame[2] == 1 || (frame.size() >= 4 && frame[2] == 0 && frame[3] == 1));
+  if (annexb_prefix) return nals;
+  nals.clear();
+  // DVPP may provide length-prefixed AVCC rather than Annex-B NAL units.
+  std::size_t offset = 0;
+  while (offset + 4 <= frame.size()) {
+    const uint32_t nal_size = (static_cast<uint32_t>(frame[offset]) << 24) |
+                              (static_cast<uint32_t>(frame[offset + 1]) << 16) |
+                              (static_cast<uint32_t>(frame[offset + 2]) << 8) |
+                              static_cast<uint32_t>(frame[offset + 3]);
+    offset += 4;
+    if (nal_size == 0 || nal_size > frame.size() - offset) { nals.clear(); break; }
+    const uint8_t nal_type = frame[offset] & 0x1f;
+    if (nal_type == 0 || nal_type > 23) { nals.clear(); break; }
+    nals.emplace_back(frame.data() + offset, nal_size);
+    offset += nal_size;
+  }
+  if (offset != frame.size()) nals.clear();
   return nals;
 }
 
@@ -712,6 +704,27 @@ std::vector<uint8_t> BuildAvccExtradata(const std::vector<uint8_t>& frame) {
   return extradata;
 }
 
+std::vector<uint8_t> ConvertAnnexBToAvcc(const std::vector<uint8_t>& frame) {
+  const auto nals = FindAnnexBNals(frame);
+  if (nals.empty()) return frame;
+  std::size_t total_size = 0;
+  for (const auto& nal : nals) {
+    Check(nal.second <= UINT32_MAX, "RTSP H.264 NAL unit is too large");
+    total_size += 4 + nal.second;
+  }
+  std::vector<uint8_t> converted;
+  converted.reserve(total_size);
+  for (const auto& nal : nals) {
+    const uint32_t size = static_cast<uint32_t>(nal.second);
+    converted.push_back(static_cast<uint8_t>(size >> 24));
+    converted.push_back(static_cast<uint8_t>(size >> 16));
+    converted.push_back(static_cast<uint8_t>(size >> 8));
+    converted.push_back(static_cast<uint8_t>(size));
+    converted.insert(converted.end(), nal.first, nal.first + nal.second);
+  }
+  return converted;
+}
+
 void SetDirectH264Extradata(AVStream* stream, const std::vector<uint8_t>& frame) {
   const std::vector<uint8_t> extradata = BuildAvccExtradata(frame);
   if (extradata.empty()) return;
@@ -721,7 +734,6 @@ void SetDirectH264Extradata(AVStream* stream, const std::vector<uint8_t>& frame)
   std::memcpy(stream->codecpar->extradata, extradata.data(), extradata.size());
   stream->codecpar->extradata_size = static_cast<int>(extradata.size());
 }
-#endif
 
 cv::Mat ConvertTensorToBgr(const codec::TensorData& tensor, int width, int height) {
   return TensorToBgrMat(tensor, width, height);
@@ -1282,7 +1294,6 @@ RtspVideoPublisher::RtspVideoPublisher(const std::string& url, double fps, int w
                                        bool h264_copy)
     : width_(width), height_(height), queue_capacity_(queue_capacity), h264_copy_(h264_copy) {
   Check(queue_capacity_ > 0, "RTSP output queue capacity must be positive");
-#if defined(MLVC_HAS_LIBAVFORMAT)
   direct_state_ = std::make_unique<DirectState>();
   direct_state_->h264_copy = h264_copy_;
   direct_state_->transport = transport;
@@ -1314,6 +1325,9 @@ RtspVideoPublisher::RtspVideoPublisher(const std::string& url, double fps, int w
                                                     direct_state_->input_time_base.num};
     direct_state_->encoder->gop_size = std::max(1, static_cast<int>(std::lround(fps * 2.0)));
     direct_state_->encoder->max_b_frames = 0;
+    // RTSP/AVC requires SPS/PPS in codecpar extradata (the SDP). Ask the
+    // encoder to keep global headers separate from the packet payload.
+    direct_state_->encoder->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
     if (direct_state_->encoder->priv_data != nullptr) {
       av_opt_set(direct_state_->encoder->priv_data, "preset", preset.c_str(), 0);
       av_opt_set(direct_state_->encoder->priv_data, "tune", "zerolatency", 0);
@@ -1341,15 +1355,6 @@ RtspVideoPublisher::RtspVideoPublisher(const std::string& url, double fps, int w
     direct_state_->header_written = false;
   }
   std::cerr << "rtsp_publisher_backend=libavformat" << std::endl;
-#else
-  // A dead FFmpeg child must surface as a pipe write error, not SIGPIPE that
-  // terminates unrelated MLVC encoding work in the same process.
-  IgnoreSigpipeForSubprocessPipes();
-  const std::string command =
-      BuildRtspCommand(url, fps, width_, height_, preset, crf, transport, h264_copy_);
-  pipe_ = popen(command.c_str(), "w");
-  Check(pipe_ != nullptr, "failed to open FFmpeg RTSP publisher");
-#endif
   worker_ = std::thread([this] {
     try {
       std::vector<uint8_t> reusable;
@@ -1365,10 +1370,19 @@ RtspVideoPublisher::RtspVideoPublisher(const std::string& url, double fps, int w
           cv_.notify_all();
         }
         if (!queued.h264.empty()) {
-#if defined(MLVC_HAS_LIBAVFORMAT)
+
           Check(direct_state_ != nullptr, "direct RTSP publisher state is missing");
           if (!direct_state_->header_written) {
-            SetDirectH264Extradata(direct_state_->stream, queued.h264);
+            // Do not send the RTSP header until an access unit containing SPS
+            // and PPS is available. Some VENC firmware emits those records
+            // one frame after the first IDR.
+            const std::vector<uint8_t> extradata = BuildAvccExtradata(queued.h264);
+            if (extradata.empty()) continue;
+            direct_state_->stream->codecpar->extradata = static_cast<uint8_t*>(
+                av_mallocz(extradata.size() + AV_INPUT_BUFFER_PADDING_SIZE));
+            Check(direct_state_->stream->codecpar->extradata != nullptr, "allocate RTSP H.264 extradata");
+            std::memcpy(direct_state_->stream->codecpar->extradata, extradata.data(), extradata.size());
+            direct_state_->stream->codecpar->extradata_size = static_cast<int>(extradata.size());
             AVDictionary* options = nullptr;
             CheckAv(av_dict_set(&options, "rtsp_transport", direct_state_->transport.c_str(), 0),
                     "set direct RTSP transport");
@@ -1377,11 +1391,12 @@ RtspVideoPublisher::RtspVideoPublisher(const std::string& url, double fps, int w
             av_dict_free(&options);
             direct_state_->header_written = true;
           }
+          const std::vector<uint8_t> avcc_payload = ConvertAnnexBToAvcc(queued.h264);
           AVPacket* packet = av_packet_alloc();
           Check(packet != nullptr, "allocate direct RTSP H.264 packet");
-          CheckAv(av_new_packet(packet, static_cast<int>(queued.h264.size())),
+          CheckAv(av_new_packet(packet, static_cast<int>(avcc_payload.size())),
                   "allocate direct RTSP H.264 payload");
-          std::memcpy(packet->data, queued.h264.data(), queued.h264.size());
+          std::memcpy(packet->data, avcc_payload.data(), avcc_payload.size());
           packet->stream_index = direct_state_->stream->index;
           packet->pts = packet->dts = av_rescale_q(
               direct_state_->next_frame_pts++, direct_state_->input_time_base,
@@ -1391,13 +1406,7 @@ RtspVideoPublisher::RtspVideoPublisher(const std::string& url, double fps, int w
           CheckAv(av_interleaved_write_frame(direct_state_->format, packet),
                   "write direct RTSP H.264 packet");
           av_packet_free(&packet);
-#else
-          const std::size_t bytes = queued.h264.size();
-          Check(fwrite(queued.h264.data(), 1, bytes, pipe_) == bytes,
-                "failed to write H.264 stream to FFmpeg RTSP publisher");
-#endif
         } else if (queued.nv12.empty()) {
-#if defined(MLVC_HAS_LIBAVFORMAT)
           Check(direct_state_ != nullptr && direct_state_->encoder != nullptr,
                 "direct RTSP encoder is missing");
           ConvertFp16Yuv444ToNv12(queued.tensor, layout, &reusable);
@@ -1424,19 +1433,20 @@ RtspVideoPublisher::RtspVideoPublisher(const std::string& url, double fps, int w
             CheckAv(receive, "receive direct RTSP encoded packet");
             av_packet_rescale_ts(packet, direct_state_->encoder->time_base,
                                  direct_state_->stream->time_base);
+            if (packet->pts == AV_NOPTS_VALUE) packet->pts = direct_state_->next_frame_pts;
+            if (packet->dts == AV_NOPTS_VALUE) packet->dts = packet->pts;
+            if (packet->duration <= 0) {
+              packet->duration = av_rescale_q(1, direct_state_->encoder->time_base,
+                                              direct_state_->stream->time_base);
+            }
             packet->stream_index = direct_state_->stream->index;
+            // Keep libx264 Annex-B framing for FFmpeg RTSP/RTP packetization.
             CheckAv(av_interleaved_write_frame(direct_state_->format, packet),
                     "write direct RTSP encoded packet");
+            if (direct_state_->format->pb != nullptr) avio_flush(direct_state_->format->pb);
             av_packet_free(&packet);
           }
-#else
-          ConvertFp16Yuv444ToNv12(queued.tensor, layout, &reusable);
-          const std::size_t bytes = reusable.size();
-          Check(fwrite(reusable.data(), 1, bytes, pipe_) == bytes,
-                "failed to write decoded frame to FFmpeg RTSP publisher");
-#endif
         } else {
-#if defined(MLVC_HAS_LIBAVFORMAT)
           Check(direct_state_ != nullptr && direct_state_->encoder != nullptr,
                 "direct RTSP encoder is missing");
           AVFrame* frame = av_frame_alloc();
@@ -1464,22 +1474,31 @@ RtspVideoPublisher::RtspVideoPublisher(const std::string& url, double fps, int w
             CheckAv(receive, "receive direct RTSP encoded packet");
             av_packet_rescale_ts(packet, direct_state_->encoder->time_base,
                                  direct_state_->stream->time_base);
+            if (packet->pts == AV_NOPTS_VALUE) packet->pts = direct_state_->next_frame_pts;
+            if (packet->dts == AV_NOPTS_VALUE) packet->dts = packet->pts;
+            if (packet->duration <= 0) {
+              packet->duration = av_rescale_q(1, direct_state_->encoder->time_base,
+                                              direct_state_->stream->time_base);
+            }
             packet->stream_index = direct_state_->stream->index;
+            // Keep libx264 Annex-B framing for FFmpeg RTSP/RTP packetization.
             CheckAv(av_interleaved_write_frame(direct_state_->format, packet),
                     "write direct RTSP encoded packet");
+            if (direct_state_->format->pb != nullptr) avio_flush(direct_state_->format->pb);
             av_packet_free(&packet);
           }
-#else
-          reusable = std::move(queued.nv12);
-          const std::size_t bytes = reusable.size();
-          Check(fwrite(reusable.data(), 1, bytes, pipe_) == bytes,
-                "failed to write decoded frame to FFmpeg RTSP publisher");
-#endif
         }
         std::lock_guard<std::mutex> lock(mutex_);
         ++frame_count_;
       }
+    } catch (const std::exception& error) {
+      std::cerr << "rtsp_worker_error=" << error.what() << std::endl;
+      std::lock_guard<std::mutex> lock(mutex_);
+      worker_error_ = std::current_exception();
+      stopping_ = true;
+      cv_.notify_all();
     } catch (...) {
+      std::cerr << "rtsp_worker_error=unknown" << std::endl;
       std::lock_guard<std::mutex> lock(mutex_);
       worker_error_ = std::current_exception();
       stopping_ = true;
@@ -1497,21 +1516,13 @@ RtspVideoPublisher::~RtspVideoPublisher() {
 
 void RtspVideoPublisher::WriteTensorFrame(const codec::TensorData& tensor) {
   std::unique_lock<std::mutex> lock(mutex_);
-#if defined(MLVC_HAS_LIBAVFORMAT)
   Check(direct_state_ != nullptr && !closed_, "RTSP publisher is closed");
-#else
-  Check(pipe_ != nullptr && !closed_, "RTSP publisher is closed");
-#endif
   if (worker_error_ != nullptr) std::rethrow_exception(worker_error_);
   cv_.wait(lock, [this] {
     return stopping_ || closed_ || worker_error_ != nullptr || queue_.size() < queue_capacity_;
   });
   if (worker_error_ != nullptr) std::rethrow_exception(worker_error_);
-#if defined(MLVC_HAS_LIBAVFORMAT)
   Check(direct_state_ != nullptr && !closed_ && !stopping_, "RTSP publisher is closed");
-#else
-  Check(pipe_ != nullptr && !closed_ && !stopping_, "RTSP publisher is closed");
-#endif
   queue_.push_back(QueuedFrame{codec::CloneTensor(tensor), {}, {}});
   cv_.notify_one();
 }
@@ -1519,21 +1530,13 @@ void RtspVideoPublisher::WriteTensorFrame(const codec::TensorData& tensor) {
 void RtspVideoPublisher::WriteNv12Frame(std::vector<uint8_t> frame) {
   Check(!frame.empty(), "RTSP NV12 frame must not be empty");
   std::unique_lock<std::mutex> lock(mutex_);
-#if defined(MLVC_HAS_LIBAVFORMAT)
   Check(direct_state_ != nullptr && !closed_, "RTSP publisher is closed");
-#else
-  Check(pipe_ != nullptr && !closed_, "RTSP publisher is closed");
-#endif
   if (worker_error_ != nullptr) std::rethrow_exception(worker_error_);
   cv_.wait(lock, [this] {
     return stopping_ || closed_ || worker_error_ != nullptr || queue_.size() < queue_capacity_;
   });
   if (worker_error_ != nullptr) std::rethrow_exception(worker_error_);
-#if defined(MLVC_HAS_LIBAVFORMAT)
   Check(direct_state_ != nullptr && !closed_ && !stopping_, "RTSP publisher is closed");
-#else
-  Check(pipe_ != nullptr && !closed_ && !stopping_, "RTSP publisher is closed");
-#endif
   queue_.push_back(QueuedFrame{{}, std::move(frame), {}});
   cv_.notify_one();
 }
@@ -1542,20 +1545,12 @@ void RtspVideoPublisher::WriteH264Frame(std::vector<uint8_t> frame) {
   Check(h264_copy_, "H.264 bitstream can only be written to a copy-mode RTSP publisher");
   Check(!frame.empty(), "H.264 output frame must not be empty");
   std::unique_lock<std::mutex> lock(mutex_);
-#if defined(MLVC_HAS_LIBAVFORMAT)
   Check(direct_state_ != nullptr && !closed_, "RTSP publisher is closed");
-#else
-  Check(pipe_ != nullptr && !closed_, "RTSP publisher is closed");
-#endif
   cv_.wait(lock, [this] {
     return stopping_ || closed_ || worker_error_ != nullptr || queue_.size() < queue_capacity_;
   });
   if (worker_error_ != nullptr) std::rethrow_exception(worker_error_);
-#if defined(MLVC_HAS_LIBAVFORMAT)
   Check(direct_state_ != nullptr && !closed_ && !stopping_, "RTSP publisher is closed");
-#else
-  Check(pipe_ != nullptr && !closed_ && !stopping_, "RTSP publisher is closed");
-#endif
   queue_.push_back(QueuedFrame{{}, {}, std::move(frame)});
   cv_.notify_one();
 }
@@ -1574,7 +1569,6 @@ void RtspVideoPublisher::Close() {
     std::lock_guard<std::mutex> lock(mutex_);
     worker_error = worker_error_;
   }
-#if defined(MLVC_HAS_LIBAVFORMAT)
   if (direct_state_ != nullptr) {
     if (direct_state_->encoder != nullptr) {
       CheckAv(avcodec_send_frame(direct_state_->encoder, nullptr),
@@ -1601,14 +1595,7 @@ void RtspVideoPublisher::Close() {
     }
     direct_state_.reset();
   }
-#else
-  const int status = pipe_ != nullptr ? pclose(pipe_) : 0;
-  pipe_ = nullptr;
-#endif
   if (worker_error != nullptr) std::rethrow_exception(worker_error);
-#if !defined(MLVC_HAS_LIBAVFORMAT)
-  Check(status == 0, "FFmpeg RTSP publisher failed");
-#endif
 }
 
 bool IsVideoPath(const std::filesystem::path& path) {
