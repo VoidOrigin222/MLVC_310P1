@@ -482,6 +482,7 @@ struct RtpMlvcSender::Impl {
                      }) && compound.plis.empty() && compound.firs.empty()) {
       return;
     }
+    rtcp_endpoint->AcceptLastPeer();
     ++rtcp_packets_received;
     {
       std::lock_guard<std::mutex> lock(control_mutex);
@@ -913,6 +914,22 @@ bool RtpMlvcSender::PopMlvcControl(MlvcControlMessage* message) {
   *message = std::move(impl_->control_queue.front());
   impl_->control_queue.pop_front();
   return true;
+}
+uint16_t RtpMlvcSender::rtcp_local_port() const {
+  return impl_->rtcp_endpoint == nullptr ? 0 : impl_->rtcp_endpoint->local_port();
+}
+void RtpMlvcSender::SendMlvcControlResponse(const MlvcControlMessage& request, bool accepted,
+                                            const std::string& reason) {
+  MlvcControlMessage response;
+  response.type = accepted ? MlvcControlType::kAck : MlvcControlType::kReject;
+  response.transaction_id = request.transaction_id;
+  response.media_ssrc = impl_->ssrc;
+  response.tlvs.push_back(MlvcControlTlv{1, std::vector<uint8_t>(reason.begin(), reason.end())});
+  RtcpReceiverReport report;
+  report.sender_ssrc = impl_->ssrc;
+  const auto app = EncodeMlvcRtcpApp(impl_->ssrc, response);
+  const auto compound = EncodeRtcpReceiverReport(report, std::string("mlvc-") + std::to_string(impl_->ssrc), {app});
+  impl_->rtcp_endpoint->SendToLastPeer(compound);
 }
 RtpPacket DecodeRtpPacket(const std::vector<uint8_t>& b, uint8_t expected_payload_type) {
   if (b.size() < 12 || (b[0] >> 6) != 2) throw std::runtime_error("invalid RTP packet");

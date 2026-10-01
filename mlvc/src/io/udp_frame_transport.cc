@@ -434,6 +434,12 @@ bool RtpMlvcSender::ConsumeRandomAccessRequest() {
 bool RtpMlvcSender::PopMlvcControl(mlvc::transport::MlvcControlMessage* message) {
   return sender_.PopMlvcControl(message);
 }
+uint16_t RtpMlvcSender::rtcp_local_port() const { return sender_.rtcp_local_port(); }
+void RtpMlvcSender::SendMlvcControlResponse(
+    const mlvc::transport::MlvcControlMessage& request, bool accepted,
+    const std::string& reason) {
+  sender_.SendMlvcControlResponse(request, accepted, reason);
+}
 
 RtpMlvcReceiver::RtpMlvcReceiver(uint16_t port, std::array<uint8_t, 32> expected_bundle_hash,
                                  uint8_t payload_type)

@@ -29,6 +29,8 @@ class EncodeOutput {
   void SendEnd();
   bool ConsumeRandomAccessRequest();
   bool PopMlvcControl(mlvc::transport::MlvcControlMessage* message);
+  void SendMlvcControlResponse(const mlvc::transport::MlvcControlMessage& request, bool accepted,
+                               const std::string& reason);
 
   MlvcRateController& rate_controller() { return rate_controller_; }
 

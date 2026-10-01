@@ -103,6 +103,11 @@ bool EncodeOutput::ConsumeRandomAccessRequest() {
 bool EncodeOutput::PopMlvcControl(mlvc::transport::MlvcControlMessage* message) {
   return rtp_sender_.has_value() && rtp_sender_->PopMlvcControl(message);
 }
+void EncodeOutput::SendMlvcControlResponse(
+    const mlvc::transport::MlvcControlMessage& request, bool accepted,
+    const std::string& reason) {
+  if (rtp_sender_.has_value()) rtp_sender_->SendMlvcControlResponse(request, accepted, reason);
+}
 
 uint64_t EncodeOutput::file_bytes() const {
   if (!options_.output_bitstream_path.empty() &&

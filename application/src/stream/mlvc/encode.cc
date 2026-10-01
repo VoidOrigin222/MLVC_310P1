@@ -157,8 +157,13 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
       mlvc::transport::MlvcControlMessage control;
       while (output.PopMlvcControl(&control)) pending_controls.push_back(std::move(control));
       for (auto it = pending_controls.begin(); it != pending_controls.end();) {
-        if (state.ApplyControl(*it, encoded_frames)) it = pending_controls.erase(it);
-        else ++it;
+        const bool due = it->apply_after_frame_id == 0xffffffffu ||
+                         encoded_frames >= static_cast<int>(it->apply_after_frame_id);
+        if (!due) { ++it; continue; }
+        const bool accepted = state.ApplyControl(*it, encoded_frames);
+        output.SendMlvcControlResponse(*it, accepted,
+                                        accepted ? "applied" : "unsupported-or-invalid");
+        it = pending_controls.erase(it);
       }
       state.SetForceRandomAccess(output.ConsumeRandomAccessRequest());
       PendingEncodedFrame pending = frame_processor.Process(data, encoded_frames);
