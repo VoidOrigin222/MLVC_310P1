@@ -29,8 +29,10 @@
 板上正式 CMake 构建和 `test_rtcp_session`、`test_rtp_rtcp_session` 均通过，产物部署到
 `/root/workplace/MLVC_310P1_aipp/build_issue9_rtcp`。
 
-当前仍未启用 SRTCP 的 HMAC 加密认证；已有 transaction ID 防重放只适用于 APP 命令，不能替代报文认证。
-正式上线前需要配置会话密钥并补充 HMAC-SHA256/SRTCP index 校验。
+RTCP UDP endpoint 现在支持等效 SRTCP 认证：设置同一个 `MLVC_RTCP_KEY` 后，所有 RTCP
+报文附加 HMAC-SHA256 截断标签和 64 位发送索引；接收端先验签，再做 64 包重放窗口校验，
+最后才交给 RTCP 解析器。未设置密钥时保留兼容的明文模式。正式运行时应在编码端和解码端
+启动环境中设置相同的随机密钥，例如 `export MLVC_RTCP_KEY='...'`，不要把密钥写入仓库。
 
 本机 Windows 使用 MinGW 编译并运行了协议单元测试；由于本机 RTCP socket 实现面向 POSIX，
 UDP endpoint 的真实收发仍需在 Linux/Ascend 设备上验证。

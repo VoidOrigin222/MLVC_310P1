@@ -20,6 +20,7 @@ set(TOMLPLUSPLUS_INCLUDE_DIR "${MLVC_VENDOR_ROOT}/tomlplusplus/include")
 include(CTest)
 find_package(OpenCV REQUIRED)
 find_package(Threads REQUIRED)
+find_package(OpenSSL QUIET)
 
 # RTSP publishing uses the libavformat/libavcodec API directly. The development
 # libraries are required at build time; there is no FFmpeg subprocess fallback.
@@ -158,6 +159,10 @@ target_link_libraries(mlvc_common PUBLIC
   Threads::Threads
   ${CMAKE_DL_LIBS}
 )
+if(OpenSSL_FOUND)
+  target_compile_definitions(mlvc_common PRIVATE MLVC_HAS_OPENSSL=1)
+  target_link_libraries(mlvc_common PUBLIC OpenSSL::Crypto)
+endif()
 
 target_link_options(mlvc_common PUBLIC "-Wl,--disable-new-dtags")
 set_target_properties(mlvc_common PROPERTIES

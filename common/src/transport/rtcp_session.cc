@@ -2,6 +2,10 @@
 
 #include <algorithm>
 #include <stdexcept>
+#include <cstdlib>
+#ifdef MLVC_HAS_OPENSSL
+#include <openssl/hmac.h>
+#endif
 #ifndef _WIN32
 #include <arpa/inet.h>
 #include <cerrno>
@@ -15,6 +19,50 @@
 
 namespace mlvc::transport {
 namespace {
+
+#ifdef MLVC_HAS_OPENSSL
+constexpr uint8_t kAuthMagic[] = {0x4d, 0x4c, 0x56, 0x41};
+constexpr std::size_t kAuthTrailerBytes = 4 + 1 + 8 + 16;
+std::vector<uint8_t> AuthenticateRtcp(const std::vector<uint8_t>& packet, uint64_t index,
+                                      const std::string& key) {
+  std::vector<uint8_t> out = packet;
+  out.insert(out.end(), std::begin(kAuthMagic), std::end(kAuthMagic));
+  out.push_back(1);
+  for (int shift = 56; shift >= 0; shift -= 8) out.push_back(static_cast<uint8_t>(index >> shift));
+  unsigned char digest[EVP_MAX_MD_SIZE]{};
+  unsigned int digest_len = 0;
+  HMAC_CTX* ctx = HMAC_CTX_new();
+  HMAC_Init_ex(ctx, key.data(), static_cast<int>(key.size()), EVP_sha256(), nullptr);
+  HMAC_Update(ctx, out.data(), out.size());
+  HMAC_Final(ctx, digest, &digest_len);
+  HMAC_CTX_free(ctx);
+  out.insert(out.end(), digest, digest + 16);
+  return out;
+}
+bool VerifyAndStripRtcp(std::vector<uint8_t>* packet, const std::string& key,
+                        uint64_t* highest, uint64_t* window) {
+  if (packet->size() < kAuthTrailerBytes) return false;
+  const std::size_t begin = packet->size() - kAuthTrailerBytes;
+  if (!std::equal(std::begin(kAuthMagic), std::end(kAuthMagic), packet->begin() + begin) ||
+      (*packet)[begin + 4] != 1) return false;
+  uint64_t index = 0;
+  for (int i = 0; i < 8; ++i) index = (index << 8) | (*packet)[begin + 5 + i];
+  const auto expected = AuthenticateRtcp(
+      std::vector<uint8_t>(packet->begin(), packet->begin() + begin), index, key);
+  if (!std::equal(expected.end() - 16, expected.end(), packet->end() - 16)) return false;
+  if (index > *highest) {
+    const uint64_t shift = index - *highest;
+    *window = shift >= 64 ? 1ull : ((*window << shift) | 1ull);
+    *highest = index;
+  } else {
+    const uint64_t delta = *highest - index;
+    if (delta >= 64 || ((*window >> delta) & 1ull) != 0) return false;
+    *window |= 1ull << delta;
+  }
+  packet->resize(begin);
+  return true;
+}
+#endif
 
 constexpr uint8_t kRtcpVersion = 2;
 constexpr uint8_t kPtSenderReport = 200;
@@ -634,6 +682,12 @@ class RtcpUdpEndpoint::Impl {
   sockaddr_storage reply_peer{};
   socklen_t reply_peer_length = 0;
   uint16_t local_port = 0;
+#ifdef MLVC_HAS_OPENSSL
+  std::string auth_key;
+  uint64_t tx_index = 0;
+  uint64_t rx_highest = 0;
+  uint64_t rx_window = 0;
+#endif
 
   ~Impl() { Close(); }
 
@@ -664,6 +718,9 @@ RtcpUdpEndpoint::RtcpUdpEndpoint(uint16_t local_port, std::string remote_host,
     freeaddrinfo(result);
   }
   impl_->socket = ::socket(AF_INET, SOCK_DGRAM, 0);
+#ifdef MLVC_HAS_OPENSSL
+  if (const char* key = std::getenv("MLVC_RTCP_KEY"); key != nullptr) impl_->auth_key = key;
+#endif
   if (impl_->socket < 0) throw std::runtime_error("failed to create RTCP socket");
   int receive_buffer = 1024 * 1024;
   (void)::setsockopt(impl_->socket, SOL_SOCKET, SO_RCVBUF, &receive_buffer,
@@ -696,10 +753,14 @@ void RtcpUdpEndpoint::Send(const std::vector<uint8_t>& compound_packet) {
   if (!impl_ || impl_->socket < 0) throw std::runtime_error("RTCP socket is closed");
   if (impl_->remote_length == 0) throw std::runtime_error("RTCP remote endpoint is not configured");
   (void)DecodeRtcpCompound(compound_packet);
-  const ssize_t sent = ::sendto(impl_->socket, compound_packet.data(), compound_packet.size(), 0,
+  std::vector<uint8_t> wire = compound_packet;
+#ifdef MLVC_HAS_OPENSSL
+  if (!impl_->auth_key.empty()) wire = AuthenticateRtcp(compound_packet, impl_->tx_index++, impl_->auth_key);
+#endif
+  const ssize_t sent = ::sendto(impl_->socket, wire.data(), wire.size(), 0,
                                 reinterpret_cast<const sockaddr*>(&impl_->remote),
                                 impl_->remote_length);
-  if (sent < 0 || static_cast<std::size_t>(sent) != compound_packet.size()) {
+  if (sent < 0 || static_cast<std::size_t>(sent) != wire.size()) {
     throw std::runtime_error("failed to send RTCP packet");
   }
 }
@@ -715,10 +776,14 @@ void RtcpUdpEndpoint::SendToLastPeer(const std::vector<uint8_t>& compound_packet
   if (!impl_ || impl_->socket < 0) throw std::runtime_error("RTCP socket is closed");
   if (impl_->reply_peer_length == 0) throw std::runtime_error("RTCP reply peer is not accepted");
   (void)DecodeRtcpCompound(compound_packet);
-  const ssize_t sent = ::sendto(impl_->socket, compound_packet.data(), compound_packet.size(), 0,
+  std::vector<uint8_t> wire = compound_packet;
+#ifdef MLVC_HAS_OPENSSL
+  if (!impl_->auth_key.empty()) wire = AuthenticateRtcp(compound_packet, impl_->tx_index++, impl_->auth_key);
+#endif
+  const ssize_t sent = ::sendto(impl_->socket, wire.data(), wire.size(), 0,
                                 reinterpret_cast<const sockaddr*>(&impl_->reply_peer),
                                 impl_->reply_peer_length);
-  if (sent < 0 || static_cast<std::size_t>(sent) != compound_packet.size()) {
+  if (sent < 0 || static_cast<std::size_t>(sent) != wire.size()) {
     throw std::runtime_error("failed to send RTCP reply");
   }
 }
@@ -752,6 +817,10 @@ bool RtcpUdpEndpoint::Receive(std::vector<uint8_t>* compound_packet,
       return false;
     }
   }
+#ifdef MLVC_HAS_OPENSSL
+  if (!impl_->auth_key.empty() &&
+      !VerifyAndStripRtcp(&buffer, impl_->auth_key, &impl_->rx_highest, &impl_->rx_window)) return false;
+#endif
   (void)DecodeRtcpCompound(buffer);
   impl_->last_peer = peer;
   impl_->last_peer_length = peer_length;
