@@ -17,6 +17,8 @@ struct Nv12Layout {
 
 std::size_t Nv12BufferSize(const Nv12Layout& layout);
 bool Fp16Yuv444ToNv12UsesNeon();
+// Reads TensorData::View directly, including borrowed CPU/pinned CPU storage.
+// Requires aligned FP16 NCHW storage covering the complete declared shape.
 void ConvertFp16Yuv444ToNv12Scalar(const codec::TensorData& input, const Nv12Layout& layout,
                                    std::vector<uint8_t>* output);
 void ConvertFp16Yuv444ToNv12(const codec::TensorData& input, const Nv12Layout& layout,

@@ -73,6 +73,8 @@ int main() {
                 "x264 motion proxy defaults must remain medium and one thread");
     mlvc::Check(!parsed.stream.motion_skip_loop_filter,
                 "motion proxy loop filtering must remain enabled by default");
+    mlvc::Check(!parsed.stream.motion_camera_nv12,
+                "default motion must remain full resolution without a camera sidecar");
 
     const auto expect_invalid = [&](const char* extra, const char* description) {
       std::ofstream output(config);
@@ -209,6 +211,52 @@ int main() {
                         filtered_config.stream.motion_skip_loop_filter == skip_filter,
                     "valid online motion loop filter option was not preserved");
       }
+    }
+
+    const auto write_motion_input = [&](bool camera, const std::string& fields) {
+      std::ofstream output(config);
+      output << "mode = \"encode\"\noutput = \"/tmp/out.mlvc\"\nmanifest = \""
+             << manifest.string() << "\"\nframe_num = 10\nltr_period = 0\n";
+      if (camera) {
+        // Parsing must not open or capture this test-only device.
+        output << "input_camera_device = \"/dev/mlvc-config-test\"\n"
+               << "camera_width = 1920\ncamera_height = 1080\n";
+      } else {
+        output << "input_frame_dir = \"/tmp\"\n";
+      }
+      output << fields;
+    };
+    const auto reject_motion_input = [&](bool camera, const char* fields, const char* reason) {
+      write_motion_input(camera, fields);
+      ExpectReject([&] { (void)mlvc::LoadEncoderConfig(config); }, reason);
+    };
+    reject_motion_input(false, "translation_warp = true\nmotion_prefetch_frames = 2\n"
+                              "motion_camera_nv12 = true\n", "camera sidecar without camera input");
+    reject_motion_input(true, "motion_camera_nv12 = true\n", "camera sidecar without warp");
+    reject_motion_input(true, "translation_warp = true\nmotion_camera_nv12 = true\n",
+                             "camera sidecar without motion prefetch");
+    reject_motion_input(true, "translation_warp = true\nmotion_prefetch_frames = 2\n"
+                             "motion_shifts_file = \"/tmp/shifts.csv\"\nmotion_camera_nv12 = true\n",
+                             "camera sidecar with CSV replay");
+    reject_motion_input(true, "translation_warp = true\nmotion_prefetch_frames = 2\n"
+                             "motion_camera_nv12 = \"true\"\n", "non-boolean camera sidecar option");
+    for (const std::string backend : {"dvpp", "libx264"}) {
+        for (bool camera : {false, true}) {
+          const std::string fields = "translation_warp = true\nmotion_prefetch_frames = 2\n"
+              "motion_backend = \"" + backend + "\"\nmotion_camera_nv12 = " +
+              (camera ? "true\n" : "false\n");
+          write_motion_input(camera, fields);
+          const auto camera_config = mlvc::LoadEncoderConfig(config);
+          mlvc::Check(camera_config.stream.motion_camera_nv12 == camera,
+                      "valid full-resolution sidecar configuration was not preserved");
+          if (camera) {
+            mlvc::Check(camera_config.stream.camera_options.has_value() &&
+                            camera_config.stream.camera_options->width == 1920 &&
+                            camera_config.stream.camera_options->height == 1080 &&
+                            camera_config.stream.camera_options->motion_nv12,
+                        "camera sidecar must preserve full-resolution camera geometry");
+          }
+        }
     }
 
     std::cout << "encode config test passed\n";

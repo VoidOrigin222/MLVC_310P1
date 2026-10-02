@@ -1,4 +1,5 @@
 #include <mlvc/io/video_io.h>
+#include <mlvc/io/fp16_yuv444_to_nv12.h>
 #include <mlvc/io/dvpp_jpeg_decoder.h>
 
 #include <algorithm>
@@ -51,6 +52,27 @@ namespace mlvc::io {
 namespace codec = mlvc::codec;
 namespace {
 
+// Strip JPEGD stride padding without changing any visible pixel values.
+void CopyVisibleNv12(const void* source, std::size_t bytes, const Nv12Layout& layout,
+                     std::vector<uint8_t>* output) {
+  Check(source != nullptr && output != nullptr && layout.width > 0 && layout.height > 0 &&
+            layout.width % 2 == 0 && layout.height % 2 == 0 &&
+            layout.width_stride >= layout.width && layout.height_stride >= layout.height,
+        "camera motion NV12 layout is invalid");
+  Check(bytes >= Nv12BufferSize(layout), "camera motion NV12 storage is too short");
+  const Nv12Layout packed{layout.width, layout.height, layout.width, layout.height};
+  output->resize(Nv12BufferSize(packed));
+  const auto* input = static_cast<const uint8_t*>(source);
+  const auto source_stride = static_cast<std::size_t>(layout.width_stride);
+  const auto target_stride = static_cast<std::size_t>(layout.width);
+  const auto source_uv = source_stride * layout.height_stride;
+  const auto target_uv = target_stride * layout.height;
+  for (int row = 0; row < layout.height; ++row)
+    std::memcpy(output->data() + row * target_stride, input + row * source_stride, target_stride);
+  for (int row = 0; row < layout.height / 2; ++row)
+    std::memcpy(output->data() + target_uv + row * target_stride,
+                input + source_uv + row * source_stride, target_stride);
+}
 
 struct V4l2Buffer {
   void* address = MAP_FAILED;
@@ -750,6 +772,14 @@ class VideoFrameReader::Impl {
        const std::optional<CameraCaptureOptions>& camera_options, aclrtContext context) {
     if (camera_options.has_value()) {
       context_ = context;
+      motion_nv12_ = camera_options->motion_nv12;
+      if (motion_nv12_) {
+        Check(camera_options->width > 0 && camera_options->height > 0 &&
+                  camera_options->width % 2 == 0 && camera_options->height % 2 == 0,
+              "camera motion NV12 requires positive even visible dimensions");
+        (void)Nv12BufferSize({camera_options->width, camera_options->height,
+                             camera_options->width, camera_options->height});
+      }
       Check(IsCameraDevicePath(input_path),
             "camera input must be a V4L2 device path such as /dev/video0");
       camera_capture_ = std::make_unique<V4l2MjpegCapture>(input_path, *camera_options);
@@ -833,6 +863,10 @@ class VideoFrameReader::Impl {
                 << " aipp_nv12_pad_ms=" << aipp_pad_ms_ / std::max<uint64_t>(1, converted_frames_)
                 << " v4l2_sequence_gaps=" << v4l2_sequence_gaps_
                 << " jpeg_decode_errors=" << jpeg_decode_errors_
+                << " camera_motion_copy_ms="
+                << camera_motion_copy_ms_ / std::max<uint64_t>(1, camera_motion_copy_frames_)
+                << " camera_motion_copy_total_ms=" << camera_motion_copy_ms_
+                << " camera_motion_copy_frames=" << camera_motion_copy_frames_
                 << " camera_queue_max_depth=" << camera_queue_max_depth_
                 << " camera_queue_full_waits=" << camera_queue_full_waits_
                 << " camera_queue_full_wait_total_ms=" << camera_queue_full_wait_total_ms_
@@ -964,7 +998,8 @@ class VideoFrameReader::Impl {
   }
 
   codec::TensorData ConvertCameraFrame(const DvppJpegDecodedFrame& nv12,
-                                       const mlvc::TensorSpec& frame_spec) {
+                                       const mlvc::TensorSpec& frame_spec,
+                                       std::vector<uint8_t>* motion_nv12) {
     codec::TensorData result;
     result.shape = mlvc::TensorShape(frame_spec.shape);
     result.dtype = frame_spec.dtype;
@@ -1030,10 +1065,28 @@ class VideoFrameReader::Impl {
       cpu_bgr_fp16_ms_ += std::chrono::duration<double, std::milli>(conversion_end - bgr_end).count();
       ++converted_frames_;
     }
+    if (motion_nv12_) {
+      Check(motion_nv12 != nullptr, "camera motion proxy output is missing");
+      const auto motion_copy_begin = std::chrono::steady_clock::now();
+      CopyVisibleNv12(host_nv12.data(), host_nv12.size(),
+          {info_width_, info_height_, nv12.width_stride(), nv12.height_stride()}, motion_nv12);
+      const double motion_copy_ms = std::chrono::duration<double, std::milli>(
+          std::chrono::steady_clock::now() - motion_copy_begin).count();
+      std::lock_guard<std::mutex> stats_lock(stats_mutex_);
+      camera_motion_copy_ms_ += motion_copy_ms;
+      ++camera_motion_copy_frames_;
+    }
     return result;
   }
 
+  struct CameraTensor {
+    codec::TensorData tensor;
+    std::vector<uint8_t> motion_nv12;
+  };
+
   void StartTensorPrefetch(const mlvc::TensorSpec& frame_spec) {
+    Check(!motion_nv12_ || frame_spec.dtype == DataType::kFloat16,
+          "camera motion NV12 sidecar requires the FP16 main input path");
     const std::size_t output_bytes =
         mlvc::TensorShape(frame_spec.shape).NumElements() * ElementSize(frame_spec.dtype);
     fp16_output_pool_ = std::make_shared<AclFrameBufferPool>(context_, output_bytes,
@@ -1044,7 +1097,8 @@ class VideoFrameReader::Impl {
         for (;;) {
           DvppJpegDecodedFrame nv12 = PopCameraNv12();
           if (nv12.device_data() == nullptr) break;
-          codec::TensorData tensor = ConvertCameraFrame(nv12, frame_spec);
+          CameraTensor tensor;
+          tensor.tensor = ConvertCameraFrame(nv12, frame_spec, &tensor.motion_nv12);
           std::unique_lock<std::mutex> lock(tensor_mutex_);
           const bool was_full = tensor_queue_.size() >= kTensorQueueCapacity;
           const auto wait_begin = std::chrono::steady_clock::now();
@@ -1076,14 +1130,15 @@ class VideoFrameReader::Impl {
     });
   }
 
-  bool PopTensor(codec::TensorData* tensor) {
+  bool PopTensor(codec::TensorData* tensor, std::vector<uint8_t>* motion_nv12) {
     std::unique_lock<std::mutex> lock(tensor_mutex_);
     tensor_cv_.wait(lock, [this] {
       return tensor_eof_ || tensor_error_ != nullptr || !tensor_queue_.empty();
     });
     if (tensor_error_ != nullptr) std::rethrow_exception(tensor_error_);
     if (tensor_queue_.empty()) return false;
-    *tensor = std::move(tensor_queue_.front());
+    *tensor = std::move(tensor_queue_.front().tensor);
+    if (motion_nv12) *motion_nv12 = std::move(tensor_queue_.front().motion_nv12);
     tensor_queue_.pop_front();
     lock.unlock();
     tensor_cv_.notify_all();
@@ -1114,7 +1169,10 @@ class VideoFrameReader::Impl {
   std::thread tensor_thread_;
   std::mutex tensor_mutex_;
   std::condition_variable tensor_cv_;
-  std::deque<codec::TensorData> tensor_queue_;
+  std::deque<CameraTensor> tensor_queue_;
+  bool motion_nv12_ = false;
+  double camera_motion_copy_ms_ = 0.0;
+  uint64_t camera_motion_copy_frames_ = 0;
   std::exception_ptr tensor_error_;
   bool tensor_eof_ = false;
   bool tensor_started_ = false;
@@ -1170,8 +1228,12 @@ void VideoFrameReader::Close() {
 }
 
 bool VideoFrameReader::ReadFrameAsTensor(const mlvc::TensorSpec& frame_spec,
-                                         codec::TensorData* tensor) {
+                                         codec::TensorData* tensor,
+                                         std::vector<uint8_t>* motion_nv12) {
+  if (motion_nv12) motion_nv12->clear();
   Check(tensor != nullptr, "video frame tensor output is required");
+  Check(!impl_->motion_nv12_ || motion_nv12 != nullptr,
+        "enabled camera motion sidecar requires an output vector");
   const bool aipp_camera = impl_->camera_capture_ != nullptr &&
                            frame_spec.dtype == DataType::kUInt8;
   Check(frame_spec.dtype == DataType::kFloat16 || aipp_camera,
@@ -1190,7 +1252,7 @@ bool VideoFrameReader::ReadFrameAsTensor(const mlvc::TensorSpec& frame_spec,
       impl_->tensor_started_ = true;
     }
     codec::TensorData queued;
-    if (!impl_->PopTensor(&queued)) return false;
+    if (!impl_->PopTensor(&queued, motion_nv12)) return false;
     *tensor = std::move(queued);
     return true;
   } else if (!impl_->capture_.read(frame)) {

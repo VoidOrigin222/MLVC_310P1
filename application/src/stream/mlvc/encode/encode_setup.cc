@@ -8,6 +8,13 @@
 namespace mlvc::codec {
 
 void ValidateEncodeInput(const EncodeStreamOptions& options) {
+  Check(!options.motion_camera_nv12 ||
+            (options.translation_warp && options.motion_shifts_file.empty() &&
+             options.motion_prefetch_frames > 0),
+        "camera motion NV12 requires online translation warp with prefetch");
+  Check(!options.motion_camera_nv12 ||
+            (!options.input_camera_device.empty() && options.camera_options.has_value()),
+        "motion_camera_nv12 requires camera input");
   Check(!options.motion_skip_loop_filter ||
             (options.translation_warp && options.motion_shifts_file.empty()),
         "motion_skip_loop_filter requires online translation warp");

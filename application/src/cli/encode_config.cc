@@ -44,7 +44,7 @@ void ValidateConfigKeys(const toml::table& config) {
                   "execution_profile", "manifest", "qp", "gop", "reset_interval", "device",
                   "frame_num", "fps", "profile_warmup_frames", "profile_output",
                   "enable_stage_fusion", "translation_warp", "motion_shifts_file", "motion_backend", "motion_prefetch_frames",
-                  "motion_x264_preset", "motion_x264_threads", "motion_skip_loop_filter",
+                  "motion_x264_preset", "motion_x264_threads", "motion_skip_loop_filter", "motion_camera_nv12",
                   "ltr_start_idx", "ltr_period", "ltr_qp_shift",
                   "target_bitrate_bps", "min_qp", "max_qp", "forced_ltr_recovery_frame",
                   "forced_ltr_reference_frame", "udp_host", "udp_port",
@@ -192,6 +192,13 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
   options.motion_x264_preset = GetString(config, "motion_x264_preset", "medium");
   options.motion_x264_threads = GetInt(config, "motion_x264_threads", 1);
   options.motion_skip_loop_filter = GetBool(config, "motion_skip_loop_filter", false);
+  options.motion_camera_nv12 = GetBool(config, "motion_camera_nv12", false);
+  Check(!options.motion_camera_nv12 ||
+            (options.translation_warp && options.motion_shifts_file.empty() &&
+             options.motion_prefetch_frames > 0),
+        "camera motion NV12 requires online translation warp with prefetch");
+  Check(!options.motion_camera_nv12 || !camera_device.empty(),
+        "motion_camera_nv12 requires input_camera_device");
   Check(!options.motion_skip_loop_filter ||
             (options.translation_warp && options.motion_shifts_file.empty()),
         "motion_skip_loop_filter requires online translation warp");
@@ -270,6 +277,7 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
     camera_options.rtsp_gop = static_cast<uint32_t>(camera_rtsp_gop);
     camera_options.rtsp_queue_capacity = static_cast<std::size_t>(camera_rtsp_queue_capacity);
     camera_options.preload_frames = static_cast<std::size_t>(camera_preload_frames);
+    camera_options.motion_nv12 = options.motion_camera_nv12;
     options.camera_options = camera_options;
     options.input_video_path = camera_device;
   }

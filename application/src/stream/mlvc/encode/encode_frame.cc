@@ -63,9 +63,13 @@ EncodeFrameProcessor::EncodeFrameProcessor(
     } else {
       Check(std::abs(fps_ - std::round(fps_)) < 1e-6,
             "online motion currently requires an integer frame rate");
+      if (options_.motion_camera_nv12 ||
+          options_.motion_backend == "dvpp")
+        Check(motion_layout_.width >= 128 && motion_layout_.height >= 128,
+              "motion proxy dimensions must be at least 128x128");
       if (options_.motion_backend == "dvpp") {
         mlvc::io::DvppH264EncoderConfig config;
-        config.layout = {geometry.width, geometry.height, geometry.width, geometry.height};
+        config.layout = motion_layout_;
         config.fps = static_cast<uint32_t>(std::llround(fps_));
         config.gop = static_cast<uint32_t>(options_.gop);
         config.bitrate = 8'000'000;
@@ -73,8 +77,8 @@ EncodeFrameProcessor::EncodeFrameProcessor(
             context, config, options_.motion_skip_loop_filter);
       } else {
         mlvc::motion::TranslationEstimatorConfig config;
-        config.width = geometry.width;
-        config.height = geometry.height;
+        config.width = motion_layout_.width;
+        config.height = motion_layout_.height;
         config.fps = static_cast<int>(std::llround(fps_));
         config.gop = options_.gop;
         config.preset = options_.motion_x264_preset;
@@ -96,6 +100,8 @@ EncodeFrameProcessor::~EncodeFrameProcessor() {
 mlvc::motion::Translation EncodeFrameProcessor::EstimateMotion(
     const mlvc::app::InputFrame& frame, bool random_access) {
   Check(frame.frame_index == next_motion_frame_, "motion frames must be sequential");
+  Check(!options_.motion_camera_nv12 || frame.motion_nv12,
+        "configured motion proxy requires its prepared NV12 input");
   const auto begin = std::chrono::steady_clock::now();
   if (frame.ready_at != std::chrono::steady_clock::time_point{})
     ready_to_motion_.Add(std::chrono::duration<double, std::milli>(begin - frame.ready_at).count());

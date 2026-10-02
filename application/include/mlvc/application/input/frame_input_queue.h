@@ -91,7 +91,8 @@ class AsyncFrameInputQueue {
   };
 
   void WorkerMain();
-  bool PrepareOne(int frame_index, codec::TensorData* frame);
+  bool PrepareOne(int frame_index, codec::TensorData* frame,
+                  std::vector<uint8_t>* motion_nv12 = nullptr);
   int AcquireFreeSlot();
   void ReturnFreeSlot(int slot_index);
   void PushReady(ReadySlot ready);
@@ -101,6 +102,7 @@ class AsyncFrameInputQueue {
   std::filesystem::path input_video_path_;
   std::filesystem::path input_frame_dir_;
   mlvc::TensorSpec frame_spec_;
+  bool camera_motion_nv12_ = false;
   std::unique_ptr<mlvc::io::FrameSource> frame_source_;
   int width_ = 0;
   int height_ = 0;

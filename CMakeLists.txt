@@ -401,6 +401,10 @@ if(MLVC_BUILD_APPS)
     if(MLVC_TEST_MANIFEST)
       add_test(NAME p1_model_loading COMMAND test_p1_model_loading "${MLVC_TEST_MANIFEST}")
     endif()
+    add_executable(test_motion_nv12_inputs tools/cpp/tests/test_motion_nv12_inputs.cc)
+    target_link_libraries(test_motion_nv12_inputs PRIVATE mlvc_codec)
+    add_test(NAME motion_nv12_inputs COMMAND test_motion_nv12_inputs)
+
     add_executable(test_fp16_yuv444_to_nv12
       tools/cpp/tests/test_fp16_yuv444_to_nv12.cc
     )

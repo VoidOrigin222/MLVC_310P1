@@ -35,16 +35,7 @@ Translation DvppTranslationEstimator::Estimate(const codec::TensorData& input,
       input.ByteSize() != input.shape.NumElements() * sizeof(uint16_t)) {
     throw std::runtime_error("DVPP motion FP16 input must be a valid host tensor");
   }
-  codec::TensorData mirror;
-  const codec::TensorData* host = &input;
-  if (input.has_external_buffer()) {
-    mirror.shape = input.shape;
-    mirror.dtype = input.dtype;
-    const auto* data = static_cast<const uint8_t*>(input.external_data);
-    mirror.bytes.assign(data, data + input.ByteSize());
-    host = &mirror;
-  }
-  io::ConvertFp16Yuv444ToNv12(*host, layout_, &nv12_host_);
+  io::ConvertFp16Yuv444ToNv12(input, layout_, &nv12_host_);
   return EstimateNv12Host(nv12_host_.data(), nv12_host_.size(), frame_index, random_access);
 }
 

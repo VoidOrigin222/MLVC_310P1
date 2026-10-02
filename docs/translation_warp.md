@@ -35,6 +35,13 @@ pixel-unshuffle 和 `feature_adaptor_i`，输出完整 96 通道，保留 memory
 当前推荐文件编码配置 `configs/encoder_motion_dvpp_prefetch2.toml`，RTP 编码配置
 `configs/encoder_motion_rtp_prefetch2.toml`，分别配合 `configs/decoder_motion.toml` 和
 `configs/decoder_motion_rtp.toml`。根据设备上的输入帧目录和输出路径调整。
+实时相机使用 [camera_motion_rtp_nv12.toml](../configs/camera_motion_rtp_nv12.toml)：
+1920×1080 运动代理直接复用相机 NV12，主 MLVC 保持 1088 padding；不依靠降低运动分辨率。
+接收端配套 [decoder_camera_motion_rtp.toml](../configs/decoder_camera_motion_rtp.toml)，
+默认处理 3000 帧，先接收后发送。
+原生 NV12 与可选降采样的行为和测量边界见
+[相机运动输入说明](motion_nv12.md) 与
+[原生 NV12 验收](../acceptance/motion-nv12-20261002/README.md)。
 原 `configs/encoder_motion.toml` 保留在线 libx264 medium/1 串行入口及 CSV 重放示例。
 模型 manifest 必须同时包含两个主 OM 和新增参考帧 adaptor OM。
 配置要求 GOP 96、reset 32、LTR 关闭。支持 MLVC-ES 文件和 RTP，旧 UDP 消息不携带位移。
@@ -158,7 +165,9 @@ EOF 会排空已接受的帧；运动、输入或消费错误会取消输入等�
 完成 MLVC 编码后才复用；camera 的 external owner 也保留至该时刻。
 DVPP 代理将缓存直接 H2D 上传到编码器自有的 DVPP 输入池，省去中间 device-to-device
 拷贝。原 `EncodeDevice` 的 device 输入、ready event 和 opt-in zero-copy 行为保留。
-`ready_at` 在源 tensor 读完、NV12 转换开始前记录，转换时间仍计入时延。
+FP16 转换路径的 `ready_at` 在源 tensor 读完、NV12 转换开始前记录，转换时间仍计入时延。
+原生相机 NV12 路径则在源 tensor 与 sidecar 成对出队后记录，相机此前的转换和
+运动 NV12 拷贝发生在上游，计入对应阶段耗时，不包含在 source-ready 时延中。
 
 固定 QP 且开启预取时，消费线程在处理帧前后按序回收已经 ready 的熵任务并发送，
 减少已完成码流继续等待后续编码的时间。尚未 ready 的任务不被提前等待；超过原有
@@ -206,6 +215,14 @@ camera 采集、完整网络链路或端到端两帧延迟保证。
 相机采集、转换成本、前置队列和完整短/长测结果见
 [实时相机在线速度验收](../acceptance/motion-online-20261002/README.md)。
 此结果与无节拍文件输入的吞吐验收分别记录。
+
+后续原生相机 NV12 输入优化保留 1080p 运动代理，实时相机 3000 帧双机 RTP 编码为
+29.8352 FPS，接收解码 29.857 FPS（包含等待到达），全部 3000 帧输出。
+相机序号缺口为 1；该结果接近本机相机约 29.85 FPS 的实际速度，不宣称严格持续
+30 FPS、零掉帧或端到端两帧延迟。推荐入口为 `configs/camera_motion_rtp_nv12.toml`，
+完整条件、离线运动对照和资产见
+[原生 NV12 验收](../acceptance/motion-nv12-20261002/README.md)。
+本交付只保留全分辨率运动代理，未保留降采样功能。
 
 完整测试入口为 `ctest --test-dir build --output-on-failure`；已完成运行的两板日志均为
 `/root/workplace/grifcc/prefetch-validation/tests-final.log`，各 32/32 通过。

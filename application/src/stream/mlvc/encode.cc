@@ -61,9 +61,12 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
 
     const mlvc::TensorSpec& frame_spec = encoder_record.inputs.at(0);
     double fps = options.fps;
+    auto source_camera_options = options.camera_options;
+    if (source_camera_options)
+      source_camera_options->motion_nv12 = options.motion_camera_nv12;
     const SourceFrameGeometry source_geometry =
         ResolveSourceGeometry(options.input_video_path, options.input_frame_dir,
-                              options.camera_options, runtime.context(), frame_spec, &fps);
+                              source_camera_options, runtime.context(), frame_spec, &fps);
     const EncodeDimensions dimensions{
         static_cast<int>(encoder_record.outputs.at(2).shape.at(1) * 2),
         static_cast<int>(encoder_record.outputs.at(2).shape.at(2)),
@@ -128,30 +131,23 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
                                                       : options.pipeline.frame_buffer_slots,
         !options.camera_options.has_value());
     mlvc::app::AsyncFrameInputQueue::MotionInputPrepareFunction motion_input_prepare;
-    if (options.motion_prefetch_frames > 0 && options.motion_shifts_file.empty()) {
+    if (options.motion_prefetch_frames > 0 && options.motion_shifts_file.empty() &&
+        !options.motion_camera_nv12) {
       const mlvc::io::Nv12Layout layout{source_geometry.width, source_geometry.height,
                                        source_geometry.width, source_geometry.height};
-      motion_input_prepare = [layout](const TensorData& input, std::vector<uint8_t>* nv12) {
+      motion_input_prepare = [layout](
+          const TensorData& input, std::vector<uint8_t>* nv12) {
         const auto location = input.View().location();
         Check((location == MemoryLocation::kCpu || location == MemoryLocation::kPinnedCpu) &&
                   input.dtype == DataType::kFloat16 &&
                   input.ByteSize() == input.shape.NumElements() * sizeof(uint16_t),
               "motion proxy FP16 input must be a valid host tensor");
-        TensorData mirror;
-        const TensorData* host = &input;
-        if (input.has_external_buffer()) {
-          mirror.shape = input.shape;
-          mirror.dtype = input.dtype;
-          const auto* bytes = static_cast<const uint8_t*>(input.external_data);
-          mirror.bytes.assign(bytes, bytes + input.ByteSize());
-          host = &mirror;
-        }
-        mlvc::io::ConvertFp16Yuv444ToNv12(*host, layout, nv12);
+        mlvc::io::ConvertFp16Yuv444ToNv12(input, layout, nv12);
       };
     }
     mlvc::app::AsyncFrameInputQueue prepare_queue(
         frames_to_attempt, options.frame_num, options.input_video_path, options.input_frame_dir,
-        options.camera_options, runtime.context(), frame_spec, source_geometry.width,
+        source_camera_options, runtime.context(), frame_spec, source_geometry.width,
         source_geometry.height,
         &frame_prepare_arena, &profiler, &graph_executor, std::move(motion_input_prepare));
     std::atomic<bool> frame_pipeline_running{true};
@@ -338,6 +334,9 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
                   << name << "_avg_ms=" << stats.average_ms() << "\n"
                   << name << "_max_ms=" << stats.max_ms << "\n";
       };
+      std::cout << "motion_camera_nv12=" << (options.motion_camera_nv12 ? "true" : "false") << "\n";
+      std::cout << "motion_proxy_width=" << source_geometry.width << "\n";
+      std::cout << "motion_proxy_height=" << source_geometry.height << "\n";
       std::cout << "entropy_ready_retirements=" << entropy_ready_retirements << "\n";
       std::cout << "motion_prefetch_frames=" << options.motion_prefetch_frames << "\n";
       std::cout << "input_max_acquired_frames=" << input_stats.max_acquired_frames << "\n";

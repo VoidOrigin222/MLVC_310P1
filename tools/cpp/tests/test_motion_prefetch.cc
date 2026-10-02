@@ -434,6 +434,28 @@ void TestMotionPreparationFailurePreservesCause() {
   mlvc::Check(propagated && preserved && callbacks == 2,
               "motion preparation failure was lost or later frames were prepared");
 }
+
+void TestSourceClearsOldSidecarOnReadAndEof() {
+  const auto spec = FrameSpec();
+  const auto directory = std::filesystem::temp_directory_path() /
+      ("mlvc-sidecar-eof-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  std::filesystem::create_directory(directory);
+  struct Cleanup {
+    std::filesystem::path path;
+    ~Cleanup() { std::error_code ignored; std::filesystem::remove_all(path, ignored); }
+  } cleanup{directory};
+  mlvc::codec::WriteTensorFile(directory / "frame_0.fp16",
+                              mlvc::codec::MakeFp16Tensor(spec.shape, 0.5f));
+  mlvc::io::FrameSource source(-1, {}, directory, spec);
+  auto frame = mlvc::codec::MakeFp16Tensor(spec.shape, 0.0f);
+  std::vector<uint8_t> sidecar{1, 2, 3};
+  mlvc::Check(source.ReadFrame(0, &frame, &sidecar) && sidecar.empty(),
+              "non-camera input retained a previous motion sidecar");
+  sidecar = {4, 5, 6};
+  mlvc::Check(!source.ReadFrame(1, &frame, &sidecar) && sidecar.empty(),
+              "EOF retained a previous frame's motion sidecar");
+  source.Close();
+}
 }  // namespace
 
 int main() {
@@ -450,6 +472,7 @@ int main() {
     TestMotionCacheUsesIndependentLeasedSlots();
     TestReadinessIncludesMotionPreparationWait();
     TestMotionPreparationFailurePreservesCause();
+    TestSourceClearsOldSidecarOnReadAndEof();
     std::cout << "motion prefetch order, bounds, EOF and cancellation tests passed\n";
     return 0;
   } catch (const std::exception& error) {

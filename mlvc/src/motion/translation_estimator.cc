@@ -188,19 +188,8 @@ class TranslationEstimator::Impl {
     Require(input.dtype == DataType::kFloat16 &&
                 input.ByteSize() == input.shape.NumElements() * sizeof(uint16_t),
             "invalid FP16 motion proxy input size");
-    // The existing conversion reads the owned byte vector; mirror externally
-    // pooled host tensors without mutating their shared buffer or lifetime.
-    const codec::TensorData* host = &input;
-    codec::TensorData mirror;
-    if (input.has_external_buffer()) {
-      mirror.shape = input.shape;
-      mirror.dtype = input.dtype;
-      const auto* source = static_cast<const uint8_t*>(input.external_data);
-      mirror.bytes.assign(source, source + input.ByteSize());
-      host = &mirror;
-    }
     const io::Nv12Layout layout{config_.width, config_.height, config_.width, config_.height};
-    io::ConvertFp16Yuv444ToNv12(*host, layout, &nv12_);
+    io::ConvertFp16Yuv444ToNv12(input, layout, &nv12_);
     return EstimateNv12(nv12_.data(), nv12_.size(), layout, frame_index, random_access);
   }
 
