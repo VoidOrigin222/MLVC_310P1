@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
+#include <sstream>
 
 #include "mlvc/core/status.h"
 
@@ -15,7 +17,8 @@ EncodeFrameProcessor::EncodeFrameProcessor(
     const EncodeStreamOptions& options, mlvc::StageModelSet* models,
     const mlvc::RuntimeSidecar* sidecar, mlvc::Profiler* profiler,
     mlvc::EntropyWorker* entropy_worker, EncodeState* state, MlvcRateController* rate_controller,
-    mlvc::MlvcOfficialEntropyEncoder* entropy_encoder, EncodeDimensions dimensions, double fps)
+    mlvc::MlvcOfficialEntropyEncoder* entropy_encoder, EncodeDimensions dimensions, double fps,
+    SourceFrameGeometry geometry, aclrtContext context)
     : options_(options),
       models_(models),
       sidecar_(sidecar),
@@ -30,6 +33,55 @@ EncodeFrameProcessor::EncodeFrameProcessor(
             entropy_worker_ != nullptr && state_ != nullptr && rate_controller_ != nullptr &&
             entropy_encoder_ != nullptr,
         "encode frame processor dependencies are incomplete");
+  if (options_.translation_warp) {
+    if (!options_.motion_shifts_file.empty()) {
+      std::ifstream input(options_.motion_shifts_file);
+      Check(input.good(), "cannot open motion_shifts_file");
+      std::string line;
+      while (std::getline(input, line)) {
+        if (line.empty() || line == "\r") continue;
+        std::istringstream values(line);
+        int index = -1, kx = 0, ky = 0;
+        char comma1 = 0, comma2 = 0;
+        Check(static_cast<bool>(values >> index >> comma1 >> kx >> comma2 >> ky) &&
+                  comma1 == ',' && comma2 == ',' && (values >> std::ws).eof(),
+              "motion_shifts_file must contain frame_index,kx,ky CSV rows without a header");
+        Check(index == static_cast<int>(replay_shifts_.size()),
+              "motion_shifts_file frame indexes must start at zero and be contiguous");
+        Check(kx >= -128 && kx <= 127 && ky >= -128 && ky <= 127,
+              "motion_shifts_file offsets must fit signed bytes");
+        Check(index % options_.gop != 0 || (kx == 0 && ky == 0),
+              "motion_shifts_file GOP starts must have zero translation");
+        replay_shifts_.push_back(mlvc::motion::Translation{static_cast<int8_t>(kx),
+                                                         static_cast<int8_t>(ky)});
+      }
+      Check(!replay_shifts_.empty(), "motion_shifts_file is empty");
+      Check(options_.frame_num < 0 || replay_shifts_.size() ==
+                                        static_cast<std::size_t>(options_.frame_num),
+            "motion_shifts_file frame count must match frame_num");
+    } else {
+      Check(std::abs(fps_ - std::round(fps_)) < 1e-6,
+            "online motion currently requires an integer frame rate");
+      if (options_.motion_backend == "dvpp") {
+        mlvc::io::DvppH264EncoderConfig config;
+        config.layout = {geometry.width, geometry.height, geometry.width, geometry.height};
+        config.fps = static_cast<uint32_t>(std::llround(fps_));
+        config.gop = static_cast<uint32_t>(options_.gop);
+        config.bitrate = 8'000'000;
+        dvpp_motion_estimator_ = std::make_unique<mlvc::motion::DvppTranslationEstimator>(context, config);
+      } else {
+        motion_estimator_ = std::make_unique<mlvc::motion::TranslationEstimator>(
+          mlvc::motion::TranslationEstimatorConfig{geometry.width, geometry.height,
+                                                  static_cast<int>(std::llround(fps_)), options_.gop});
+      }
+    }
+  }
+}
+
+void EncodeFrameProcessor::ValidateMotionFrameCount(int frames) const {
+  if (!options_.motion_shifts_file.empty())
+    Check(replay_shifts_.size() == static_cast<std::size_t>(frames),
+          "motion_shifts_file has unused rows because the input ended early");
 }
 
 PendingEncodedFrame EncodeFrameProcessor::Process(const std::shared_ptr<mlvc::DataObject>& data,
@@ -42,6 +94,24 @@ PendingEncodedFrame EncodeFrameProcessor::Process(const std::shared_ptr<mlvc::Da
   Check(frame_index == expected_frame_index, "async input frame order mismatch");
 
   const EncodeFrameDecision decision = state_->BeginFrame(frame_index, options_);
+  if (options_.translation_warp && decision.reset_reference) {
+    PrepareWarpResetReference(models_, &state_->reference(), prepared_frame.frame->shape.dims(),
+                              decision.is_i_frame, profiler_);
+  }
+  mlvc::motion::Translation translation;
+  if (options_.translation_warp) {
+    if (dvpp_motion_estimator_) {
+      translation = dvpp_motion_estimator_->Estimate(*prepared_frame.frame, frame_index, decision.is_i_frame);
+    } else if (motion_estimator_) {
+      translation = motion_estimator_->Estimate(*prepared_frame.frame, frame_index, decision.is_i_frame);
+    } else {
+      Check(static_cast<std::size_t>(frame_index) < replay_shifts_.size(),
+            "motion_shifts_file ended before the input video");
+      translation = replay_shifts_[frame_index];
+    }
+    if (decision.is_i_frame) translation.kx = translation.ky = 0;
+    if (translation.kx != 0 || translation.ky != 0) ++motion_nonzero_frames_;
+  }
   state_->PrepareLtrRecovery(frame_index, options_, decision);
   const int frame_adaptation_index = kIndexMap[(frame_index + 1) % 8];
   const int base_q_index =
@@ -54,12 +124,28 @@ PendingEncodedFrame EncodeFrameProcessor::Process(const std::shared_ptr<mlvc::Da
       std::clamp(state_->EffectiveQIndex(frame_q_index), options_.min_qp, options_.max_qp);
   const int q_index_shifted = sidecar_->ShiftedQp(controlled_q_index, frame_adaptation_index);
   TensorData q_index_shifted_tensor = MakeInt32ScalarTensor(q_index_shifted);
-  const StageInput ref_feature_input =
-      BuildReferenceFeatureInput(state_->reference(), state_->zero_feature());
+  TensorData warped_reference;
+  const StageInput ref_feature_input = options_.translation_warp
+      ? BuildWarpedReferenceFeatureInput(&state_->reference(), state_->zero_feature(),
+                                          translation.kx, translation.ky, &warped_reference)
+      : BuildReferenceFeatureInput(state_->reference(), state_->zero_feature());
   RunOutput encoder_output = RunStage(models_, "MLVCEncoder",
                                       {TensorInput("x", *prepared_frame.frame), ref_feature_input,
                                        TensorInput("q_index_shifted", q_index_shifted_tensor)},
                                       profiler_);
+  // Only resets outside the GOP need a reconstructed reference. The encoder
+  // normally exports no x_hat, so reconstruct precisely the preceding frame
+  // using the same latents, warped reference, and model QP as the decoder.
+  const int next_frame = frame_index + 1;
+  if (options_.translation_warp && next_frame % options_.reset_interval == 0 &&
+      next_frame % options_.gop != 0) {
+    RunOutput reconstruction = RunStage(models_, "MLVCDecoder",
+        {TensorInput("z_raw", encoder_output.At("z_raw")),
+         TensorInput("y_raw_0", encoder_output.At("y_raw_0")),
+         TensorInput("y_raw_1", encoder_output.At("y_raw_1")), ref_feature_input,
+         TensorInput("q_index_shifted", q_index_shifted_tensor)}, profiler_);
+    SaveWarpResetFrame(reconstruction, &state_->reference(), profiler_);
+  }
 
   const TensorData encoder_z_raw = CloneTensor(encoder_output.At("z_raw"));
   const TensorData encoder_y_raw_0 = CloneTensor(encoder_output.At("y_raw_0"));
@@ -88,9 +174,13 @@ PendingEncodedFrame EncodeFrameProcessor::Process(const std::shared_ptr<mlvc::Da
       });
 
   state_->UpdateAfterEncode(frame_index, decision, encoder_output, profiler_);
+  if (options_.translation_warp) TraceWarpReferenceState(frame_index, &state_->reference());
   const MlvcFrameType frame_type = decision.frame_type;
   mlvc::io::MlvcFrameMetadata metadata;
   metadata.explicit_metadata = true;
+  metadata.translation_warp = options_.translation_warp;
+  metadata.kx = translation.kx;
+  metadata.ky = translation.ky;
   metadata.model_q_index = q_index_shifted;
   metadata.pts = static_cast<int64_t>(std::llround(
       static_cast<long double>(frame_index) * 90000.0L / static_cast<long double>(fps_)));
@@ -104,11 +194,12 @@ PendingEncodedFrame EncodeFrameProcessor::Process(const std::shared_ptr<mlvc::Da
     metadata.long_ref_frame_id = static_cast<uint32_t>(state_->current_ltr_reference_frame());
     metadata.short_ref_frame_id = mlvc::transport::kMlvcNoReference;
   } else {
-    metadata.short_ref_frame_id = decision.reset_reference
+    metadata.short_ref_frame_id = decision.reset_reference && !options_.translation_warp
                                       ? mlvc::transport::kMlvcNoReference
                                       : static_cast<uint32_t>(frame_index - 1);
   }
-  if (decision.reset_reference) metadata.unit_flags |= mlvc::transport::kEfuResetReference;
+  if (decision.reset_reference && (!options_.translation_warp || decision.is_i_frame))
+    metadata.unit_flags |= mlvc::transport::kEfuResetReference;
   if (decision.mark_as_ltr) metadata.unit_flags |= mlvc::transport::kEfuStoreAsLtr;
   packet->Release();
   return PendingEncodedFrame{frame_index, frame_type, controlled_q_index, metadata,

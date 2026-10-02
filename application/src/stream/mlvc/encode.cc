@@ -28,6 +28,7 @@
 #include <optional>
 
 #include "mlvc/core/status.h"
+#include <mlvc/codec/translation_warp.h>
 
 namespace mlvc::codec {
 
@@ -52,6 +53,7 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
     mlvc::io::ValidateMlvcQIndexForSidecar(options.min_qp, sidecar_q_index_count);
     mlvc::io::ValidateMlvcQIndexForSidecar(options.max_qp, sidecar_q_index_count);
     Check(HasMlvcModels(models.manifest()), "manifest does not contain MLVCEncoder / MLVCDecoder");
+    if (options.translation_warp) RequireTranslationWarpModels(models.manifest());
     const mlvc::ModelRecord& encoder_record = models.manifest().GetModel("MLVCEncoder");
     ConfigureRuntimeState(&codec_runtime->stage_output_workspace(), runtime,
                           options.enable_stage_fusion);
@@ -116,7 +118,7 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
     EncodeState state(encoder_record.outputs.at(0).shape);
     EncodeFrameProcessor frame_processor(options, &models, &sidecar, &profiler, &entropy_worker,
                                          &state, &output.rate_controller(), &entropy_encoder,
-                                         dimensions, fps);
+                                         dimensions, fps, source_geometry, runtime.context());
 
     const int frames_to_attempt =
         options.frame_num > 0 ? options.frame_num : std::numeric_limits<int>::max();
@@ -160,12 +162,16 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
         const bool due = it->apply_after_frame_id == 0xffffffffu ||
                          encoded_frames >= static_cast<int>(it->apply_after_frame_id);
         if (!due) { ++it; continue; }
-        const bool accepted = state.ApplyControl(*it, encoded_frames);
+        const bool changes_gop = std::any_of(it->tlvs.begin(), it->tlvs.end(),
+            [](const auto& tlv) { return tlv.type == 3 || tlv.type == 4; });
+        const bool accepted = !(options.translation_warp && changes_gop) &&
+                              state.ApplyControl(*it, encoded_frames);
         output.SendMlvcControlResponse(*it, accepted,
                                         accepted ? "applied" : "unsupported-or-invalid");
         it = pending_controls.erase(it);
       }
-      state.SetForceRandomAccess(output.ConsumeRandomAccessRequest());
+      const bool random_access_request = output.ConsumeRandomAccessRequest();
+      state.SetForceRandomAccess(random_access_request && !options.translation_warp);
       PendingEncodedFrame pending = frame_processor.Process(data, encoded_frames);
       if (pending.frame_type == MlvcFrameType::kIFrame) {
         ++i_frames;
@@ -215,6 +221,7 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
     frame_consumer.RethrowIfFailed();
     frame_pipeline.Stop();
     frame_pipeline.RethrowIfFailed();
+    frame_processor.ValidateMotionFrameCount(encoded_frames);
     while (!pending_entropy.empty()) {
       output.Flush(std::move(pending_entropy.front()));
       pending_entropy.pop_front();
@@ -261,6 +268,14 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
               << "\n";
     std::cout << "bitstream_bytes=" << output.file_bytes() << "\n";
     std::cout << "payload_bytes=" << output.payload_bytes() << "\n";
+    if (options.translation_warp) {
+      const uint64_t geometry_bytes = 2u * static_cast<uint64_t>(p_frames);
+      std::cout << "translation_warp=true\n";
+      std::cout << "motion_source=" << (options.motion_shifts_file.empty() ? options.motion_backend : "csv-replay") << "\n";
+      std::cout << "motion_nonzero_frames=" << frame_processor.motion_nonzero_frames() << "\n";
+      std::cout << "geometry_bytes=" << geometry_bytes << "\n";
+      std::cout << "codec_total_bytes=" << output.payload_bytes() + geometry_bytes << "\n";
+    }
     std::cout << "q_index_min=" << (encoded_frames > 0 ? min_q_index_used : 0) << "\n";
     std::cout << "q_index_max=" << (encoded_frames > 0 ? max_q_index_used : 0) << "\n";
     std::cout << "q_index_mean="

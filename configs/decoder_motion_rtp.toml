@@ -1,0 +1,9 @@
+mode = "decode"
+manifest = "/root/workplace/grifcc/MLVC_310P1/mlvc1080p/manifest_motion_ascend310p1.json"
+format = "none"
+frame_num = 100
+device = 0
+execution_profile = "pipeline-v1"
+input_transport_mode = "rtp"
+input_transport_port = 39340
+input_transport_payload_type = 96

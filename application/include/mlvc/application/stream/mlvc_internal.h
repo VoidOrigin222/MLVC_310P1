@@ -59,6 +59,14 @@ SourceFrameGeometry ResolveSourceGeometry(const std::filesystem::path& input_vid
 void ConfigureRuntimeState(mlvc::codec::StageOutputWorkspace* stage_output_workspace,
                            mlvc::StageRuntime& runtime, bool enable_stage_fusion);
 StageInput BuildReferenceFeatureInput(const ReferenceState& state, const TensorData& zero_feature);
+StageInput BuildWarpedReferenceFeatureInput(ReferenceState* state, const TensorData& zero_feature,
+                                           int kx, int ky, TensorData* scratch);
+void PrepareWarpResetReference(mlvc::StageModelSet* models, ReferenceState* state,
+                               const std::vector<int64_t>& frame_shape, bool is_i_frame,
+                               mlvc::Profiler* profiler);
+void SaveWarpResetFrame(const RunOutput& output, ReferenceState* state, mlvc::Profiler* profiler);
+// Explicit opt-in diagnostic; callers invoke only in translation warp mode.
+void TraceWarpReferenceState(int frame_index, ReferenceState* state);
 void UpdateReferenceFeature(const RunOutput& output, ReferenceState* state,
                             mlvc::Profiler* profiler);
 

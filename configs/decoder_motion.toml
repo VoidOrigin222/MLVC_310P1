@@ -1,0 +1,15 @@
+mode = "decode"
+manifest = "/root/workplace/grifcc/MLVC_310P1/mlvc1080p/manifest_motion_ascend310p1.json"
+input = "/root/workplace/grifcc/MLVC_310P1/output/motion.mlvc"
+output = "/root/workplace/grifcc/MLVC_310P1/output/motion_recon.mp4"
+format = "none"
+execution_profile = "pipeline-v1"
+frame_num = 100
+fps = 30
+device = 0
+
+[pipeline]
+stream_workers = 1
+queue_capacity = 3
+entropy_workers = 1
+graph_packet_capacity = 2

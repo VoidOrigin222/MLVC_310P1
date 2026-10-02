@@ -12,6 +12,7 @@
 #include <mlvc/codec/mlvc_entropy.h>
 #include <mlvc/codec/mlvc_rate_control.h>
 #include <mlvc/codec/tensor_utils.h>
+#include <mlvc/codec/translation_warp.h>
 #include <mlvc/entropy/entropy_codec.h>
 #include <mlvc/entropy/mlvc_official_entropy.h>
 #include <mlvc/entropy/sidecar.h>
@@ -28,6 +29,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -155,6 +157,80 @@ StageInput BuildReferenceFeatureInput(const ReferenceState& state, const TensorD
     return TensorInput("ref_feature", *state.feature);
   }
   return TensorInput("ref_feature", zero_feature);
+}
+
+StageInput BuildWarpedReferenceFeatureInput(ReferenceState* state, const TensorData& zero_feature,
+                                           int kx, int ky, TensorData* scratch) {
+  Check(state != nullptr && scratch != nullptr, "translation warp requires reference and scratch");
+  if (kx == 0 && ky == 0) return BuildReferenceFeatureInput(*state, zero_feature);
+  if (state->feature_handle.has_value()) {
+    state->feature_handle->MaterializeToCpu("translation_warp.reference", g_acl_user_compute_stream);
+    *scratch = ShiftTensorPreserveBoundary(state->feature_handle->CpuView(), kx, ky);
+  } else {
+    *scratch = ShiftTensorPreserveBoundary(state->feature.has_value() ? *state->feature : zero_feature,
+                                          kx, ky);
+  }
+  return TensorInput("ref_feature", *scratch);
+}
+
+void PrepareWarpResetReference(mlvc::StageModelSet* models, ReferenceState* state,
+                               const std::vector<int64_t>& frame_shape, bool is_i_frame,
+                               mlvc::Profiler* profiler) {
+  Check(models != nullptr && state != nullptr, "warp reset requires models and reference state");
+  if (is_i_frame) {
+    state->ResetFrame();
+    state->frame.emplace(MakeFp16Tensor(frame_shape, 0.5f));
+  }
+  Check(state->frame.has_value() || state->frame_handle.has_value(),
+        "warp reset requires the previous reconstructed frame");
+  const StageInput input = state->frame_handle.has_value()
+      ? StageInput{"ref_frame", nullptr, &*state->frame_handle}
+      : TensorInput("ref_frame", *state->frame);
+  RunOutput adapted = RunStage(models, "MLVCReferenceFromFrame", {input}, profiler);
+  state->ResetFeature();
+  mlvc::TensorHandle handle;
+  if (CloneRunOutputHandle(adapted, "ref_feature", &handle, "warp.reset_reference", profiler)) {
+    state->feature_handle.emplace(std::move(handle));
+  } else {
+    state->feature.emplace(CloneTensor(adapted.At("ref_feature")));
+  }
+  state->ResetFrame();
+}
+
+void SaveWarpResetFrame(const RunOutput& output, ReferenceState* state, mlvc::Profiler* profiler) {
+  Check(state != nullptr, "warp reset requires reference state");
+  state->ResetFrame();
+  mlvc::TensorHandle handle;
+  if (CloneRunOutputHandle(output, "x_hat", &handle, "warp.reset_frame", profiler)) {
+    state->frame_handle.emplace(std::move(handle));
+  } else {
+    state->frame.emplace(CloneTensor(output.At("x_hat")));
+  }
+}
+
+void TraceWarpReferenceState(int frame_index, ReferenceState* state) {
+  const char* trace_dir = std::getenv("MLVC_WARP_TRACE_DIR");
+  if (trace_dir == nullptr || *trace_dir == '\0') return;
+  Check(state != nullptr && frame_index >= 0, "warp trace requires reference state and frame index");
+  const std::filesystem::path directory(trace_dir);
+  std::filesystem::create_directories(directory);
+  const auto dump = [&](const char* suffix, std::optional<TensorData>& tensor,
+                        std::optional<mlvc::TensorHandle>& handle) {
+    if (!tensor.has_value() && !handle.has_value()) return;
+    if (handle.has_value()) {
+      handle->MaterializeToCpu("translation_warp.trace", g_acl_user_compute_stream);
+    }
+    const mlvc::TensorView view = handle.has_value() ? handle->CpuView() : tensor->View();
+    Check(view.location() == mlvc::MemoryLocation::kCpu && view.data() != nullptr,
+          "warp trace requires materialized CPU storage");
+    const auto path = directory / ("frame_" + std::to_string(frame_index) + suffix);
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    Check(file.good(), "cannot open warp trace output: " + path.string());
+    file.write(static_cast<const char*>(view.data()), static_cast<std::streamsize>(view.bytes()));
+    Check(file.good(), "cannot write warp trace output: " + path.string());
+  };
+  dump(".feature.fp16", state->feature, state->feature_handle);
+  dump(".reset_frame.fp16", state->frame, state->frame_handle);
 }
 
 void UpdateReferenceFeature(const RunOutput& output, ReferenceState* state,

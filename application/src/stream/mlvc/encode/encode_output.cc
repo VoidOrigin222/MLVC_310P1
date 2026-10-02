@@ -70,7 +70,9 @@ void EncodeOutput::Flush(PendingEncodedFrame pending) {
   payload_bytes_ += payload.size();
   rate_controller_.Update(static_cast<double>(pending.frame_index) / fps_, pending.frame_type,
                           pending.q_index, payload.size(),
-                          mlvc::io::kMlvcBitstreamFrameOverheadBytes);
+                          mlvc::io::kMlvcBitstreamFrameOverheadBytes +
+                              (pending.metadata.translation_warp &&
+                               pending.frame_type != MlvcFrameType::kIFrame ? 2 : 0));
 }
 
 void EncodeOutput::Close() {

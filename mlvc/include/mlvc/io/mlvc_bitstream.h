@@ -35,6 +35,7 @@ struct MlvcBitstreamHeader {
   int coded_width = 0;
   int coded_height = 0;
   std::array<uint8_t, 32> codec_bundle_sha256{};
+  bool translation_warp = false;
 };
 
 struct ForcedLtrFrames {
@@ -49,6 +50,9 @@ struct MlvcFrameMetadata {
   uint32_t short_ref_frame_id = mlvc::transport::kMlvcNoReference;
   uint32_t long_ref_frame_id = mlvc::transport::kMlvcNoReference;
   int64_t pts = 0;
+  bool translation_warp = false;
+  int8_t kx = 0;
+  int8_t ky = 0;
 };
 
 void ValidateMlvcBitstreamHeader(const MlvcBitstreamHeader& header);

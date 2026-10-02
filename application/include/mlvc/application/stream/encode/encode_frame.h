@@ -11,6 +11,8 @@
 #include <mlvc/framework/entropy_worker.h>
 #include <mlvc/framework/profiler.h>
 #include <mlvc/runtime/stage_runtime.h>
+#include <mlvc/motion/translation_estimator.h>
+#include <mlvc/motion/dvpp_translation_estimator.h>
 
 #include <cstddef>
 #include <future>
@@ -33,10 +35,13 @@ class EncodeFrameProcessor {
                        mlvc::EntropyWorker* entropy_worker, EncodeState* state,
                        MlvcRateController* rate_controller,
                        mlvc::MlvcOfficialEntropyEncoder* entropy_encoder,
-                       EncodeDimensions dimensions, double fps);
+                       EncodeDimensions dimensions, double fps, SourceFrameGeometry geometry,
+                       aclrtContext context);
 
   PendingEncodedFrame Process(const std::shared_ptr<mlvc::DataObject>& data,
                               int expected_frame_index);
+  void ValidateMotionFrameCount(int frames) const;
+  std::size_t motion_nonzero_frames() const { return motion_nonzero_frames_; }
 
  private:
   const EncodeStreamOptions& options_;
@@ -49,6 +54,10 @@ class EncodeFrameProcessor {
   mlvc::MlvcOfficialEntropyEncoder* entropy_encoder_ = nullptr;
   EncodeDimensions dimensions_;
   double fps_ = 30.0;
+  std::unique_ptr<mlvc::motion::TranslationEstimator> motion_estimator_;
+  std::unique_ptr<mlvc::motion::DvppTranslationEstimator> dvpp_motion_estimator_;
+  std::vector<mlvc::motion::Translation> replay_shifts_;
+  std::size_t motion_nonzero_frames_ = 0;
 };
 
 }  // namespace mlvc::codec

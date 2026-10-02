@@ -53,6 +53,7 @@ enum MlvcEfuFlags : uint32_t {
   kEfuDiscardable = 1u << 3,
   kEfuDiscontinuity = 1u << 4,
   kEfuCrcPresent = 1u << 5,
+  kEfuTranslationWarp = 1u << 6,
 };
 
 constexpr uint16_t kMlvcTlvCodecBundleSha256 = 0x8001;
@@ -60,6 +61,10 @@ constexpr uint16_t kMlvcTlvProfileName = 0x0002;
 constexpr uint16_t kMlvcTlvColorimetry = 0x0003;
 constexpr uint16_t kMlvcTlvNominalPolicy = 0x0004;
 constexpr uint16_t kMlvcTlvVendorData = 0x0005;
+// Critical capability; value {1} selects integer translation warp v1.
+constexpr uint16_t kMlvcTlvTranslationWarp = 0x8006;
+constexpr std::size_t kMlvcTranslationWarpScuOverheadBytes = 8;
+constexpr std::size_t kMlvcTranslationWarpPFrameOverheadBytes = 2;
 
 struct MlvcTlv {
   uint16_t type = 0;
@@ -96,6 +101,7 @@ struct MlvcScu {
   std::array<uint8_t, 32> codec_bundle_sha256{};
   uint32_t unit_flags = kScuRequiresRandomAccess | kScuStaticTensorShape;
   std::vector<MlvcTlv> tlvs;
+  bool translation_warp = false;
 };
 
 struct MlvcEfu {
@@ -111,6 +117,8 @@ struct MlvcEfu {
   uint32_t long_ref_frame_id = kMlvcNoReference;
   std::vector<MlvcTlv> tlvs;
   std::vector<uint8_t> entropy_payload;
+  int8_t kx = 0;
+  int8_t ky = 0;
 };
 
 struct MlvcMediaUnit {
@@ -124,6 +132,8 @@ MlvcScu ParseScu(const std::vector<uint8_t>& unit);
 bool MlvcScuDecoderCompatible(const MlvcScu& current, const MlvcScu& next);
 std::vector<uint8_t> SerializeEfu(const MlvcEfu& efu);
 MlvcEfu ParseEfu(const std::vector<uint8_t>& unit);
+// Rejects a missing or unexpected warp flag against the active SCU capability.
+void ValidateEfuTranslationWarp(const MlvcEfu& efu, bool translation_warp);
 std::vector<uint8_t> SerializeEos(uint32_t config_id);
 // RTP EOS carries the exclusive frame boundary so a receiver can wait for
 // completed units that were reordered behind the end marker.
@@ -131,7 +141,7 @@ std::vector<uint8_t> SerializeEos(uint32_t config_id, uint32_t next_frame_id);
 MlvcCommonHeader ParseMediaUnitHeader(const std::vector<uint8_t>& unit);
 void ValidateMediaUnit(const std::vector<uint8_t>& unit);
 
-// CRC-32C (Castagnoli), covering only the EFU entropy payload.
+// CRC-32C (Castagnoli), covering the EFU wire payload, including P geometry.
 uint32_t MlvcCrc32c(const std::vector<uint8_t>& bytes);
 
 }  // namespace mlvc::transport

@@ -19,6 +19,10 @@ struct DvppH264EncoderConfig {
   uint32_t bitrate = 8'000'000;
   uint32_t output_buffer_bytes = 0;
   bool zero_copy_input = false;
+  // Opt-in motion proxy policy. The legacy RTSP path keeps per-frame restart.
+  bool persistent_channel = false;
+  bool single_reference = false;
+  uint32_t channel = 0;
 };
 
 // Synchronous one-frame interface backed by the device MPI VENC API. The

@@ -107,6 +107,23 @@ int main() {
                    "string pipeline worker count");
     expect_invalid("pipeline = 4\n", "non-table pipeline section");
     expect_invalid("target_bitrate = 1000000\n", "misspelled bitrate config key");
+    expect_invalid("motion_backend = \"unknown\"\n", "unknown motion backend");
+    expect_invalid("motion_backend = \"dvpp\"\n", "hardware motion without warp enabled");
+    expect_invalid("translation_warp = true\nmotion_backend = \"dvpp\"\n"
+                   "motion_shifts_file = \"/tmp/shifts.csv\"\n",
+                   "simultaneous hardware motion and CSV replay");
+    expect_invalid("motion_shifts_file = \"/tmp/shifts.csv\"\n",
+                   "CSV replay without warp enabled");
+    {
+      std::ofstream output(config);
+      output << "mode = \"encode\"\ninput_frame_dir = \"/tmp\"\n"
+             << "output = \"/tmp/out.mlvc\"\nmanifest = \"" << manifest.string()
+             << "\"\nframe_num = 10\ntranslation_warp = true\n"
+             << "motion_backend = \"dvpp\"\nltr_period = 0\n";
+    }
+    const auto warp_config = mlvc::LoadEncoderConfig(config);
+    mlvc::Check(warp_config.stream.translation_warp && warp_config.stream.motion_backend == "dvpp",
+                "valid hardware motion configuration was not preserved");
 
     std::cout << "encode config test passed\n";
     return 0;

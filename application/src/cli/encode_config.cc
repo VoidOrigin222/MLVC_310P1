@@ -43,7 +43,8 @@ void ValidateConfigKeys(const toml::table& config) {
                   "camera_preload_frames",
                   "execution_profile", "manifest", "qp", "gop", "reset_interval", "device",
                   "frame_num", "fps", "profile_warmup_frames", "profile_output",
-                  "enable_stage_fusion", "ltr_start_idx", "ltr_period", "ltr_qp_shift",
+                  "enable_stage_fusion", "translation_warp", "motion_shifts_file", "motion_backend",
+                  "ltr_start_idx", "ltr_period", "ltr_qp_shift",
                   "target_bitrate_bps", "min_qp", "max_qp", "forced_ltr_recovery_frame",
                   "forced_ltr_reference_frame", "udp_host", "udp_port",
                   "output_transport_host", "output_transport_mode", "output_transport_port",
@@ -183,6 +184,17 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
         "profile_warmup_frames must be smaller than frame_num");
   options.profile_output_path = GetString(config, "profile_output");
   options.enable_stage_fusion = GetBool(config, "enable_stage_fusion", false);
+  options.translation_warp = GetBool(config, "translation_warp", false);
+  options.motion_shifts_file = GetString(config, "motion_shifts_file");
+  options.motion_backend = GetString(config, "motion_backend", "libx264");
+  Check(options.motion_backend == "libx264" || options.motion_backend == "dvpp",
+        "motion_backend must be libx264 or dvpp");
+  Check(options.translation_warp || options.motion_backend == "libx264",
+        "a non-default motion_backend requires translation warp");
+  Check(options.motion_shifts_file.empty() || options.motion_backend == "libx264",
+        "motion_shifts_file replays saved motion and cannot be combined with motion_backend=dvpp");
+  Check(options.translation_warp || options.motion_shifts_file.empty(),
+        "motion_shifts_file requires translation_warp = true");
   options.execution_profile = execution_profile;
   options.gop = gop;
   options.reset_interval = reset_interval;

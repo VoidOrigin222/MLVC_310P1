@@ -1,0 +1,23 @@
+mode = "encode"
+manifest = "/root/workplace/grifcc/MLVC_310P1/mlvc1080p/manifest_motion_ascend310p1.json"
+input_frame_dir = "/root/workplace/grifcc/MLVC_310P1/testdata/motion/fixture100"
+output = "/root/workplace/grifcc/MLVC_310P1/output/motion.mlvc"
+execution_profile = "pipeline-v1"
+translation_warp = true
+motion_backend = "libx264"
+# Optional Python motion replay: complete, headerless frame_index,kx,ky CSV.
+# motion_shifts_file = "/root/workplace/grifcc/MLVC_310P1/testdata/motion/fixture100/shifts.csv"
+qp = 11
+gop = 96
+reset_interval = 32
+ltr_period = 0
+frame_num = 100
+fps = 30
+device = 0
+
+[pipeline]
+stream_workers = 1
+queue_capacity = 3
+frame_buffer_slots = 3
+entropy_workers = 1
+graph_packet_capacity = 2

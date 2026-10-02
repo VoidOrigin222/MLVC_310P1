@@ -38,6 +38,11 @@ bash scripts/bash_run.sh [configs/decoder.toml]
 编码板原生 1080p V4L2 相机的独立 AIPP 部署、CPU 对照测试和吞吐口径见
 [相机说明](docs/camera_encoder_1080p.md)。
 
+可选平移 warp 的模型边界、GOP/reset 语义、x264 与运动指令重放配置见
+[平移 warp 说明](docs/translation_warp.md)，部署示例为
+[`configs/encoder_motion.toml`](configs/encoder_motion.toml) 和
+[`configs/decoder_motion.toml`](configs/decoder_motion.toml)。
+
 运行脚本会加载 CANN 环境。解码端 `bash_run.sh` 还会自动加载仓库 `output/custom_opp` 下存在的隔离算子包。仓库中的配置是示例；运行前请修改输入帧目录、模型 manifest、设备地址、端口和输出方式。可通过 `MLVC_VECTOR_OPAPI_LIB=/path/to/libcust_opapi.so` 显式覆盖算子库；需要非系统默认 FFmpeg 时，设置 `MLVC_FFMPEG_BIN=/path/to/ffmpeg/bin`。
 
 ## 测试

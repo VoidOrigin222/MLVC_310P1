@@ -17,6 +17,7 @@
 #include <mlvc/codec/mlvc_entropy.h>
 #include <mlvc/codec/mlvc_rate_control.h>
 #include <mlvc/codec/tensor_utils.h>
+#include <mlvc/codec/translation_warp.h>
 #include <mlvc/entropy/entropy_codec.h>
 #include <mlvc/entropy/mlvc_official_entropy.h>
 #include <mlvc/entropy/sidecar.h>
@@ -514,6 +515,12 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
       Check(false, "MLVC stream model bundle hash does not match the local manifest");
     }
     mlvc::io::ValidateMlvcDecoderOutputShape(header, x_hat_spec.shape);
+    if (header.translation_warp) {
+      RequireTranslationWarpModels(models.manifest());
+      Check(header.gop == 96 && header.reset_interval == 32 && header.ltr_period == 0 &&
+                options.forced_ltr_recovery_frame < 0 && options.forced_ltr_reference_frame < 0,
+            "translation warp requires GOP 96, reset 32 and LTR disabled");
+    }
     mlvc::io::ValidateMlvcQIndexForSidecar(header.q_index, sidecar_q_index_count);
     const io::ForcedLtrFrames forced_ltr = io::ResolveForcedLtrFrames(
         header, options.forced_ltr_recovery_frame, options.forced_ltr_reference_frame);
@@ -589,6 +596,8 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
     int expected_udp_frame_index = 0;
     int active_short_reference_frame = -1;
     uint64_t bitstream_bytes = 0;
+    uint64_t geometry_bytes = 0;
+    uint64_t motion_nonzero_frames = 0;
     auto submit_entropy = [&](std::size_t slot, int frame_index, MlvcFrameType frame_type,
                               int q_index, mlvc::io::MlvcFrameMetadata metadata,
                               std::vector<uint8_t> payload) -> std::future<DecodedEntropyFrame> {
@@ -646,6 +655,11 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
           continue;
         }
         bitstream_bytes += next_payload.size();
+        if (header.translation_warp) {
+          Check(next_metadata.translation_warp, "warp stream frame is missing translation metadata");
+          if (next_frame_type != MlvcFrameType::kIFrame) geometry_bytes += 2;
+          if (next_metadata.kx != 0 || next_metadata.ky != 0) ++motion_nonzero_frames;
+        }
         auto packet = std::make_shared<mlvc::app::BitstreamPacket>();
         packet->frame_index = next_frame_index;
         packet->frame_type = next_frame_type;
@@ -684,16 +698,18 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
       const bool is_i_frame = frame_type == MlvcFrameType::kIFrame;
       const bool use_ltr_recovery = frame_type == MlvcFrameType::kLtrRecovery;
       const int gop_cycle_index = header.gop > 0 ? frame_index % header.gop : frame_index;
-      const bool reset_reference = explicit_metadata
+      const bool wire_reset_reference = explicit_metadata
                                        ? (decoded.metadata.unit_flags &
                                           mlvc::transport::kEfuResetReference) != 0
                                        : ShouldResetReferenceFeature(frame_index, header.gop,
                                                                       header.reset_interval);
+      const bool reset_reference = header.translation_warp
+          ? is_i_frame || frame_index % header.reset_interval == 0 : wire_reset_reference;
       if (reset_reference) {
         state.ResetFeature();
-        active_short_reference_frame = -1;
+        if (wire_reset_reference) active_short_reference_frame = -1;
       }
-      if (explicit_metadata && frame_type == MlvcFrameType::kPFrame && !reset_reference) {
+      if (explicit_metadata && frame_type == MlvcFrameType::kPFrame && !wire_reset_reference) {
         Check(active_short_reference_frame >= 0 &&
                   decoded.metadata.short_ref_frame_id ==
                       static_cast<uint32_t>(active_short_reference_frame),
@@ -718,19 +734,30 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
         state.feature = CloneTensor(ltr_it->second);
         state.feature_handle.reset();
       }
+      if (header.translation_warp && reset_reference) {
+        PrepareWarpResetReference(&models, &state, x_hat_spec.shape, is_i_frame, &profiler);
+      }
 
       const int frame_adaptation_index = kIndexMap[(frame_index + 1) % 8];
       const int q_index_shifted = explicit_metadata && decoded.metadata.model_q_index >= 0
                                       ? decoded.metadata.model_q_index
                                       : sidecar.ShiftedQp(q_index, frame_adaptation_index);
       TensorData q_index_shifted_tensor = MakeInt32ScalarTensor(q_index_shifted);
-      const StageInput ref_feature_input = BuildReferenceFeatureInput(state, zero_feature);
+      TensorData warped_reference;
+      const StageInput ref_feature_input = header.translation_warp
+          ? BuildWarpedReferenceFeatureInput(&state, zero_feature, decoded.metadata.kx,
+                                              decoded.metadata.ky, &warped_reference)
+          : BuildReferenceFeatureInput(state, zero_feature);
       RunOutput decoder_output =
           RunStage(&models, "MLVCDecoder",
                    {TensorInput("z_raw", decoded.z_raw), TensorInput("y_raw_0", decoded.y_raw_0),
                     TensorInput("y_raw_1", decoded.y_raw_1), ref_feature_input,
                    TensorInput("q_index_shifted", q_index_shifted_tensor)},
                    &profiler);
+      if (header.translation_warp && (frame_index + 1) % header.reset_interval == 0 &&
+          (frame_index + 1) % header.gop != 0) {
+        SaveWarpResetFrame(decoder_output, &state, &profiler);
+      }
       if (rtsp_publisher.has_value()) {
         mlvc::ScopedCpuTimer timer(&profiler, "rtsp.output_enqueue");
         if (rtsp_acl_nv12) {
@@ -788,6 +815,7 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
         has_ltr_feature = true;
       }
       active_short_reference_frame = frame_index;
+      if (header.translation_warp) TraceWarpReferenceState(frame_index, &state);
       ++decoded_frames;
     };
 
@@ -851,6 +879,18 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
     std::cout << "device_resident_outputs="
               << (use_device_resident_outputs ? "true" : "false") << "\n";
     std::cout << "bitstream_bytes=" << bitstream_bytes << "\n";
+    if (header.translation_warp) {
+      std::cout << "translation_warp=true\n";
+      std::cout << "payload_bytes=" << bitstream_bytes << "\n";
+      std::cout << "geometry_bytes=" << geometry_bytes << "\n";
+      std::cout << "codec_total_bytes=" << bitstream_bytes + geometry_bytes << "\n";
+      std::cout << "motion_nonzero_frames=" << motion_nonzero_frames << "\n";
+      std::cout << "codec_bitrate_bps=" << (decoded_frames > 0 ?
+          static_cast<double>(bitstream_bytes + geometry_bytes) * 8.0 * writer_fps / decoded_frames : 0.0) << "\n";
+      if (!udp_input) {
+        std::cout << "file_total_bytes=" << std::filesystem::file_size(options.input_bitstream_path) << "\n";
+      }
+    }
     std::cout << "drop_frame_index=" << options.drop_frame_index << "\n";
     std::cout << "forced_ltr_reference_frame=" << forced_ltr_reference_frame << "\n";
     std::cout << "forced_ltr_recovery_frame=" << forced_ltr_recovery_frame << "\n";

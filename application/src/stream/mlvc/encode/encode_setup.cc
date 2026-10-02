@@ -8,6 +8,23 @@
 namespace mlvc::codec {
 
 void ValidateEncodeInput(const EncodeStreamOptions& options) {
+  Check(options.motion_backend == "libx264" || options.motion_backend == "dvpp",
+        "motion_backend must be libx264 or dvpp");
+  Check(options.translation_warp || options.motion_backend == "libx264",
+        "a non-default motion_backend requires translation warp");
+  Check(options.motion_shifts_file.empty() || options.motion_backend == "libx264",
+        "motion_shifts_file replays saved motion and cannot be combined with motion_backend=dvpp");
+  Check(options.translation_warp || options.motion_shifts_file.empty(),
+        "motion_shifts_file requires translation warp");
+  if (options.translation_warp) {
+    Check(options.gop == 96 && options.reset_interval == 32,
+          "translation warp currently requires GOP 96 and reset interval 32");
+    Check(options.ltr_period == 0 && options.forced_ltr_recovery_frame < 0 &&
+              options.forced_ltr_reference_frame < 0,
+          "translation warp requires LTR disabled because proxy motion uses the previous frame");
+    Check(options.output_transport_port == 0 || options.output_transport_mode == "rtp",
+          "translation warp requires MLVC-ES files or RTP transport");
+  }
   Check(mlvc::codec::IsCodecExecutionProfile(options.execution_profile),
         "unsupported codec execution profile: " + options.execution_profile);
   Check(!options.manifest_path.empty(), "encode stream requires a manifest path");
@@ -46,6 +63,7 @@ mlvc::io::MlvcBitstreamHeader BuildEncodeHeader(const EncodeStreamOptions& optio
   header.q_index = options.qp;
   header.gop = options.gop;
   header.reset_interval = options.reset_interval;
+  header.translation_warp = options.translation_warp;
   header.ltr_start_idx = options.ltr_start_idx;
   header.ltr_period = options.ltr_period;
   header.ltr_qp_shift = options.ltr_qp_shift;

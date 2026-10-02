@@ -37,6 +37,7 @@ class EncodeState {
                          const RunOutput& output, mlvc::Profiler* profiler);
 
   const ReferenceState& reference() const { return reference_; }
+  ReferenceState& reference() { return reference_; }
   const TensorData& zero_feature() const { return zero_feature_; }
   int current_ltr_reference_frame() const { return current_ltr_reference_frame_; }
 
