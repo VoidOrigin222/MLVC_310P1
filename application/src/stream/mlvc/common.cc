@@ -165,10 +165,10 @@ StageInput BuildWarpedReferenceFeatureInput(ReferenceState* state, const TensorD
   if (kx == 0 && ky == 0) return BuildReferenceFeatureInput(*state, zero_feature);
   if (state->feature_handle.has_value()) {
     state->feature_handle->MaterializeToCpu("translation_warp.reference", g_acl_user_compute_stream);
-    *scratch = ShiftTensorPreserveBoundary(state->feature_handle->CpuView(), kx, ky);
+    ShiftTensorPreserveBoundaryInto(state->feature_handle->CpuView(), kx, ky, scratch);
   } else {
-    *scratch = ShiftTensorPreserveBoundary(state->feature.has_value() ? *state->feature : zero_feature,
-                                          kx, ky);
+    ShiftTensorPreserveBoundaryInto(state->feature.has_value() ? *state->feature : zero_feature,
+                                    kx, ky, scratch);
   }
   return TensorInput("ref_feature", *scratch);
 }

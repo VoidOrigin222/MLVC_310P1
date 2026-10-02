@@ -81,7 +81,20 @@ class DvppH264Encoder::Impl {
 
   std::vector<std::uint8_t> EncodeDevice(const void* nv12_device, std::size_t bytes,
                                          aclrtEvent ready_event, bool force_keyframe) {
-    Check(nv12_device != nullptr, "DVPP H.264 input must not be null");
+    return EncodeInput(nv12_device, bytes, ready_event, force_keyframe, false);
+  }
+
+  std::vector<std::uint8_t> EncodeHostNv12(const void* nv12_host, std::size_t bytes,
+                                         bool force_keyframe) {
+    Check(!config_.zero_copy_input, "DVPP host upload requires owned input slots");
+    return EncodeInput(nv12_host, bytes, nullptr, force_keyframe, true);
+  }
+
+ private:
+  std::vector<std::uint8_t> EncodeInput(const void* input, std::size_t bytes,
+                                      aclrtEvent ready_event, bool force_keyframe,
+                                      bool host_input) {
+    Check(input != nullptr, "DVPP H.264 input must not be null");
     Check(bytes == input_bytes_, "DVPP H.264 input NV12 size mismatch");
     // CANN 9.1 on the 310P1 rejects the second submission when this channel
     // remains alive (HI_ERR_VENC_ILLEGAL_PARAM); keep the validated workaround
@@ -92,15 +105,16 @@ class DvppH264Encoder::Impl {
       CheckAcl(aclrtSynchronizeEvent(ready_event), "aclrtSynchronizeEvent MPI VENC input");
     }
     input_buffer_ = config_.zero_copy_input
-                        ? const_cast<void*>(nv12_device)
+                        ? const_cast<void*>(input)
                         : input_buffers_[frame_index_ % input_buffers_.size()];
     // Keep the public frame metadata fresh for each MPI submission. Some vendor
     // runtimes update bookkeeping in the frame descriptor despite its const API.
     ConfigureFrame();
     if (!config_.zero_copy_input) {
-      CheckAcl(aclrtMemcpy(input_buffer_, input_bytes_, nv12_device, input_bytes_,
-                           ACL_MEMCPY_DEVICE_TO_DEVICE),
-               "aclrtMemcpy NV12 to MPI VENC input");
+      CheckAcl(aclrtMemcpy(input_buffer_, input_bytes_, input, input_bytes_,
+                           host_input ? ACL_MEMCPY_HOST_TO_DEVICE : ACL_MEMCPY_DEVICE_TO_DEVICE),
+               host_input ? "upload host NV12 to MPI VENC input"
+                          : "aclrtMemcpy NV12 to MPI VENC input");
     }
 
     // The opt-in persistent proxy uses increasing microsecond timestamps and
@@ -295,6 +309,12 @@ DvppH264Encoder::DvppH264Encoder(aclrtContext context, DvppH264EncoderConfig con
     : impl_(std::make_unique<Impl>(context, std::move(config))) {}
 
 DvppH264Encoder::~DvppH264Encoder() = default;
+
+std::vector<std::uint8_t> DvppH264Encoder::EncodeHostNv12(const void* nv12_host,
+                                                       std::size_t bytes,
+                                                       bool force_keyframe) {
+  return impl_->EncodeHostNv12(nv12_host, bytes, force_keyframe);
+}
 
 std::vector<std::uint8_t> DvppH264Encoder::EncodeDevice(const void* nv12_device,
                                                         std::size_t bytes,

@@ -8,6 +8,23 @@
 namespace mlvc::codec {
 
 void ValidateEncodeInput(const EncodeStreamOptions& options) {
+  Check(!options.motion_skip_loop_filter ||
+            (options.translation_warp && options.motion_shifts_file.empty()),
+        "motion_skip_loop_filter requires online translation warp");
+  Check(options.motion_x264_preset == "medium" || options.motion_x264_preset == "veryfast" ||
+            options.motion_x264_preset == "superfast" || options.motion_x264_preset == "ultrafast",
+        "motion_x264_preset must be medium, veryfast, superfast, or ultrafast");
+  Check(options.motion_x264_threads >= 1 && options.motion_x264_threads <= 16,
+        "motion_x264_threads must be in [1, 16]");
+  Check((options.motion_x264_preset == "medium" && options.motion_x264_threads == 1) ||
+            (options.translation_warp && options.motion_backend == "libx264" &&
+             options.motion_shifts_file.empty()),
+        "non-default x264 settings require online libx264 translation warp");
+
+  Check(options.motion_prefetch_frames >= 0 && options.motion_prefetch_frames <= 2,
+        "motion_prefetch_frames must be 0, 1, or 2");
+  Check(options.motion_prefetch_frames == 0 || options.translation_warp,
+        "motion prefetch requires translation warp");
   Check(options.motion_backend == "libx264" || options.motion_backend == "dvpp",
         "motion_backend must be libx264 or dvpp");
   Check(options.translation_warp || options.motion_backend == "libx264",

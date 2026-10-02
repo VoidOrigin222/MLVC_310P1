@@ -14,9 +14,11 @@
 #include <mlvc/motion/translation_estimator.h>
 #include <mlvc/motion/dvpp_translation_estimator.h>
 
+#include <condition_variable>
 #include <cstddef>
 #include <future>
 #include <memory>
+#include <mutex>
 
 namespace mlvc::codec {
 
@@ -38,12 +40,19 @@ class EncodeFrameProcessor {
                        EncodeDimensions dimensions, double fps, SourceFrameGeometry geometry,
                        aclrtContext context);
 
+  ~EncodeFrameProcessor();
+
   PendingEncodedFrame Process(const std::shared_ptr<mlvc::DataObject>& data,
                               int expected_frame_index);
   void ValidateMotionFrameCount(int frames) const;
+  void PrepareMotion(const std::shared_ptr<mlvc::DataObject>& data);
+  const LatencyStats& motion_work() const { return motion_work_; }
+  const LatencyStats& ready_to_motion() const { return ready_to_motion_; }
+  const LatencyStats& ready_to_encode() const { return ready_to_encode_; }
   std::size_t motion_nonzero_frames() const { return motion_nonzero_frames_; }
 
  private:
+  mlvc::motion::Translation EstimateMotion(const mlvc::app::InputFrame& frame, bool random_access);
   const EncodeStreamOptions& options_;
   mlvc::StageModelSet* models_ = nullptr;
   const mlvc::RuntimeSidecar* sidecar_ = nullptr;
@@ -58,6 +67,24 @@ class EncodeFrameProcessor {
   std::unique_ptr<mlvc::motion::DvppTranslationEstimator> dvpp_motion_estimator_;
   std::vector<mlvc::motion::Translation> replay_shifts_;
   std::size_t motion_nonzero_frames_ = 0;
+  aclrtContext context_ = nullptr;
+  mlvc::io::Nv12Layout motion_layout_;
+  int next_motion_frame_ = 0;
+  struct EntropyTasks {
+    std::mutex mutex;
+    std::condition_variable condition;
+    std::size_t active = 0;
+    void Complete() {
+      std::lock_guard<std::mutex> lock(mutex);
+      --active;
+      condition.notify_all();
+    }
+  };
+  EntropyTasks entropy_tasks_;
+  TensorData warped_reference_;
+  LatencyStats motion_work_;
+  LatencyStats ready_to_motion_;
+  LatencyStats ready_to_encode_;
 };
 
 }  // namespace mlvc::codec

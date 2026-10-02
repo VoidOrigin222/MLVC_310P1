@@ -28,7 +28,8 @@ EncodeFrameProcessor::EncodeFrameProcessor(
       rate_controller_(rate_controller),
       entropy_encoder_(entropy_encoder),
       dimensions_(dimensions),
-      fps_(fps) {
+      fps_(fps), context_(context),
+      motion_layout_{geometry.width, geometry.height, geometry.width, geometry.height} {
   Check(models_ != nullptr && sidecar_ != nullptr && profiler_ != nullptr &&
             entropy_worker_ != nullptr && state_ != nullptr && rate_controller_ != nullptr &&
             entropy_encoder_ != nullptr,
@@ -68,17 +69,73 @@ EncodeFrameProcessor::EncodeFrameProcessor(
         config.fps = static_cast<uint32_t>(std::llround(fps_));
         config.gop = static_cast<uint32_t>(options_.gop);
         config.bitrate = 8'000'000;
-        dvpp_motion_estimator_ = std::make_unique<mlvc::motion::DvppTranslationEstimator>(context, config);
+        dvpp_motion_estimator_ = std::make_unique<mlvc::motion::DvppTranslationEstimator>(
+            context, config, options_.motion_skip_loop_filter);
       } else {
-        motion_estimator_ = std::make_unique<mlvc::motion::TranslationEstimator>(
-          mlvc::motion::TranslationEstimatorConfig{geometry.width, geometry.height,
-                                                  static_cast<int>(std::llround(fps_)), options_.gop});
+        mlvc::motion::TranslationEstimatorConfig config;
+        config.width = geometry.width;
+        config.height = geometry.height;
+        config.fps = static_cast<int>(std::llround(fps_));
+        config.gop = options_.gop;
+        config.preset = options_.motion_x264_preset;
+        config.threads = options_.motion_x264_threads;
+        config.skip_loop_filter = options_.motion_skip_loop_filter;
+        motion_estimator_ = std::make_unique<mlvc::motion::TranslationEstimator>(config);
       }
     }
   }
 }
 
+EncodeFrameProcessor::~EncodeFrameProcessor() {
+  // Failed consumers can leave entropy futures unretired. Their tasks capture
+  // this processor and must finish before its state/dependencies are destroyed.
+  std::unique_lock<std::mutex> lock(entropy_tasks_.mutex);
+  entropy_tasks_.condition.wait(lock, [this] { return entropy_tasks_.active == 0; });
+}
+
+mlvc::motion::Translation EncodeFrameProcessor::EstimateMotion(
+    const mlvc::app::InputFrame& frame, bool random_access) {
+  Check(frame.frame_index == next_motion_frame_, "motion frames must be sequential");
+  const auto begin = std::chrono::steady_clock::now();
+  if (frame.ready_at != std::chrono::steady_clock::time_point{})
+    ready_to_motion_.Add(std::chrono::duration<double, std::milli>(begin - frame.ready_at).count());
+  mlvc::motion::Translation result;
+  if (dvpp_motion_estimator_) {
+    if (frame.motion_nv12)
+      result = dvpp_motion_estimator_->EstimateNv12Host(frame.motion_nv12->data(),
+          frame.motion_nv12->size(), frame.frame_index, random_access);
+    else
+      result = dvpp_motion_estimator_->Estimate(*frame.frame, frame.frame_index, random_access);
+  }
+  else if (motion_estimator_) {
+    if (frame.motion_nv12)
+      result = motion_estimator_->EstimateNv12(frame.motion_nv12->data(),
+          frame.motion_nv12->size(), motion_layout_, frame.frame_index, random_access);
+    else
+      result = motion_estimator_->Estimate(*frame.frame, frame.frame_index, random_access);
+  }
+  else {
+    Check(static_cast<std::size_t>(frame.frame_index) < replay_shifts_.size(),
+          "motion_shifts_file ended before the input video");
+    result = replay_shifts_[frame.frame_index];
+  }
+  motion_work_.Add(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count());
+  ++next_motion_frame_;
+  return result;
+}
+
+void EncodeFrameProcessor::PrepareMotion(const std::shared_ptr<mlvc::DataObject>& data) {
+  auto packet = std::dynamic_pointer_cast<mlvc::app::PreparedFramePacket>(data);
+  Check(packet && packet->frame().frame, "motion worker received an empty frame");
+  if (next_motion_frame_ == 0)
+    Check(aclrtSetCurrentContext(context_) == ACL_SUCCESS, "motion worker cannot set ACL context");
+  packet->motion = EstimateMotion(packet->frame(), packet->frame().frame_index % options_.gop == 0);
+  packet->motion_ready_at = std::chrono::steady_clock::now();
+}
+
 void EncodeFrameProcessor::ValidateMotionFrameCount(int frames) const {
+  if (options_.translation_warp)
+    Check(next_motion_frame_ == frames, "motion frame count differs from encoded frame count");
   if (!options_.motion_shifts_file.empty())
     Check(replay_shifts_.size() == static_cast<std::size_t>(frames),
           "motion_shifts_file has unused rows because the input ended early");
@@ -100,14 +157,11 @@ PendingEncodedFrame EncodeFrameProcessor::Process(const std::shared_ptr<mlvc::Da
   }
   mlvc::motion::Translation translation;
   if (options_.translation_warp) {
-    if (dvpp_motion_estimator_) {
-      translation = dvpp_motion_estimator_->Estimate(*prepared_frame.frame, frame_index, decision.is_i_frame);
-    } else if (motion_estimator_) {
-      translation = motion_estimator_->Estimate(*prepared_frame.frame, frame_index, decision.is_i_frame);
+    if (options_.motion_prefetch_frames > 0) {
+      Check(packet->motion.has_value(), "motion prefetch returned a frame without motion");
+      translation = *packet->motion;
     } else {
-      Check(static_cast<std::size_t>(frame_index) < replay_shifts_.size(),
-            "motion_shifts_file ended before the input video");
-      translation = replay_shifts_[frame_index];
+      translation = EstimateMotion(prepared_frame, decision.is_i_frame);
     }
     if (decision.is_i_frame) translation.kx = translation.ky = 0;
     if (translation.kx != 0 || translation.ky != 0) ++motion_nonzero_frames_;
@@ -124,10 +178,9 @@ PendingEncodedFrame EncodeFrameProcessor::Process(const std::shared_ptr<mlvc::Da
       std::clamp(state_->EffectiveQIndex(frame_q_index), options_.min_qp, options_.max_qp);
   const int q_index_shifted = sidecar_->ShiftedQp(controlled_q_index, frame_adaptation_index);
   TensorData q_index_shifted_tensor = MakeInt32ScalarTensor(q_index_shifted);
-  TensorData warped_reference;
   const StageInput ref_feature_input = options_.translation_warp
       ? BuildWarpedReferenceFeatureInput(&state_->reference(), state_->zero_feature(),
-                                          translation.kx, translation.ky, &warped_reference)
+                                          translation.kx, translation.ky, &warped_reference_)
       : BuildReferenceFeatureInput(state_->reference(), state_->zero_feature());
   RunOutput encoder_output = RunStage(models_, "MLVCEncoder",
                                       {TensorInput("x", *prepared_frame.frame), ref_feature_input,
@@ -150,8 +203,18 @@ PendingEncodedFrame EncodeFrameProcessor::Process(const std::shared_ptr<mlvc::Da
   const TensorData encoder_z_raw = CloneTensor(encoder_output.At("z_raw"));
   const TensorData encoder_y_raw_0 = CloneTensor(encoder_output.At("y_raw_0"));
   const TensorData encoder_y_raw_1 = CloneTensor(encoder_output.At("y_raw_1"));
-  std::future<std::vector<uint8_t>> entropy_future = entropy_worker_->Submit(
+  {
+    std::lock_guard<std::mutex> lock(entropy_tasks_.mutex);
+    ++entropy_tasks_.active;
+  }
+  std::future<std::vector<uint8_t>> entropy_future;
+  try {
+    entropy_future = entropy_worker_->Submit(
       [this, encoder_z_raw, encoder_y_raw_0, encoder_y_raw_1, controlled_q_index]() mutable {
+        struct Completion {
+          EntropyTasks* tasks;
+          ~Completion() { tasks->Complete(); }
+        } completion{&entropy_tasks_};
         mlvc::ScopedCpuTimer timer(profiler_, "entropy.rans_encode");
         std::vector<int8_t> z_symbols;
         std::vector<int8_t> y_symbols_0;
@@ -172,6 +235,10 @@ PendingEncodedFrame EncodeFrameProcessor::Process(const std::shared_ptr<mlvc::Da
             dimensions_.z_height, dimensions_.z_width, &result);
         return result;
       });
+  } catch (...) {
+    entropy_tasks_.Complete();
+    throw;
+  }
 
   state_->UpdateAfterEncode(frame_index, decision, encoder_output, profiler_);
   if (options_.translation_warp) TraceWarpReferenceState(frame_index, &state_->reference());
@@ -201,9 +268,13 @@ PendingEncodedFrame EncodeFrameProcessor::Process(const std::shared_ptr<mlvc::Da
   if (decision.reset_reference && (!options_.translation_warp || decision.is_i_frame))
     metadata.unit_flags |= mlvc::transport::kEfuResetReference;
   if (decision.mark_as_ltr) metadata.unit_flags |= mlvc::transport::kEfuStoreAsLtr;
+  const auto ready_at = prepared_frame.ready_at;
+  if (ready_at != std::chrono::steady_clock::time_point{})
+    ready_to_encode_.Add(std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - ready_at).count());
   packet->Release();
   return PendingEncodedFrame{frame_index, frame_type, controlled_q_index, metadata,
-                             std::move(entropy_future)};
+                             std::move(entropy_future), ready_at};
 }
 
 }  // namespace mlvc::codec

@@ -4,27 +4,63 @@
 
 #include <algorithm>
 #include <cstring>
+#include <cstdint>
 #include <limits>
 
 namespace mlvc::codec {
 
-TensorData ShiftTensorPreserveBoundary(const mlvc::TensorView& source, int kx, int ky) {
+namespace {
+
+bool Overlaps(const void* a, std::size_t a_bytes, const void* b, std::size_t b_bytes) {
+  if (a_bytes == 0 || b_bytes == 0) return false;
+  const auto a_address = reinterpret_cast<uintptr_t>(a);
+  const auto b_address = reinterpret_cast<uintptr_t>(b);
+  return a_address <= b_address ? b_address - a_address < a_bytes
+                                : a_address - b_address < b_bytes;
+}
+
+}  // namespace
+
+void ShiftTensorPreserveBoundaryInto(const mlvc::TensorView& source, int kx, int ky,
+                                    TensorData* output) {
+  Check(output != nullptr, "translation warp output is required");
   Check(source.location() == mlvc::MemoryLocation::kCpu,
         "translation warp requires an explicitly materialized CPU tensor");
-  const auto& dims = source.shape().dims();
+  // A borrowed source view may refer to output->shape itself.
+  const auto dims = source.shape().dims();
   Check(dims.size() >= 2, "translation warp requires at least two spatial dimensions");
-  for (const int64_t dim : dims) Check(dim > 0, "translation warp requires positive dimensions");
+  const auto dtype = source.dtype();
+  const std::size_t element_size = mlvc::ElementSize(dtype);
+  std::size_t byte_count = element_size;
+  for (const int64_t dim : dims) {
+    Check(dim > 0, "translation warp requires positive dimensions");
+    Check(static_cast<uint64_t>(dim) <= std::numeric_limits<std::size_t>::max() / byte_count,
+          "translation warp tensor byte count overflows");
+    byte_count *= static_cast<std::size_t>(dim);
+  }
   const int64_t height = dims[dims.size() - 2];
   const int64_t width = dims.back();
   Check(static_cast<int64_t>(kx) > -width && static_cast<int64_t>(kx) < width &&
             static_cast<int64_t>(ky) > -height && static_cast<int64_t>(ky) < height,
         "feature shift exceeds feature shape");
   Check(source.data() != nullptr, "translation warp requires nonempty tensor storage");
-  TensorData result = MakeTensor(dims, source.dtype());
   const auto* input = static_cast<const uint8_t*>(source.data());
-  std::memcpy(result.bytes.data(), input, result.bytes.size());
-  if (kx == 0 && ky == 0) return result;
-  const std::size_t element_size = mlvc::ElementSize(source.dtype());
+  std::vector<uint8_t> snapshot;
+  if (Overlaps(input, byte_count, output->bytes.data(), output->bytes.capacity())) {
+    snapshot.assign(input, input + byte_count);
+    input = snapshot.data();
+  }
+  // Detaching an external output lease must not release a borrowed source.
+  const auto source_lifetime = output->external_owner;
+  output->ClearExternalBuffer();
+  if (output->shape.dims() != dims) output->shape = mlvc::TensorShape(dims);
+  output->dtype = dtype;
+  output->bytes.resize(byte_count);
+  auto* destination = output->bytes.data();
+  if (kx == 0 && ky == 0) {
+    std::memcpy(destination, input, byte_count);
+    return;
+  }
   const std::size_t row_bytes = static_cast<std::size_t>(width) * element_size;
   const std::size_t plane_bytes = static_cast<std::size_t>(height) * row_bytes;
   const int64_t src_x = std::max<int64_t>(-static_cast<int64_t>(kx), 0);
@@ -33,23 +69,58 @@ TensorData ShiftTensorPreserveBoundary(const mlvc::TensorView& source, int kx, i
   const int64_t dst_y = std::max<int64_t>(ky, 0);
   const int64_t copy_width = width - std::max<int64_t>(kx, -static_cast<int64_t>(kx));
   const int64_t copy_height = height - std::max<int64_t>(ky, -static_cast<int64_t>(ky));
-  for (std::size_t plane = 0; plane < result.bytes.size() / plane_bytes; ++plane) {
+  const std::size_t left_bytes = static_cast<std::size_t>(dst_x) * element_size;
+  const std::size_t shifted_bytes = static_cast<std::size_t>(copy_width) * element_size;
+  const std::size_t right_bytes = row_bytes - left_bytes - shifted_bytes;
+  const std::size_t top_bytes = static_cast<std::size_t>(dst_y) * row_bytes;
+  const std::size_t middle_bytes = static_cast<std::size_t>(copy_height) * row_bytes;
+  const std::size_t bottom_offset = top_bytes + middle_bytes;
+  for (std::size_t plane = 0; plane < byte_count / plane_bytes; ++plane) {
+    const auto* plane_input = input + plane * plane_bytes;
+    auto* plane_output = destination + plane * plane_bytes;
+    if (top_bytes != 0) std::memcpy(plane_output, plane_input, top_bytes);
+    if (bottom_offset < plane_bytes) {
+      std::memcpy(plane_output + bottom_offset, plane_input + bottom_offset,
+                  plane_bytes - bottom_offset);
+    }
+    // Pure vertical shifts form one contiguous rectangle per plane.
+    if (kx == 0) {
+      std::memcpy(plane_output + top_bytes,
+                  plane_input + static_cast<std::size_t>(src_y) * row_bytes, middle_bytes);
+      continue;
+    }
     for (int64_t y = 0; y < copy_height; ++y) {
-      const std::size_t src = plane * plane_bytes + static_cast<std::size_t>(src_y + y) * row_bytes +
-                              static_cast<std::size_t>(src_x) * element_size;
-      const std::size_t dst = plane * plane_bytes + static_cast<std::size_t>(dst_y + y) * row_bytes +
-                              static_cast<std::size_t>(dst_x) * element_size;
-      std::memcpy(result.bytes.data() + dst, input + src,
-                  static_cast<std::size_t>(copy_width) * element_size);
+      const std::size_t destination_row = static_cast<std::size_t>(dst_y + y) * row_bytes;
+      auto* row_output = plane_output + destination_row;
+      const auto* original_row = plane_input + destination_row;
+      const auto* shifted_row = plane_input + static_cast<std::size_t>(src_y + y) * row_bytes;
+      if (left_bytes != 0) std::memcpy(row_output, original_row, left_bytes);
+      std::memcpy(row_output + left_bytes,
+                  shifted_row + static_cast<std::size_t>(src_x) * element_size, shifted_bytes);
+      if (right_bytes != 0) {
+        const std::size_t right_offset = left_bytes + shifted_bytes;
+        std::memcpy(row_output + right_offset, original_row + right_offset, right_bytes);
+      }
     }
   }
+}
+
+TensorData ShiftTensorPreserveBoundary(const mlvc::TensorView& source, int kx, int ky) {
+  TensorData result;
+  ShiftTensorPreserveBoundaryInto(source, kx, ky, &result);
   return result;
 }
 
-TensorData ShiftTensorPreserveBoundary(const TensorData& source, int kx, int ky) {
+void ShiftTensorPreserveBoundaryInto(const TensorData& source, int kx, int ky, TensorData* output) {
   Check(source.ByteSize() == source.shape.NumElements() * mlvc::ElementSize(source.dtype),
         "translation warp tensor byte count does not match shape");
-  return ShiftTensorPreserveBoundary(source.View(), kx, ky);
+  ShiftTensorPreserveBoundaryInto(source.View(), kx, ky, output);
+}
+
+TensorData ShiftTensorPreserveBoundary(const TensorData& source, int kx, int ky) {
+  TensorData result;
+  ShiftTensorPreserveBoundaryInto(source, kx, ky, &result);
+  return result;
 }
 
 std::pair<TensorData, TensorData> ShiftFeatureAndMemory(const TensorData& feature,

@@ -8,6 +8,7 @@ extern "C" {
 }
 
 #include <cerrno>
+#include <algorithm>
 #include <climits>
 #include <cstring>
 #include <limits>
@@ -51,7 +52,7 @@ struct Packet {
 
 class H264MotionExtractor::Impl {
  public:
-  explicit Impl(int gop) : gop_(gop) {
+  explicit Impl(int gop, bool skip_loop_filter) : gop_(gop), skip_loop_filter_(skip_loop_filter) {
     Require(gop > 0, "motion GOP must be positive");
     const AVCodec* decoder = avcodec_find_decoder(AV_CODEC_ID_H264);
     Require(decoder != nullptr, "FFmpeg software H.264 decoder is unavailable");
@@ -60,11 +61,18 @@ class H264MotionExtractor::Impl {
     context_.value->flags2 |= AV_CODEC_FLAG2_EXPORT_MVS;
     context_.value->thread_count = 1;
     context_.value->thread_type = 0;
+    if (skip_loop_filter_) {
+      context_.value->skip_loop_filter = AVDISCARD_ALL;
+      // Concealment may derive MVs from changed pixels. Reject errors and
+      // corrupt/concealed frames reported by FFmpeg; it cannot detect every
+      // possible damaged bitstream.
+      context_.value->err_recognition |= AV_EF_BITSTREAM | AV_EF_BUFFER | AV_EF_EXPLODE;
+    }
     CheckAv(avcodec_open2(context_.value, decoder, nullptr), "open H.264 MV decoder");
   }
 
   Translation Decode(const uint8_t* data, std::size_t bytes, uint64_t frame_index,
-                     bool random_access) {
+                     bool random_access, std::vector<MotionVector>* raw_vectors) {
     Require(frame_index == next_frame_, "motion decoder requires consecutive frames from zero");
     Require(data != nullptr && bytes > 0 && bytes <= static_cast<std::size_t>(INT_MAX),
             "invalid H.264 proxy access unit");
@@ -78,6 +86,11 @@ class H264MotionExtractor::Impl {
     CheckAv(avcodec_send_packet(context_.value, packet_.value), "submit H.264 MV packet");
     av_frame_unref(frame_.value);
     CheckAv(avcodec_receive_frame(context_.value, frame_.value), "receive H.264 MV frame");
+    if (skip_loop_filter_) {
+      Require(frame_.value->decode_error_flags == 0 &&
+                  !(frame_.value->flags & AV_FRAME_FLAG_CORRUPT),
+              "MV-only H.264 decode rejects FFmpeg-reported corrupt or concealed frames");
+    }
     Require(frame_.value->pict_type == (gop_start ? AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_P),
             "proxy must produce fixed-GOP I/P frames; all-I DVPP restart mode is unsuitable");
     Require(context_.value->has_b_frames == 0, "proxy must not use B frames");
@@ -99,11 +112,13 @@ class H264MotionExtractor::Impl {
     const int extra = avcodec_receive_frame(context_.value, frame_.value);
     Require(extra == AVERROR(EAGAIN), "H.264 proxy returned unexpected delayed or extra frames");
     ++next_frame_;
+    if (raw_vectors) *raw_vectors = std::move(vectors);
     return result;
   }
 
  private:
   int gop_;
+  bool skip_loop_filter_;
   uint64_t next_frame_ = 0;
   CodecContext context_;
   Frame frame_;
@@ -111,20 +126,28 @@ class H264MotionExtractor::Impl {
   H264ReferencePolicy reference_policy_;
 };
 
-H264MotionExtractor::H264MotionExtractor(int gop) : impl_(std::make_unique<Impl>(gop)) {}
+H264MotionExtractor::H264MotionExtractor(int gop, bool skip_loop_filter)
+    : impl_(std::make_unique<Impl>(gop, skip_loop_filter)) {}
 H264MotionExtractor::~H264MotionExtractor() = default;
 Translation H264MotionExtractor::Decode(const uint8_t* packet, std::size_t bytes,
-                                        uint64_t frame_index, bool random_access) {
-  return impl_->Decode(packet, bytes, frame_index, random_access);
+                                        uint64_t frame_index, bool random_access,
+                                        std::vector<MotionVector>* raw_vectors) {
+  return impl_->Decode(packet, bytes, frame_index, random_access, raw_vectors);
 }
 
 class TranslationEstimator::Impl {
  public:
-  explicit Impl(TranslationEstimatorConfig config)
-      : config_(config), extractor_(config.gop) {
+  explicit Impl(TranslationEstimatorConfig config, TranslationEstimator::ProxyPacketObserver observer)
+      : config_(config), extractor_(config.gop, config.skip_loop_filter),
+        observer_(std::move(observer)) {
     Require(config.width > 0 && config.height > 0 && config.width % 2 == 0 &&
                 config.height % 2 == 0 && config.fps > 0 && config.gop > 0,
             "invalid libx264 motion proxy dimensions, frame rate or GOP");
+    Require(config.preset == "medium" || config.preset == "veryfast" ||
+                config.preset == "superfast" || config.preset == "ultrafast",
+            "motion libx264 preset must be medium, veryfast, superfast, or ultrafast");
+    Require(config.threads >= 1 && config.threads <= 16,
+            "motion libx264 threads must be in [1, 16]");
     const AVCodec* encoder = avcodec_find_encoder_by_name("libx264");
     Require(encoder != nullptr,
             "FFmpeg libx264 encoder is unavailable; install a libx264-enabled build");
@@ -139,14 +162,16 @@ class TranslationEstimator::Impl {
     context->gop_size = config.gop;
     context->max_b_frames = 0;
     context->refs = 1;
-    context->thread_count = 1;
-    CheckAv(av_opt_set(context->priv_data, "preset", "medium", 0), "set libx264 preset");
+    context->thread_count = config.threads;
+    context->thread_type = FF_THREAD_SLICE;
+    CheckAv(av_opt_set(context->priv_data, "preset", config.preset.c_str(), 0), "set libx264 preset");
     CheckAv(av_opt_set(context->priv_data, "tune", "zerolatency", 0), "set libx264 latency policy");
     CheckAv(av_opt_set(context->priv_data, "crf", "18", 0), "set libx264 CRF");
     CheckAv(av_opt_set(context->priv_data, "forced-idr", "1", 0), "set libx264 forced IDR policy");
     const std::string params = "keyint=" + std::to_string(config.gop) + ":min-keyint=" +
         std::to_string(config.gop) +
-        ":scenecut=0:bframes=0:ref=1:rc-lookahead=0:sync-lookahead=0:mbtree=0:open-gop=0";
+        ":scenecut=0:bframes=0:ref=1:rc-lookahead=0:sync-lookahead=0:mbtree=0:open-gop=0"
+        ":sliced-threads=1:threads=" + std::to_string(config.threads);
     CheckAv(av_opt_set(context->priv_data, "x264-params", params.c_str(), 0),
             "set libx264 GOP policy");
     CheckAv(avcodec_open2(context, encoder, nullptr), "open libx264 motion proxy");
@@ -210,6 +235,30 @@ class TranslationEstimator::Impl {
     CheckAv(avcodec_receive_packet(context_.value, packet_.value), "receive libx264 motion packet");
     Require(packet_.value->pts == static_cast<int64_t>(frame_index),
             "libx264 motion packet frame index mismatch");
+    if (frame_index == 0) {
+      // x264 can cap slice threads for short images. Its encoder-info SEI
+      // records the effective threads/sliced_threads/slices, unlike AVCodecContext
+      // which retains the requested count. Log that actual option text once.
+      const std::string info(reinterpret_cast<const char*>(packet_.value->data),
+                             static_cast<std::size_t>(packet_.value->size));
+      const auto encoder_info = info.find("x264 - core ");
+      const auto options = encoder_info == std::string::npos ? std::string::npos
+                                                           : info.find("options: ", encoder_info);
+      if (options != std::string::npos) {
+        const auto end = info.find('\0', options);
+        const auto length = std::min<std::size_t>(4096,
+            (end == std::string::npos ? info.size() : end) - options);
+        av_log(context_.value, AV_LOG_INFO,
+               "motion_libx264 preset=%s requested_threads=%d actual_%.*s\n",
+               config_.preset.c_str(), config_.threads, static_cast<int>(length),
+               info.data() + options);
+      } else {
+        av_log(context_.value, AV_LOG_WARNING,
+               "motion_libx264 preset=%s requested_threads=%d encoder_info_sei=absent\n",
+               config_.preset.c_str(), config_.threads);
+      }
+    }
+    if (observer_) observer_(packet_.value->data, packet_.value->size, frame_index, random_access);
     Translation result = extractor_.Decode(packet_.value->data, packet_.value->size, frame_index,
                                            random_access);
     av_packet_unref(packet_.value);
@@ -226,11 +275,13 @@ class TranslationEstimator::Impl {
   Frame frame_;
   Packet packet_;
   H264MotionExtractor extractor_;
+  TranslationEstimator::ProxyPacketObserver observer_;
   std::vector<uint8_t> nv12_;
 };
 
-TranslationEstimator::TranslationEstimator(TranslationEstimatorConfig config)
-    : impl_(std::make_unique<Impl>(config)) {}
+TranslationEstimator::TranslationEstimator(TranslationEstimatorConfig config,
+                                            ProxyPacketObserver observer)
+    : impl_(std::make_unique<Impl>(std::move(config), std::move(observer))) {}
 TranslationEstimator::~TranslationEstimator() = default;
 Translation TranslationEstimator::Estimate(const codec::TensorData& input, uint64_t frame_index,
                                             bool random_access) {

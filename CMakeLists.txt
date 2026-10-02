@@ -473,6 +473,15 @@ if(MLVC_BUILD_APPS)
       $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
     )
 
+    add_executable(test_encode_entropy_retirement tools/cpp/tests/test_encode_entropy_retirement.cc)
+    target_link_libraries(test_encode_entropy_retirement PRIVATE mlvc_application)
+    add_test(NAME encode_entropy_retirement COMMAND test_encode_entropy_retirement)
+
+    add_executable(test_motion_prefetch tools/cpp/tests/test_motion_prefetch.cc)
+    target_link_libraries(test_motion_prefetch PRIVATE mlvc_application)
+    add_test(NAME motion_prefetch COMMAND test_motion_prefetch)
+    set_tests_properties(motion_prefetch PROPERTIES TIMEOUT 25)
+
     add_executable(test_ordered_future_window
       tools/cpp/tests/test_ordered_future_window.cc
     )

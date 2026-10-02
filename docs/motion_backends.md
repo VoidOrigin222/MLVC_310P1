@@ -155,8 +155,15 @@ The proxy encoder, decoder, frame, packet, host staging buffer and device upload
 RAII. The upload buffer is reused when dimensions are unchanged. Every VENC packet is copied
 to owned host bytes and the MPI stream is released before software decoding. Any policy or
 codec failure stops the motion operation; there is no fallback to zero vectors or per-frame
-I encoding. A valid P picture containing only intra blocks has no displacement evidence
-and uses zero motion. Configuration/decode errors do not take this path.
+I encoding. The extractor rejects decode errors or damaged frames **reported by FFmpeg**;
+it cannot guarantee detection of arbitrary corruption, truncation, or concealment. Some
+truncated inputs are not reported as errors by FFmpeg. A valid P picture containing only
+intra blocks has no displacement evidence and uses zero motion. Reported configuration or
+decode errors do not take this path.
+
+The optional `motion_skip_loop_filter` path consumes the restricted H.264 proxy produced
+by this process's libx264 or VENC encoder and checked by the reference-policy parser. Its
+decoded pixels are discarded. It does not broaden support to arbitrary external H.264.
 
 The estimator requires consecutive frame indices starting at zero and is owned by one
 encoding stream. It uses an existing ACL context, whose lifetime must exceed the estimator's.

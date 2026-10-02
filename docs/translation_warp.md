@@ -32,8 +32,11 @@ pixel-unshuffle 和 `feature_adaptor_i`，输出完整 96 通道，保留 memory
 
 ## 配置与验证
 
-使用 `configs/encoder_motion.toml` 和 `configs/decoder_motion.toml`，根据设备上的实际
-测试视频和输出路径调整。模型 manifest 必须同时包含两个主 OM 和新增参考帧 adaptor OM。
+当前推荐文件编码配置 `configs/encoder_motion_dvpp_prefetch2.toml`，RTP 编码配置
+`configs/encoder_motion_rtp_prefetch2.toml`，分别配合 `configs/decoder_motion.toml` 和
+`configs/decoder_motion_rtp.toml`。根据设备上的输入帧目录和输出路径调整。
+原 `configs/encoder_motion.toml` 保留在线 libx264 medium/1 串行入口及 CSV 重放示例。
+模型 manifest 必须同时包含两个主 OM 和新增参考帧 adaptor OM。
 配置要求 GOP 96、reset 32、LTR 关闭。支持 MLVC-ES 文件和 RTP，旧 UDP 消息不携带位移。
 当前模式拒绝改变 GOP 或强制 I 帧的控制命令，随机访问请求等待自然 GOP。
 
@@ -132,10 +135,73 @@ bash scripts/bash_run_encode.sh configs/encoder_motion_rtp.toml
 目录应为空或全新，例如分别使用 `output/rtp_encoder_trace` 和
 `output/rtp_decoder_trace`；不得将不同运行的 trace 混合比较。
 本配置已用于 100 帧 DVPP 双机 RTP 验收，结果及资产索引见验收记录。
-关闭 trace 的 DVPP 文件链路最终编码为 16.8469 FPS、解码为 33.4945 FPS；
-RTP trace 启用时编码为 14.7898 FPS、接收解码为 15.4712 FPS，后者包含实时接收等待。
+原串行版本的 100 帧功能验收中，关闭 trace 的 DVPP 文件编码为 16.8469 FPS、
+解码为 33.4945 FPS；RTP trace 启用时编码为 14.7898 FPS、接收解码为 15.4712 FPS，
+后者包含实时接收等待。这些是优化前的历史结果。
 这些结果限定于本次 100 帧样本，不承诺长期稳定 30 FPS。
 
+## 有界预取与运动后端调优
+
+为满足允许延迟 1～2 帧的运行约束，新增实验配置
+`configs/encoder_motion_dvpp_prefetch2.toml`（文件）和
+`configs/encoder_motion_rtp_prefetch2.toml`（RTP）。它们使用
+`motion_prefetch_frames = 2`，单线程按帧序预先计算运动，与主 MLVC 编码重叠。
+该选项的默认值为 0，保留原串行路径；可选值为 0、1、2。
+运动代理的帧间参考状态不能由多个 worker 并发更新。
+帧槽覆盖输入准备、运动队列和正在编码的帧，预取 2 时总共最多持有 3 帧。
+EOF 会排空已接受的帧；运动、输入或消费错误会取消输入等待并保留原始异常。
+“最多两帧预取”是缓冲上限，实际 ready-to-output 时延还包含运动、编码、熵和传输等待，
+不能仅凭帧槽数量认定已满足两帧时间的端到端延迟。
+
+在线预取采用三个阶段：输入线程准备每槽独立的 NV12 缓存，单运动线程按序进行代理
+编码和软件 MV 提取，MLVC 消费线程按序编码。NV12 缓存与源 tensor 共用帧槽 lease，
+完成 MLVC 编码后才复用；camera 的 external owner 也保留至该时刻。
+DVPP 代理将缓存直接 H2D 上传到编码器自有的 DVPP 输入池，省去中间 device-to-device
+拷贝。原 `EncodeDevice` 的 device 输入、ready event 和 opt-in zero-copy 行为保留。
+`ready_at` 在源 tensor 读完、NV12 转换开始前记录，转换时间仍计入时延。
+
+固定 QP 且开启预取时，消费线程在处理帧前后按序回收已经 ready 的熵任务并发送，
+减少已完成码流继续等待后续编码的时间。尚未 ready 的任务不被提前等待；超过原有
+两任务窗口时仍使用原兜底回收。码率控制启用时及默认串行模式保留原回收时序，
+不改变 rate-control 更新和求解顺序。
+
+`motion_x264_preset` 默认为 `medium`，允许 `medium`、`veryfast`、`superfast`、
+`ultrafast`；`motion_x264_threads` 默认为 1，范围 1～16。非默认值只适用于开启 warp 的
+在线 libx264，不能与 DVPP 或 CSV 重放组合。preset 和线程数可能改变代理编码决策和
+运动向量；不能沿用原 medium/1 的逐位一致性结论。
+`configs/encoder_motion_libx264_prefetch2.toml` 使用 ultrafast/8，仅供 A/B 对照，
+后端选择以目标负载上的速度和正确性验收为准。
+
+`motion_skip_loop_filter` 默认为 `false`。设为 `true` 时，仅跳过运动提取用软件 H.264
+解码器的环路滤波；该解码器的像素输出会被丢弃，运动向量继续从公开 side data 提取。
+它不跳过 MLVC 解码、参考更新或输出重构的处理。此开关适用于在线 libx264/DVPP warp，
+与关闭 warp 或 CSV 重放组合会报错。两份 DVPP 预取示例已开启此选项；
+旧配置和默认行为保持不变。
+运动提取器会拒绝引用策略不支持的语法，以及 **FFmpeg 报告的解码错误或损坏帧**。
+它不能保证检测任意损坏、截断或错误掩盖；部分截断输入可能不被 FFmpeg 标记为错误。
+skip 路径处理本机 libx264/VENC 产生且经过引用策略校验的受限 H.264 代理码流，
+不扩大为支持外部任意 H.264 输入。
+
+正式 300 帧文件 A/B 已确认 DVPP 预取 2 达到 30.3582 FPS，同轮 libx264 ultrafast/8
+为 27.2604 FPS，当前推荐 `encoder_motion_dvpp_prefetch2.toml` 文件入口及
+`encoder_motion_rtp_prefetch2.toml` RTP 配置。优化前的原串行验收保留为历史。
+3000 帧重复负载长测排除 96 帧预热后为 30.5254 FPS，三个 900 帧窗口均超过 30 FPS。
+输入是 fixture300 硬链接重复 10 遍，fps metadata 没有限速；文件输出平均时延
+126.930 ms、最大 176.942 ms，未证明总延迟不超过两帧或 camera 持续无掉帧。
+推荐组合的 RTP 100 帧已完成，两板 102 份 trace 全部一致，且与优化前对应 trace 一致。
+该运行开启 trace 写盘，只用于一致性验证。无 trace 双机 RTP 3000 帧发送端为
+30.543 FPS，三个 900 帧窗口均超过 30 FPS，接收端解码并输出全部 3000 帧。
+接收解码 30.5856 FPS 包含等待到达；发送端 source-ready 到 RTP 入队平均 126.813 ms、
+最大 179.052 ms，不是网络或显示时延。本次受控重复文件链路未缺帧，不延伸为 camera
+实测或端到端两帧延迟承诺。
+最新矩阵、同输入码流指纹、重复负载长测及 RTP 验收见
+[吞吐验收记录](../acceptance/motion-throughput-20261002/README.md)。
+本次 A/B 使用无节拍文件输入；即使文件吞吐达到 30 FPS，也不等同于实时时钟下的
+camera 采集、完整网络链路或端到端两帧延迟保证。
+
 完整测试入口为 `ctest --test-dir build --output-on-failure`；已完成运行的两板日志均为
-`/root/workplace/grifcc/final-ctest.log`。新增参考模型的独立数值验证入口是
+`/root/workplace/grifcc/prefetch-validation/tests-final.log`，各 32/32 通过。
+增强 motion proxy 负例复跑日志为同目录 `test-parity-fixed.log`，两板通过。
+原串行版本的日志保留在 `/root/workplace/grifcc/final-ctest.log`。
+新增参考模型的独立数值验证入口是
 `build/check_translation_reference_adaptor --manifest <manifest> --input <input.fp16> --expected <oracle.fp16>`。

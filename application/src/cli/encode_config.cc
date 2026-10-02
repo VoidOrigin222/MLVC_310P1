@@ -43,7 +43,8 @@ void ValidateConfigKeys(const toml::table& config) {
                   "camera_preload_frames",
                   "execution_profile", "manifest", "qp", "gop", "reset_interval", "device",
                   "frame_num", "fps", "profile_warmup_frames", "profile_output",
-                  "enable_stage_fusion", "translation_warp", "motion_shifts_file", "motion_backend",
+                  "enable_stage_fusion", "translation_warp", "motion_shifts_file", "motion_backend", "motion_prefetch_frames",
+                  "motion_x264_preset", "motion_x264_threads", "motion_skip_loop_filter",
                   "ltr_start_idx", "ltr_period", "ltr_qp_shift",
                   "target_bitrate_bps", "min_qp", "max_qp", "forced_ltr_recovery_frame",
                   "forced_ltr_reference_frame", "udp_host", "udp_port",
@@ -187,6 +188,27 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
   options.translation_warp = GetBool(config, "translation_warp", false);
   options.motion_shifts_file = GetString(config, "motion_shifts_file");
   options.motion_backend = GetString(config, "motion_backend", "libx264");
+  options.motion_prefetch_frames = GetInt(config, "motion_prefetch_frames", 0);
+  options.motion_x264_preset = GetString(config, "motion_x264_preset", "medium");
+  options.motion_x264_threads = GetInt(config, "motion_x264_threads", 1);
+  options.motion_skip_loop_filter = GetBool(config, "motion_skip_loop_filter", false);
+  Check(!options.motion_skip_loop_filter ||
+            (options.translation_warp && options.motion_shifts_file.empty()),
+        "motion_skip_loop_filter requires online translation warp");
+  Check(options.motion_x264_preset == "medium" || options.motion_x264_preset == "veryfast" ||
+            options.motion_x264_preset == "superfast" || options.motion_x264_preset == "ultrafast",
+        "motion_x264_preset must be medium, veryfast, superfast, or ultrafast");
+  Check(options.motion_x264_threads >= 1 && options.motion_x264_threads <= 16,
+        "motion_x264_threads must be in [1, 16]");
+  Check((options.motion_x264_preset == "medium" && options.motion_x264_threads == 1) ||
+            (options.translation_warp && options.motion_backend == "libx264" &&
+             options.motion_shifts_file.empty()),
+        "non-default x264 settings require online libx264 translation warp");
+
+  Check(options.motion_prefetch_frames >= 0 && options.motion_prefetch_frames <= 2,
+        "motion_prefetch_frames must be 0, 1, or 2");
+  Check(options.motion_prefetch_frames == 0 || options.translation_warp,
+        "motion prefetch requires translation_warp = true");
   Check(options.motion_backend == "libx264" || options.motion_backend == "dvpp",
         "motion_backend must be libx264 or dvpp");
   Check(options.translation_warp || options.motion_backend == "libx264",

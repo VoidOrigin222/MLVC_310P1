@@ -34,6 +34,7 @@ class EncodeOutput {
 
   MlvcRateController& rate_controller() { return rate_controller_; }
 
+  const LatencyStats& ready_to_output() const { return ready_to_output_; }
   uint64_t payload_bytes() const { return payload_bytes_; }
   uint64_t file_bytes() const;
 
@@ -46,6 +47,7 @@ class EncodeOutput {
   std::optional<mlvc::io::RtpMlvcSender> rtp_sender_;
   MlvcRateController rate_controller_;
   uint64_t payload_bytes_ = 0;
+  LatencyStats ready_to_output_;
   bool closed_ = false;
 };
 

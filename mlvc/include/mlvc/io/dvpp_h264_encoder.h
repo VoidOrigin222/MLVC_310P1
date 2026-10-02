@@ -40,6 +40,10 @@ class DvppH264Encoder {
   std::vector<uint8_t> EncodeDevice(const void* nv12_device, std::size_t bytes,
                                     aclrtEvent ready_event = nullptr,
                                     bool force_keyframe = false);
+  // Upload directly to an owned DVPP input slot, without an intermediate
+  // device copy. Requires zero_copy_input=false so the slots exist.
+  std::vector<uint8_t> EncodeHostNv12(const void* nv12_host, std::size_t bytes,
+                                    bool force_keyframe = false);
 
  private:
   class Impl;

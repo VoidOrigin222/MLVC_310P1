@@ -5,12 +5,14 @@
 #include <mlvc/codec/tensor_data.h>
 #include <mlvc/io/frame_source.h>
 
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <deque>
 #include <exception>
 #include <filesystem>
 #include <future>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -28,12 +30,20 @@ struct InputFrame {
   codec::TensorData* frame = nullptr;
   int slot_index = -1;
   bool eof = false;
+  std::chrono::steady_clock::time_point ready_at{};
+  // Borrowed from the same queue slot; remains valid until Release.
+  const std::vector<uint8_t>* motion_nv12 = nullptr;
 };
 
 class AsyncFrameInputQueue {
  public:
+  using MotionInputPrepareFunction =
+      std::function<void(const codec::TensorData&, std::vector<uint8_t>*)>;
+
   struct Stats {
     double prepare_ms = 0.0;
+    double motion_prepare_ms = 0.0;
+    double motion_prepare_max_ms = 0.0;
     double video_read_ms = 0.0;
     double fp16_read_ms = 0.0;
     double synthetic_read_ms = 0.0;
@@ -49,6 +59,7 @@ class AsyncFrameInputQueue {
     double consumer_empty_wait_ms = 0.0;
     double consumer_empty_wait_max_ms = 0.0;
     std::size_t ready_max_depth = 0;
+    std::size_t max_acquired_frames = 0;
   };
 
   AsyncFrameInputQueue(int frames_to_attempt, int configured_frame_num,
@@ -58,7 +69,8 @@ class AsyncFrameInputQueue {
                        aclrtContext context,
                        const mlvc::TensorSpec& frame_spec, int width, int height,
                        FrameBufferPool* arena, mlvc::Profiler* profiler,
-                       mlvc::CodecGraphExecutor* graph_executor);
+                       mlvc::CodecGraphExecutor* graph_executor,
+                       MotionInputPrepareFunction motion_prepare = {});
 
   AsyncFrameInputQueue(const AsyncFrameInputQueue&) = delete;
   AsyncFrameInputQueue& operator=(const AsyncFrameInputQueue&) = delete;
@@ -66,6 +78,8 @@ class AsyncFrameInputQueue {
   ~AsyncFrameInputQueue();
 
   InputFrame Pop();
+  void Cancel(std::exception_ptr error = nullptr) noexcept;
+  void RethrowIfFailed() const;
   void Release(InputFrame* frame);
   Stats stats() const;
 
@@ -73,6 +87,7 @@ class AsyncFrameInputQueue {
   struct ReadySlot {
     int frame_index = 0;
     int slot_index = -1;
+    std::chrono::steady_clock::time_point ready_at{};
   };
 
   void WorkerMain();
@@ -98,6 +113,8 @@ class AsyncFrameInputQueue {
   std::deque<int> free_slots_;
   std::deque<ReadySlot> ready_slots_;
   std::exception_ptr exception_;
+  MotionInputPrepareFunction motion_prepare_;
+  std::vector<std::vector<uint8_t>> motion_nv12_slots_;
   mlvc::ThreadPool worker_pool_;
   std::future<void> worker_future_;
   int next_frame_to_consume_ = 0;
