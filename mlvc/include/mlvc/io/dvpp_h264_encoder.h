@@ -19,6 +19,10 @@ struct DvppH264EncoderConfig {
   uint32_t bitrate = 8'000'000;
   uint32_t output_buffer_bytes = 0;
   bool zero_copy_input = false;
+  // Opt-in motion proxy policy. The legacy RTSP path keeps per-frame restart.
+  bool persistent_channel = false;
+  bool single_reference = false;
+  uint32_t channel = 0;
 };
 
 // Synchronous one-frame interface backed by the device MPI VENC API. The
@@ -35,6 +39,10 @@ class DvppH264Encoder {
 
   std::vector<uint8_t> EncodeDevice(const void* nv12_device, std::size_t bytes,
                                     aclrtEvent ready_event = nullptr,
+                                    bool force_keyframe = false);
+  // Upload directly to an owned DVPP input slot, without an intermediate
+  // device copy. Requires zero_copy_input=false so the slots exist.
+  std::vector<uint8_t> EncodeHostNv12(const void* nv12_host, std::size_t bytes,
                                     bool force_keyframe = false);
 
  private:

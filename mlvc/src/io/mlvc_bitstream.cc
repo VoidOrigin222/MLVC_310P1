@@ -92,6 +92,13 @@ void ValidateMlvcBitstreamHeaderImpl(const MlvcBitstreamHeader& header) {
         "MLVC bitstream target_bitrate_bps must be finite and non-negative, got " +
             std::to_string(header.target_bitrate_bps));
   Check(header.flags == 0, "MLVC bitstream contains unsupported header flags");
+  if (header.translation_warp) {
+    Check(header.version == 0 || header.version == 4,
+          "translation warp requires MLVC-ES or RTP with SCU capability");
+    Check(header.ltr_period == 0 && header.forced_ltr_recovery_frame == -1 &&
+              header.forced_ltr_reference_frame == -1,
+          "translation warp v1 does not support LTR recovery policy");
+  }
   if (header.version > 0 && header.version < 4) {
     Check(header.forced_ltr_recovery_frame == -1 && header.forced_ltr_reference_frame == -1,
           "MLVC bitstream versions before 4 cannot carry forced LTR metadata");
@@ -145,6 +152,7 @@ int ReadBe32ApplicationValue(const std::vector<uint8_t>& value, std::size_t offs
 
 mlvc::transport::MlvcScu MakeScu(const MlvcBitstreamHeader& header, uint32_t config_id) {
   mlvc::transport::MlvcScu scu;
+  scu.translation_warp = header.translation_warp;
   scu.config_id = config_id;
   scu.codec_bundle_sha256 = header.codec_bundle_sha256;
   scu.coded_width = static_cast<uint32_t>(header.width);
@@ -469,6 +477,11 @@ void MlvcBitstreamWriter::WriteFrame(int frame_index, mlvc::codec::MlvcFrameType
         "MLVC-ES inter frames require explicit reference metadata");
   Check(payload.size() <= max_payload_size_,
         "MLVC frame payload exceeds maximum for configured resolution");
+  const bool warp = mlvc::transport::ParseScu(active_config_unit_).translation_warp;
+  Check(metadata.translation_warp == warp,
+        "MLVC frame warp mode disagrees with stream capability");
+  Check((metadata.unit_flags & mlvc::transport::kEfuTranslationWarp) == 0 || warp,
+        "unexpected MLVC frame warp flag");
   mlvc::transport::MlvcEfu efu;
   efu.config_id = config_id_;
   efu.frame_id = static_cast<uint32_t>(frame_index);
@@ -491,6 +504,9 @@ void MlvcBitstreamWriter::WriteFrame(int frame_index, mlvc::codec::MlvcFrameType
   } else if (frame_type == mlvc::codec::MlvcFrameType::kIFrame) {
     efu.unit_flags |= mlvc::transport::kEfuRandomAccess | mlvc::transport::kEfuResetReference;
   }
+  if (warp) efu.unit_flags |= mlvc::transport::kEfuTranslationWarp;
+  efu.kx = metadata.kx;
+  efu.ky = metadata.ky;
   efu.entropy_payload = payload;
   const auto unit = mlvc::transport::SerializeEfu(efu);
   output_.write(reinterpret_cast<const char*>(unit.data()), static_cast<std::streamsize>(unit.size()));
@@ -562,6 +578,7 @@ MlvcBitstreamReader::MlvcBitstreamReader(const std::filesystem::path& path) : pa
     version_ = 4;
     config_id_ = scu.config_id;
     header_.version = version_;
+    header_.translation_warp = scu.translation_warp;
     header_.width = static_cast<int>(scu.visible_width);
     header_.height = static_cast<int>(scu.visible_height);
     header_.coded_width = static_cast<int>(scu.coded_width);
@@ -637,7 +654,8 @@ bool MlvcBitstreamReader::ReadFrame(int* frame_index, mlvc::codec::MlvcFrameType
     mlvc::transport::MlvcCommonHeader common;
     mlvc::transport::MlvcEfu efu;
     for (;;) {
-      unit = ReadMediaUnit(&input_, max_payload_size_);
+      unit = ReadMediaUnit(&input_, max_payload_size_ +
+                          (header_.translation_warp ? 2u : 0u));
       if (unit.empty()) return false;
       common = mlvc::transport::ParseMediaUnitHeader(unit);
       if (common.unit_type == mlvc::transport::MlvcMediaUnitType::kEos) {
@@ -682,6 +700,7 @@ bool MlvcBitstreamReader::ReadFrame(int* frame_index, mlvc::codec::MlvcFrameType
       break;
     }
     Check(efu.config_id == config_id_, "MLVC-ES EFU references an unknown SCU");
+    mlvc::transport::ValidateEfuTranslationWarp(efu, header_.translation_warp);
     if (pending_config_id_ != 0) {
       Check(efu.config_id == pending_config_id_ && efu.frame_type == 0 &&
                 (efu.unit_flags & (mlvc::transport::kEfuRandomAccess |
@@ -704,6 +723,9 @@ bool MlvcBitstreamReader::ReadFrame(int* frame_index, mlvc::codec::MlvcFrameType
     *q_index = read_q_index;
     *payload = efu.entropy_payload;
     last_frame_metadata_.explicit_metadata = true;
+    last_frame_metadata_.translation_warp = header_.translation_warp;
+    last_frame_metadata_.kx = efu.kx;
+    last_frame_metadata_.ky = efu.ky;
     last_frame_metadata_.model_q_index = efu.model_q_index;
     last_frame_metadata_.unit_flags = efu.unit_flags;
     last_frame_metadata_.short_ref_frame_id = efu.short_ref_frame_id;

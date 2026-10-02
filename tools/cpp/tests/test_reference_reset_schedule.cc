@@ -78,6 +78,25 @@ int main() {
     options.forced_ltr_recovery_frame = 104;
     ExpectReject([&] { state.BeginFrame(104, options); },
                  "forced recovery using an LTR cache cleared at the GOP boundary");
+    mlvc::codec::EncodeStreamOptions warp_options;
+    warp_options.gop = kGop;
+    warp_options.reset_interval = kResetInterval;
+    warp_options.ltr_period = 0;
+    warp_options.translation_warp = true;
+    mlvc::codec::EncodeState warp_state({1});
+    mlvc::codec::EncodeState legacy_state({1});
+    auto legacy_options = warp_options;
+    legacy_options.translation_warp = false;
+    for (int frame = 0; frame < 193; ++frame) {
+      const auto warp = warp_state.BeginFrame(frame, warp_options);
+      const auto legacy = legacy_state.BeginFrame(frame, legacy_options);
+      mlvc::Check(warp.is_i_frame == (frame % kGop == 0), "warp GOP schedule changed");
+      mlvc::Check(warp.reset_reference == (frame % kResetInterval == 0),
+                  "warp must reset from reconstructed frames at 0,32,64,...");
+      mlvc::Check(legacy.reset_reference ==
+                      mlvc::codec::ShouldResetReferenceFeature(frame, kGop, kResetInterval),
+                  "disabling warp changed the legacy reference schedule");
+    }
     std::cout << "reference reset schedule test passed\n";
     return 0;
   } catch (const std::exception& error) {

@@ -27,6 +27,21 @@ void ValidateInput(const codec::TensorData& input, const Nv12Layout& layout,
         "NV12 strides must cover the visible image and be even");
   Check(input.shape.dim(3) >= layout.width && input.shape.dim(2) >= layout.height,
         "FP16 input tensor is smaller than the visible NV12 image");
+  Check(input.shape.dim(2) <= std::numeric_limits<int>::max() &&
+            input.shape.dim(3) <= std::numeric_limits<int>::max(),
+        "FP16 input tensor dimensions exceed converter index range");
+  const auto view = input.View();
+  Check(view.location() == MemoryLocation::kCpu || view.location() == MemoryLocation::kPinnedCpu,
+        "NV12 conversion requires a host FP16 tensor");
+  const auto height = static_cast<std::size_t>(input.shape.dim(2));
+  const auto width = static_cast<std::size_t>(input.shape.dim(3));
+  Check(height <= std::numeric_limits<std::size_t>::max() / width &&
+            height * width <= std::numeric_limits<std::size_t>::max() / (3 * sizeof(uint16_t)),
+        "FP16 input tensor byte count overflows");
+  Check(view.data() != nullptr && input.ByteSize() >= height * width * 3 * sizeof(uint16_t),
+        "FP16 input tensor storage is too short");
+  Check(reinterpret_cast<uintptr_t>(view.data()) % alignof(uint16_t) == 0,
+        "FP16 input tensor storage must be half-word aligned");
 }
 
 uint8_t NormalizedToByte(float value) {
@@ -93,7 +108,7 @@ void ConvertFp16Yuv444ToNv12Scalar(const codec::TensorData& input, const Nv12Lay
   const int input_height = static_cast<int>(input.shape.dim(2));
   const int input_width = static_cast<int>(input.shape.dim(3));
   const std::size_t plane = static_cast<std::size_t>(input_height) * input_width;
-  const auto* source = reinterpret_cast<const uint16_t*>(input.bytes.data());
+  const auto* source = static_cast<const uint16_t*>(input.View().data());
   for (int y = 0; y < layout.height; ++y) {
     for (int x = 0; x < layout.width; ++x) {
       const std::size_t input_offset = static_cast<std::size_t>(y) * input_width + x;
@@ -130,7 +145,7 @@ void ConvertFp16Yuv444ToNv12(const codec::TensorData& input, const Nv12Layout& l
   const int input_height = static_cast<int>(input.shape.dim(2));
   const int input_width = static_cast<int>(input.shape.dim(3));
   const std::size_t plane = static_cast<std::size_t>(input_height) * input_width;
-  const auto* source = reinterpret_cast<const uint16_t*>(input.bytes.data());
+  const auto* source = static_cast<const uint16_t*>(input.View().data());
 
   for (int y = 0; y < layout.height; ++y) {
     int x = 0;

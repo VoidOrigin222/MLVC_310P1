@@ -20,7 +20,6 @@
 namespace mlvc::io {
 namespace {
 
-constexpr hi_venc_chn kVencChannel = 0;
 constexpr std::size_t kVencStreamBufferBytes = 4U * 1024U * 1024U;
 
 void CheckMpi(hi_s32 status, const char* operation) {
@@ -44,6 +43,8 @@ class DvppH264Encoder::Impl {
   Impl(aclrtContext context, DvppH264EncoderConfig config)
       : context_(context), config_(std::move(config)) {
     Check(context_ != nullptr, "DVPP H.264 encoder requires an ACL context");
+    Check(config_.channel < 256, "DVPP H.264 encoder channel must be in [0, 256)");
+    channel_ = static_cast<hi_venc_chn>(config_.channel);
     Check(config_.layout.width > 0 && config_.layout.height > 0 &&
               config_.layout.width % 2 == 0 && config_.layout.height % 2 == 0,
           "DVPP H.264 dimensions must be positive and even");
@@ -80,36 +81,51 @@ class DvppH264Encoder::Impl {
 
   std::vector<std::uint8_t> EncodeDevice(const void* nv12_device, std::size_t bytes,
                                          aclrtEvent ready_event, bool force_keyframe) {
-    Check(nv12_device != nullptr, "DVPP H.264 input must not be null");
+    return EncodeInput(nv12_device, bytes, ready_event, force_keyframe, false);
+  }
+
+  std::vector<std::uint8_t> EncodeHostNv12(const void* nv12_host, std::size_t bytes,
+                                         bool force_keyframe) {
+    Check(!config_.zero_copy_input, "DVPP host upload requires owned input slots");
+    return EncodeInput(nv12_host, bytes, nullptr, force_keyframe, true);
+  }
+
+ private:
+  std::vector<std::uint8_t> EncodeInput(const void* input, std::size_t bytes,
+                                      aclrtEvent ready_event, bool force_keyframe,
+                                      bool host_input) {
+    Check(input != nullptr, "DVPP H.264 input must not be null");
     Check(bytes == input_bytes_, "DVPP H.264 input NV12 size mismatch");
     // CANN 9.1 on the 310P1 rejects the second submission when this channel
     // remains alive (HI_ERR_VENC_ILLEGAL_PARAM); keep the validated workaround
     // until a runtime with persistent-channel support is available.
-    if (frame_index_ > 0) RestartChannel();
+    if (frame_index_ > 0 && !config_.persistent_channel) RestartChannel();
     CheckAcl(aclrtSetCurrentContext(context_), "aclrtSetCurrentContext MPI VENC encode");
     if (ready_event != nullptr) {
       CheckAcl(aclrtSynchronizeEvent(ready_event), "aclrtSynchronizeEvent MPI VENC input");
     }
     input_buffer_ = config_.zero_copy_input
-                        ? const_cast<void*>(nv12_device)
+                        ? const_cast<void*>(input)
                         : input_buffers_[frame_index_ % input_buffers_.size()];
     // Keep the public frame metadata fresh for each MPI submission. Some vendor
     // runtimes update bookkeeping in the frame descriptor despite its const API.
     ConfigureFrame();
     if (!config_.zero_copy_input) {
-      CheckAcl(aclrtMemcpy(input_buffer_, input_bytes_, nv12_device, input_bytes_,
-                           ACL_MEMCPY_DEVICE_TO_DEVICE),
-               "aclrtMemcpy NV12 to MPI VENC input");
+      CheckAcl(aclrtMemcpy(input_buffer_, input_bytes_, input, input_bytes_,
+                           host_input ? ACL_MEMCPY_HOST_TO_DEVICE : ACL_MEMCPY_DEVICE_TO_DEVICE),
+               host_input ? "upload host NV12 to MPI VENC input"
+                          : "aclrtMemcpy NV12 to MPI VENC input");
     }
 
-    // Keep timestamps fixed for the first multi-frame driver probe. This
-    // isolates whether this MPI build accepts a timestamped second frame.
-    frame_.v_frame.pts = 0;
-    frame_.v_frame.time_ref = 0;
+    // The opt-in persistent proxy uses increasing microsecond timestamps and
+    // frame references. Preserve the validated legacy restart metadata.
+    frame_.v_frame.pts = config_.persistent_channel ? frame_index_ * 1000000U / config_.fps : 0;
+    frame_.v_frame.time_ref =
+        config_.persistent_channel ? static_cast<hi_u32>(frame_index_ * 2) : 0;
     if (force_keyframe) {
-      CheckMpi(hi_mpi_venc_request_idr(kVencChannel, HI_TRUE), "hi_mpi_venc_request_idr");
+      CheckMpi(hi_mpi_venc_request_idr(channel_, HI_TRUE), "hi_mpi_venc_request_idr");
     }
-    const hi_s32 send_status = hi_mpi_venc_send_frame(kVencChannel, &frame_, 1000);
+    const hi_s32 send_status = hi_mpi_venc_send_frame(channel_, &frame_, 1000);
     if (send_status != HI_SUCCESS) {
       throw Error("hi_mpi_venc_send_frame failed at frame " + std::to_string(frame_index_) +
                   " (" + std::to_string(config_.layout.width) + "x" +
@@ -168,13 +184,28 @@ class DvppH264Encoder::Impl {
     attr.gop_attr.gop_mode = HI_VENC_GOP_MODE_NORMAL_P;
     attr.gop_attr.normal_p.ip_qp_delta = 3;
 
-    CheckMpi(hi_mpi_venc_create_chn(kVencChannel, &attr), "hi_mpi_venc_create_chn H.264");
+    CheckMpi(hi_mpi_venc_create_chn(channel_, &attr), "hi_mpi_venc_create_chn H.264");
     channel_created_ = true;
-    CheckMpi(hi_mpi_venc_set_scene_mode(kVencChannel, HI_VENC_SCENE_0),
+    CheckMpi(hi_mpi_venc_set_scene_mode(channel_, HI_VENC_SCENE_0),
              "hi_mpi_venc_set_scene_mode");
     hi_venc_rc_param rc_param{};
-    CheckMpi(hi_mpi_venc_get_rc_param(kVencChannel, &rc_param), "hi_mpi_venc_get_rc_param");
-    CheckMpi(hi_mpi_venc_set_rc_param(kVencChannel, &rc_param), "hi_mpi_venc_set_rc_param");
+    CheckMpi(hi_mpi_venc_get_rc_param(channel_, &rc_param), "hi_mpi_venc_get_rc_param");
+    CheckMpi(hi_mpi_venc_set_rc_param(channel_, &rc_param), "hi_mpi_venc_set_rc_param");
+    if (config_.single_reference) {
+      hi_venc_ref_param ref_param{};
+      ref_param.base = 1;
+      ref_param.enhance = 0;
+      // Huawei 1x mode: base=1, enhance=0, pred_en=true. false anchors
+      // every P frame to the GOP IDR and is unsuitable for adjacent motion.
+      ref_param.pred_en = HI_TRUE;
+      CheckMpi(hi_mpi_venc_set_ref_param(channel_, &ref_param),
+               "hi_mpi_venc_set_ref_param single-reference proxy");
+      hi_venc_ref_param actual{};
+      CheckMpi(hi_mpi_venc_get_ref_param(channel_, &actual),
+               "hi_mpi_venc_get_ref_param single-reference proxy");
+      Check(actual.base == 1 && actual.enhance == 0 && actual.pred_en == HI_TRUE,
+            "DVPP failed to retain the single-reference proxy configuration");
+    }
   }
 
   void StartChannel() {
@@ -183,17 +214,17 @@ class DvppH264Encoder::Impl {
     // unlimited sentinel; this CANN runtime has rejected later frames with
     // HI_ERR_VENC_ILLEGAL_PARAM when started with -1.
     start_param.recv_pic_num = 2147483647;
-    CheckMpi(hi_mpi_venc_start_chn(kVencChannel, &start_param), "hi_mpi_venc_start_chn");
+    CheckMpi(hi_mpi_venc_start_chn(channel_, &start_param), "hi_mpi_venc_start_chn");
     channel_started_ = true;
   }
 
   void RestartChannel() {
     if (channel_started_) {
-      CheckMpi(hi_mpi_venc_stop_chn(kVencChannel), "hi_mpi_venc_stop_chn between frames");
+      CheckMpi(hi_mpi_venc_stop_chn(channel_), "hi_mpi_venc_stop_chn between frames");
       channel_started_ = false;
     }
     if (channel_created_) {
-      CheckMpi(hi_mpi_venc_destroy_chn(kVencChannel),
+      CheckMpi(hi_mpi_venc_destroy_chn(channel_),
                "hi_mpi_venc_destroy_chn between frames");
       channel_created_ = false;
     }
@@ -205,7 +236,7 @@ class DvppH264Encoder::Impl {
     hi_venc_chn_status status{};
     constexpr int kStatusPollCount = 1000;
     for (int poll = 0; poll < kStatusPollCount; ++poll) {
-      CheckMpi(hi_mpi_venc_query_status(kVencChannel, &status), "hi_mpi_venc_query_status");
+      CheckMpi(hi_mpi_venc_query_status(channel_, &status), "hi_mpi_venc_query_status");
       if (status.cur_packs > 0) break;
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
@@ -215,7 +246,7 @@ class DvppH264Encoder::Impl {
     hi_venc_stream stream{};
     stream.pack = packs.data();
     stream.pack_cnt = static_cast<hi_u32>(packs.size());
-    CheckMpi(hi_mpi_venc_get_stream(kVencChannel, &stream, 1000), "hi_mpi_venc_get_stream");
+    CheckMpi(hi_mpi_venc_get_stream(channel_, &stream, 1000), "hi_mpi_venc_get_stream");
 
     std::vector<std::uint8_t> output;
     try {
@@ -229,9 +260,9 @@ class DvppH264Encoder::Impl {
         const auto* data = pack.addr + pack.offset;
         output.insert(output.end(), data, data + data_bytes);
       }
-      CheckMpi(hi_mpi_venc_release_stream(kVencChannel, &stream), "hi_mpi_venc_release_stream");
+      CheckMpi(hi_mpi_venc_release_stream(channel_, &stream), "hi_mpi_venc_release_stream");
     } catch (...) {
-      (void)hi_mpi_venc_release_stream(kVencChannel, &stream);
+      (void)hi_mpi_venc_release_stream(channel_, &stream);
       throw;
     }
     Check(!output.empty(), "DVPP H.264 returned an empty stream");
@@ -241,11 +272,11 @@ class DvppH264Encoder::Impl {
   void Cleanup() noexcept {
     if (context_ != nullptr) (void)aclrtSetCurrentContext(context_);
     if (channel_started_) {
-      (void)hi_mpi_venc_stop_chn(kVencChannel);
+      (void)hi_mpi_venc_stop_chn(channel_);
       channel_started_ = false;
     }
     if (channel_created_) {
-      (void)hi_mpi_venc_destroy_chn(kVencChannel);
+      (void)hi_mpi_venc_destroy_chn(channel_);
       channel_created_ = false;
     }
     for (void*& input_buffer : input_buffers_) {
@@ -263,6 +294,7 @@ class DvppH264Encoder::Impl {
 
   aclrtContext context_ = nullptr;
   DvppH264EncoderConfig config_;
+  hi_venc_chn channel_ = 0;
   std::size_t input_bytes_ = 0;
   std::array<void*, 3> input_buffers_{};
   void* input_buffer_ = nullptr;
@@ -277,6 +309,12 @@ DvppH264Encoder::DvppH264Encoder(aclrtContext context, DvppH264EncoderConfig con
     : impl_(std::make_unique<Impl>(context, std::move(config))) {}
 
 DvppH264Encoder::~DvppH264Encoder() = default;
+
+std::vector<std::uint8_t> DvppH264Encoder::EncodeHostNv12(const void* nv12_host,
+                                                       std::size_t bytes,
+                                                       bool force_keyframe) {
+  return impl_->EncodeHostNv12(nv12_host, bytes, force_keyframe);
+}
 
 std::vector<std::uint8_t> DvppH264Encoder::EncodeDevice(const void* nv12_device,
                                                         std::size_t bytes,

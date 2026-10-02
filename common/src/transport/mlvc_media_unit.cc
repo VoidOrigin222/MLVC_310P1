@@ -112,7 +112,10 @@ void PutTlv(std::vector<uint8_t>* out, const MlvcTlv& tlv) {
   if (tlv.value.size() > std::numeric_limits<uint16_t>::max()) Fail("MLVC TLV is too large");
   const bool known = tlv.type == kMlvcTlvCodecBundleSha256 || tlv.type == kMlvcTlvProfileName ||
                      tlv.type == kMlvcTlvColorimetry || tlv.type == kMlvcTlvNominalPolicy ||
-                     tlv.type == kMlvcTlvVendorData;
+                     tlv.type == kMlvcTlvVendorData || tlv.type == kMlvcTlvTranslationWarp;
+  if (tlv.type == kMlvcTlvTranslationWarp && tlv.value != std::vector<uint8_t>{1}) {
+    Fail("unsupported MLVC translation warp capability");
+  }
   if ((tlv.type & 0x8000u) != 0 && !known) Fail("unknown critical MLVC TLV");
   if ((tlv.type == kMlvcTlvCodecBundleSha256 && tlv.value.size() != 32) ||
       (tlv.type == kMlvcTlvColorimetry && tlv.value.size() != 4) ||
@@ -143,15 +146,19 @@ std::vector<MlvcTlv> ParseTlvs(const std::vector<uint8_t>& unit, std::size_t off
     const bool critical = (type & 0x8000u) != 0;
     const bool known = type == kMlvcTlvCodecBundleSha256 || type == kMlvcTlvProfileName ||
                        type == kMlvcTlvColorimetry || type == kMlvcTlvNominalPolicy ||
-                       type == kMlvcTlvVendorData;
+                       type == kMlvcTlvVendorData || type == kMlvcTlvTranslationWarp;
     if (critical && !known) Fail("unknown critical MLVC TLV");
+    if (type == kMlvcTlvTranslationWarp &&
+        (length != 1 || unit[offset] != 1)) {
+      Fail("unsupported MLVC translation warp capability");
+    }
     if ((type == kMlvcTlvCodecBundleSha256 && length != 32) ||
         (type == kMlvcTlvColorimetry && length != 4) ||
         (type == kMlvcTlvNominalPolicy && length != 16)) {
       Fail("invalid fixed-size MLVC TLV");
     }
     if (type == kMlvcTlvCodecBundleSha256 || type == kMlvcTlvColorimetry ||
-        type == kMlvcTlvNominalPolicy) {
+        type == kMlvcTlvNominalPolicy || type == kMlvcTlvTranslationWarp) {
       if (!unique_semantic_tlvs.insert(type).second) {
         Fail("duplicate semantic MLVC TLV");
       }
@@ -269,6 +276,18 @@ std::vector<uint8_t> SerializeScu(const MlvcScu& scu) {
     Fail("invalid MLVC SCU fields");
   }
   std::vector<MlvcTlv> tlvs = scu.tlvs;
+  const auto* warp = FindTlv(tlvs, kMlvcTlvTranslationWarp);
+  if (!scu.translation_warp && warp != nullptr) {
+    Fail("MLVC translation warp TLV disagrees with SCU capability");
+  }
+  if (scu.translation_warp && warp == nullptr) {
+    tlvs.push_back({kMlvcTlvTranslationWarp, {1}});
+  }
+  if (std::count_if(tlvs.begin(), tlvs.end(), [](const MlvcTlv& tlv) {
+        return tlv.type == kMlvcTlvTranslationWarp;
+      }) > 1) {
+    Fail("duplicate MLVC translation warp capability");
+  }
   std::array<uint8_t, 32> bundle_hash = scu.codec_bundle_sha256;
   if (IsZero(bundle_hash)) Fail("MLVC SCU requires a model bundle SHA-256");
   std::array<uint8_t, 16> config_hash = scu.config_hash;
@@ -360,6 +379,7 @@ MlvcScu ParseScu(const std::vector<uint8_t>& unit) {
   std::copy_n(unit.begin() + offset, scu.config_hash.size(), scu.config_hash.begin());
   offset += scu.config_hash.size();
   scu.tlvs = ParseTlvs(unit, offset, common.header_length);
+  scu.translation_warp = FindTlv(scu.tlvs, kMlvcTlvTranslationWarp) != nullptr;
   const MlvcTlv* bundle = FindTlv(scu.tlvs, kMlvcTlvCodecBundleSha256);
   if (bundle == nullptr || bundle->value.size() != 32) Fail("MLVC SCU bundle hash is missing");
   std::copy(bundle->value.begin(), bundle->value.end(), scu.codec_bundle_sha256.begin());
@@ -392,7 +412,8 @@ MlvcScu ParseScu(const std::vector<uint8_t>& unit) {
 }
 
 bool MlvcScuDecoderCompatible(const MlvcScu& current, const MlvcScu& next) {
-  if (current.profile_id != next.profile_id || current.level_id != next.level_id ||
+  if (current.translation_warp != next.translation_warp ||
+      current.profile_id != next.profile_id || current.level_id != next.level_id ||
       current.coded_width != next.coded_width || current.coded_height != next.coded_height ||
       current.visible_width != next.visible_width || current.visible_height != next.visible_height ||
       current.timebase_num != next.timebase_num || current.timebase_den != next.timebase_den ||
@@ -418,19 +439,49 @@ bool MlvcScuDecoderCompatible(const MlvcScu& current, const MlvcScu& next) {
           current_colorimetry->value == next_colorimetry->value);
 }
 
+void ValidateEfuTranslationWarp(const MlvcEfu& efu, bool translation_warp) {
+  if (((efu.unit_flags & kEfuTranslationWarp) != 0) != translation_warp) {
+    Fail("MLVC EFU translation warp flag disagrees with SCU capability");
+  }
+  if ((!translation_warp || efu.frame_type == 0) && (efu.kx != 0 || efu.ky != 0)) {
+    Fail("MLVC translation is only valid on warp P frames");
+  }
+  if (translation_warp && efu.frame_type != 0 && efu.frame_type != 1) {
+    Fail("MLVC translation warp v1 does not support LTR recovery");
+  }
+  if (translation_warp && efu.frame_type == 1 && (efu.unit_flags & kEfuResetReference) != 0) {
+    Fail("MLVC translation warp P frames must retain the preceding frame dependency");
+  }
+}
+
 std::vector<uint8_t> SerializeEfu(const MlvcEfu& efu) {
   if (efu.config_id == 0 || efu.frame_id == kMlvcNoReference || efu.frame_type > 2 || efu.pts < 0 ||
       efu.entropy_q_index >= 64 ||
-      efu.model_q_index >= 64 || efu.temporal_id != 0 || (efu.unit_flags & ~0x3fu) != 0 ||
+      efu.model_q_index >= 64 || efu.temporal_id != 0 || (efu.unit_flags & ~0x7fu) != 0 ||
       (efu.unit_flags & kEfuDiscardable) != 0) {
     Fail("invalid MLVC EFU fields");
   }
   ValidateReferenceIds(efu);
+  const bool warp = (efu.unit_flags & kEfuTranslationWarp) != 0;
+  ValidateEfuTranslationWarp(efu, warp);
+  const bool has_geometry = warp && efu.frame_type == 1;
+  if (efu.entropy_payload.size() > kMlvcMediaUnitMaxBytes - kMlvcEfuFixedBytes -
+                                     (has_geometry ? 2u : 0u)) {
+    Fail("EFU payload too large");
+  }
+  std::vector<uint8_t> translated_payload;
+  if (has_geometry) {
+    translated_payload.reserve(efu.entropy_payload.size() + 2);
+    translated_payload.push_back(static_cast<uint8_t>(efu.kx));
+    translated_payload.push_back(static_cast<uint8_t>(efu.ky));
+    translated_payload.insert(translated_payload.end(), efu.entropy_payload.begin(), efu.entropy_payload.end());
+  }
+  const auto& wire_payload = has_geometry ? translated_payload : efu.entropy_payload;
   if (efu.entropy_payload.size() > std::numeric_limits<uint32_t>::max()) Fail("EFU payload too large");
   std::vector<uint8_t> tlv_bytes;
   for (const auto& tlv : efu.tlvs) PutTlv(&tlv_bytes, tlv);
   const std::size_t header_size = kMlvcEfuFixedBytes + tlv_bytes.size();
-  const std::size_t unit_size = header_size + efu.entropy_payload.size();
+  const std::size_t unit_size = header_size + wire_payload.size();
   if (header_size > kMlvcHeaderMaxBytes || unit_size > kMlvcMediaUnitMaxBytes ||
       header_size > std::numeric_limits<uint16_t>::max() || unit_size > std::numeric_limits<uint32_t>::max()) {
     Fail("MLVC EFU is too large");
@@ -440,10 +491,10 @@ std::vector<uint8_t> SerializeEfu(const MlvcEfu& efu) {
                           efu.unit_flags | kEfuCrcPresent);
   Put8(&bytes, efu.frame_type); Put8(&bytes, efu.entropy_q_index); Put8(&bytes, efu.model_q_index);
   Put8(&bytes, efu.temporal_id); Put64(&bytes, efu.pts); Put32(&bytes, efu.short_ref_frame_id);
-  Put32(&bytes, efu.long_ref_frame_id); Put32(&bytes, static_cast<uint32_t>(efu.entropy_payload.size()));
-  Put32(&bytes, MlvcCrc32c(efu.entropy_payload)); Put32(&bytes, 0);
+  Put32(&bytes, efu.long_ref_frame_id); Put32(&bytes, static_cast<uint32_t>(wire_payload.size()));
+  Put32(&bytes, MlvcCrc32c(wire_payload)); Put32(&bytes, 0);
   bytes.insert(bytes.end(), tlv_bytes.begin(), tlv_bytes.end());
-  bytes.insert(bytes.end(), efu.entropy_payload.begin(), efu.entropy_payload.end());
+  bytes.insert(bytes.end(), wire_payload.begin(), wire_payload.end());
   return bytes;
 }
 
@@ -451,7 +502,7 @@ MlvcEfu ParseEfu(const std::vector<uint8_t>& unit) {
   const MlvcCommonHeader common = ParseMediaUnitHeader(unit);
   if (common.unit_type != MlvcMediaUnitType::kEfu || common.header_length < kMlvcEfuFixedBytes ||
       common.config_id == 0 || common.unit_id == kMlvcNoReference ||
-      (common.unit_flags & ~0x3fu) != 0 ||
+      (common.unit_flags & ~0x7fu) != 0 ||
       (common.unit_flags & kEfuCrcPresent) == 0 ||
       (common.unit_flags & kEfuDiscardable) != 0) {
     Fail("invalid MLVC EFU header");
@@ -474,6 +525,17 @@ MlvcEfu ParseEfu(const std::vector<uint8_t>& unit) {
   efu.tlvs = ParseTlvs(unit, offset, common.header_length);
   efu.entropy_payload.assign(unit.begin() + common.header_length, unit.end());
   if (MlvcCrc32c(efu.entropy_payload) != payload_crc) throw MlvcEfuCrcError();
+  const bool warp = (efu.unit_flags & kEfuTranslationWarp) != 0;
+  if (warp && efu.frame_type == 1) {
+    if (efu.entropy_payload.size() < 2) Fail("missing MLVC translation warp P-frame geometry");
+    const auto signed_byte = [](uint8_t byte) {
+      return static_cast<int8_t>(byte < 128 ? static_cast<int>(byte) : static_cast<int>(byte) - 256);
+    };
+    efu.kx = signed_byte(efu.entropy_payload[0]);
+    efu.ky = signed_byte(efu.entropy_payload[1]);
+    efu.entropy_payload.erase(efu.entropy_payload.begin(), efu.entropy_payload.begin() + 2);
+  }
+  ValidateEfuTranslationWarp(efu, warp);
   ValidateReferenceIds(efu);
   return efu;
 }

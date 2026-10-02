@@ -46,12 +46,14 @@ AsyncFrameInputQueue::AsyncFrameInputQueue(int frames_to_attempt, int configured
                                            const mlvc::TensorSpec& frame_spec, int width,
                                            int height, FrameBufferPool* arena,
                                            mlvc::Profiler* profiler,
-                                           mlvc::CodecGraphExecutor* graph_executor)
+                                           mlvc::CodecGraphExecutor* graph_executor,
+                                           MotionInputPrepareFunction motion_prepare)
     : frames_to_attempt_(frames_to_attempt),
       configured_frame_num_(configured_frame_num),
       input_video_path_(input_video_path),
       input_frame_dir_(input_frame_dir),
       frame_spec_(frame_spec),
+      camera_motion_nv12_(camera_options && camera_options->motion_nv12),
       frame_source_(std::make_unique<mlvc::io::FrameSource>(configured_frame_num, input_video_path,
                                                             input_frame_dir, frame_spec,
                                                             std::move(camera_options), context)),
@@ -60,13 +62,32 @@ AsyncFrameInputQueue::AsyncFrameInputQueue(int frames_to_attempt, int configured
       arena_(arena),
       profiler_(profiler),
       graph_executor_(graph_executor),
+      motion_prepare_(std::move(motion_prepare)),
       worker_pool_(1) {
   mlvc::Check(arena_ != nullptr && arena_->capacity() > 0,
               "async frame prepare queue requires a non-empty arena");
   for (int slot = 0; slot < static_cast<int>(arena_->capacity()); ++slot) {
     free_slots_.push_back(slot);
   }
+  Check(!camera_motion_nv12_ || !motion_prepare_,
+        "camera motion sidecar cannot be combined with FP16 motion preparation");
+  if (motion_prepare_ || camera_motion_nv12_) motion_nv12_slots_.resize(arena_->capacity());
   worker_future_ = worker_pool_.SubmitValue<void>([this] { WorkerMain(); });
+}
+
+void AsyncFrameInputQueue::Cancel(std::exception_ptr error) noexcept {
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    stop_ = true;
+    if (error && !exception_) exception_ = error;
+  }
+  producer_condition_.notify_all();
+  consumer_condition_.notify_all();
+}
+
+void AsyncFrameInputQueue::RethrowIfFailed() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (exception_) std::rethrow_exception(exception_);
 }
 
 AsyncFrameInputQueue::~AsyncFrameInputQueue() {
@@ -85,7 +106,7 @@ InputFrame AsyncFrameInputQueue::Pop() {
   std::unique_lock<std::mutex> lock(mutex_);
   const bool was_empty = ready_slots_.empty();
   consumer_condition_.wait(
-      lock, [this] { return !ready_slots_.empty() || producer_done_ || exception_ != nullptr; });
+      lock, [this] { return stop_ || !ready_slots_.empty() || producer_done_ || exception_ != nullptr; });
   const auto wait_end = std::chrono::steady_clock::now();
   {
     const double wait_ms = std::chrono::duration<double, std::milli>(wait_end - wait_begin).count();
@@ -101,7 +122,7 @@ InputFrame AsyncFrameInputQueue::Pop() {
   if (exception_ != nullptr) {
     std::rethrow_exception(exception_);
   }
-  if (ready_slots_.empty()) {
+  if (stop_ || ready_slots_.empty()) {
     return InputFrame{next_frame_to_consume_, nullptr, -1, true};
   }
   ReadySlot ready = ready_slots_.front();
@@ -110,7 +131,9 @@ InputFrame AsyncFrameInputQueue::Pop() {
   lock.unlock();
   producer_condition_.notify_one();
   return InputFrame{ready.frame_index, &arena_->Get(static_cast<std::size_t>(ready.slot_index)),
-                    ready.slot_index, false};
+                    ready.slot_index, false, ready.ready_at,
+                    (motion_prepare_ || camera_motion_nv12_)
+                        ? &motion_nv12_slots_[ready.slot_index] : nullptr};
 }
 
 void AsyncFrameInputQueue::Release(InputFrame* frame) {
@@ -126,6 +149,7 @@ void AsyncFrameInputQueue::Release(InputFrame* frame) {
   }
   frame->frame = nullptr;
   frame->slot_index = -1;
+  frame->motion_nv12 = nullptr;
   producer_condition_.notify_one();
 }
 
@@ -142,17 +166,38 @@ void AsyncFrameInputQueue::WorkerMain() {
         break;
       }
       codec::TensorData& frame = arena_->Get(static_cast<std::size_t>(slot_index));
-      const bool has_frame = PrepareOne(frame_index, &frame);
+      std::vector<uint8_t>* source_motion = camera_motion_nv12_
+          ? &motion_nv12_slots_[slot_index] : nullptr;
+      const bool has_frame = PrepareOne(frame_index, &frame, source_motion);
       if (!has_frame) {
         ReturnFreeSlot(slot_index);
         break;
       }
-      PushReady(ReadySlot{frame_index, slot_index});
+      // Same boundary as before: source tensor Pop/read complete. The camera
+      // sidecar is produced upstream and is NOT included in this latency;
+      // optional FP16 motion preparation below IS included.
+      const auto ready_at = std::chrono::steady_clock::now();
+      if (source_motion) {
+        const int w = width_;
+        const int h = height_;
+        Check(!source_motion->empty() && source_motion->size() ==
+                  static_cast<std::size_t>(w) * h * 3 / 2,
+              "camera motion NV12 sidecar has an unexpected size");
+      }
+      if (motion_prepare_) {
+        motion_prepare_(frame, &motion_nv12_slots_[slot_index]);
+        const double elapsed = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - ready_at).count();
+        std::lock_guard<std::mutex> lock(mutex_);
+        stats_.motion_prepare_ms += elapsed;
+        stats_.motion_prepare_max_ms = std::max(stats_.motion_prepare_max_ms, elapsed);
+      }
+      PushReady(ReadySlot{frame_index, slot_index, ready_at});
     }
     frame_source_->Close();
   } catch (...) {
     std::lock_guard<std::mutex> lock(mutex_);
-    exception_ = std::current_exception();
+    if (!exception_) exception_ = std::current_exception();
   }
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -161,7 +206,8 @@ void AsyncFrameInputQueue::WorkerMain() {
   consumer_condition_.notify_all();
 }
 
-bool AsyncFrameInputQueue::PrepareOne(int frame_index, codec::TensorData* frame) {
+bool AsyncFrameInputQueue::PrepareOne(int frame_index, codec::TensorData* frame,
+                                      std::vector<uint8_t>* motion_nv12) {
   const auto prepare_begin = std::chrono::steady_clock::now();
   std::optional<mlvc::ScopedProfileHotPath> profile_prepare_hot_path;
   std::optional<mlvc::ScopedProfileRange> profile_prepare_frame;
@@ -179,7 +225,7 @@ bool AsyncFrameInputQueue::PrepareOne(int frame_index, codec::TensorData* frame)
                                           mlvc::CodecGraphNodeType::kVideoIo, "read_frame",
                                           "AsyncFrameInputQueue::ReadFrameAsTensor", frame_index);
     const auto video_read_begin = std::chrono::steady_clock::now();
-    const bool has_frame = frame_source_->ReadFrame(frame_index, frame);
+    const bool has_frame = frame_source_->ReadFrame(frame_index, frame, motion_nv12);
     const auto video_read_end = std::chrono::steady_clock::now();
     const double read_ms =
         std::chrono::duration<double, std::milli>(video_read_end - video_read_begin).count();
@@ -214,7 +260,7 @@ bool AsyncFrameInputQueue::PrepareOne(int frame_index, codec::TensorData* frame)
                                           mlvc::CodecGraphNodeType::kVideoIo, "synthetic_frame",
                                           "AsyncFrameInputQueue::FillFp16Tensor", frame_index);
     const auto video_synth_begin = std::chrono::steady_clock::now();
-    const bool has_frame = frame_source_->ReadFrame(frame_index, frame);
+    const bool has_frame = frame_source_->ReadFrame(frame_index, frame, motion_nv12);
     const auto video_synth_end = std::chrono::steady_clock::now();
     const double read_ms =
         std::chrono::duration<double, std::milli>(video_synth_end - video_synth_begin).count();
@@ -250,7 +296,7 @@ bool AsyncFrameInputQueue::PrepareOne(int frame_index, codec::TensorData* frame)
   const auto frame_read_begin = std::chrono::steady_clock::now();
   const std::filesystem::path frame_path =
       input_frame_dir_ / ("frame_" + std::to_string(frame_index) + ".fp16");
-  const bool has_frame = frame_source_->ReadFrame(frame_index, frame);
+  const bool has_frame = frame_source_->ReadFrame(frame_index, frame, motion_nv12);
   const auto frame_read_end = std::chrono::steady_clock::now();
   const double read_ms =
       std::chrono::duration<double, std::milli>(frame_read_end - frame_read_begin).count();
@@ -298,6 +344,8 @@ int AsyncFrameInputQueue::AcquireFreeSlot() {
   }
   const int slot_index = free_slots_.front();
   free_slots_.pop_front();
+  stats_.max_acquired_frames = std::max(stats_.max_acquired_frames,
+                                       arena_->capacity() - free_slots_.size());
   return slot_index;
 }
 

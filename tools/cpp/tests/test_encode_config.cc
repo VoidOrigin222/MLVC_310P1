@@ -67,6 +67,14 @@ int main() {
                 "transport queue limits were not preserved");
     mlvc::Check(parsed.stream.pipeline.stream_workers == 3,
                 "configured encoder stream worker count was not preserved");
+    mlvc::Check(parsed.stream.motion_prefetch_frames == 0,
+                "motion prefetch must preserve the serial default");
+    mlvc::Check(parsed.stream.motion_x264_preset == "medium" && parsed.stream.motion_x264_threads == 1,
+                "x264 motion proxy defaults must remain medium and one thread");
+    mlvc::Check(!parsed.stream.motion_skip_loop_filter,
+                "motion proxy loop filtering must remain enabled by default");
+    mlvc::Check(!parsed.stream.motion_camera_nv12,
+                "default motion must remain full resolution without a camera sidecar");
 
     const auto expect_invalid = [&](const char* extra, const char* description) {
       std::ofstream output(config);
@@ -107,6 +115,149 @@ int main() {
                    "string pipeline worker count");
     expect_invalid("pipeline = 4\n", "non-table pipeline section");
     expect_invalid("target_bitrate = 1000000\n", "misspelled bitrate config key");
+    expect_invalid("motion_backend = \"unknown\"\n", "unknown motion backend");
+    expect_invalid("translation_warp = true\nmotion_prefetch_frames = -1\n",
+                   "negative motion prefetch depth");
+    expect_invalid("translation_warp = true\nmotion_prefetch_frames = 3\n",
+                   "motion prefetch above two frames");
+    expect_invalid("motion_prefetch_frames = 1\n", "motion prefetch without warp enabled");
+    expect_invalid("translation_warp = true\nmotion_prefetch_frames = 1.5\n",
+                   "fractional motion prefetch depth");
+    expect_invalid("translation_warp = true\nmotion_x264_preset = \"slow\"\n",
+                   "unsupported motion x264 preset");
+    expect_invalid("translation_warp = true\nmotion_x264_threads = 0\n",
+                   "zero motion x264 threads");
+    expect_invalid("translation_warp = true\nmotion_x264_threads = 17\n",
+                   "motion x264 threads above limit");
+    expect_invalid("translation_warp = true\nmotion_x264_threads = 1.5\n",
+                   "fractional motion x264 threads");
+    expect_invalid("motion_x264_preset = \"ultrafast\"\n",
+                   "non-default x264 preset without warp");
+    expect_invalid("motion_x264_threads = 2\n", "non-default x264 threads without warp");
+    expect_invalid("motion_skip_loop_filter = true\n", "skip motion loop filter without warp");
+    expect_invalid("translation_warp = true\nmotion_shifts_file = \"/tmp/shifts.csv\"\n"
+                   "motion_skip_loop_filter = true\n",
+                   "skip motion loop filter with CSV replay");
+    expect_invalid("translation_warp = true\nmotion_skip_loop_filter = \"true\"\n",
+                   "non-boolean motion loop filter option");
+    expect_invalid("translation_warp = true\nmotion_backend = \"dvpp\"\n"
+                   "motion_x264_preset = \"veryfast\"\n",
+                   "x264 preset with hardware motion");
+    expect_invalid("translation_warp = true\nmotion_backend = \"dvpp\"\n"
+                   "motion_x264_threads = 2\n",
+                   "x264 threads with hardware motion");
+    expect_invalid("translation_warp = true\nmotion_shifts_file = \"/tmp/shifts.csv\"\n"
+                   "motion_x264_preset = \"superfast\"\n",
+                   "x264 preset with CSV replay");
+    expect_invalid("translation_warp = true\nmotion_shifts_file = \"/tmp/shifts.csv\"\n"
+                   "motion_x264_threads = 2\n",
+                   "x264 threads with CSV replay");
+    expect_invalid("motion_backend = \"dvpp\"\n", "hardware motion without warp enabled");
+    expect_invalid("translation_warp = true\nmotion_backend = \"dvpp\"\n"
+                   "motion_shifts_file = \"/tmp/shifts.csv\"\n",
+                   "simultaneous hardware motion and CSV replay");
+    expect_invalid("motion_shifts_file = \"/tmp/shifts.csv\"\n",
+                   "CSV replay without warp enabled");
+    {
+      std::ofstream output(config);
+      output << "mode = \"encode\"\ninput_frame_dir = \"/tmp\"\n"
+             << "output = \"/tmp/out.mlvc\"\nmanifest = \"" << manifest.string()
+             << "\"\nframe_num = 10\ntranslation_warp = true\n"
+             << "motion_backend = \"dvpp\"\nltr_period = 0\n";
+    }
+    const auto warp_config = mlvc::LoadEncoderConfig(config);
+    mlvc::Check(warp_config.stream.translation_warp && warp_config.stream.motion_backend == "dvpp",
+                "valid hardware motion configuration was not preserved");
+    for (const int depth : {1, 2}) {
+      {
+        std::ofstream output(config);
+        output << "mode = \"encode\"\ninput_frame_dir = \"/tmp\"\n"
+               << "output = \"/tmp/out.mlvc\"\nmanifest = \"" << manifest.string()
+               << "\"\nframe_num = 10\ntranslation_warp = true\n"
+               << "motion_backend = \"dvpp\"\nltr_period = 0\n"
+               << "motion_prefetch_frames = " << depth << "\n";
+      }
+      mlvc::Check(mlvc::LoadEncoderConfig(config).stream.motion_prefetch_frames == depth,
+                  "valid bounded motion prefetch depth was not preserved");
+    }
+    for (const std::string preset : {"medium", "veryfast", "superfast", "ultrafast"}) {
+      for (const int threads : {1, 16}) {
+        {
+          std::ofstream output(config);
+          output << "mode = \"encode\"\ninput_frame_dir = \"/tmp\"\n"
+                 << "output = \"/tmp/out.mlvc\"\nmanifest = \"" << manifest.string()
+                 << "\"\nframe_num = 10\ntranslation_warp = true\nltr_period = 0\n"
+                 << "motion_backend = \"libx264\"\nmotion_x264_preset = \"" << preset
+                 << "\"\nmotion_x264_threads = " << threads << "\n";
+        }
+        const auto online_config = mlvc::LoadEncoderConfig(config);
+        mlvc::Check(online_config.stream.motion_x264_preset == preset &&
+                        online_config.stream.motion_x264_threads == threads,
+                    "valid online x264 tuning was not preserved");
+      }
+    }
+    for (const std::string backend : {"dvpp", "libx264"}) {
+      for (const bool skip_filter : {false, true}) {
+        {
+          std::ofstream output(config);
+          output << "mode = \"encode\"\ninput_frame_dir = \"/tmp\"\n"
+                 << "output = \"/tmp/out.mlvc\"\nmanifest = \"" << manifest.string()
+                 << "\"\nframe_num = 10\ntranslation_warp = true\nltr_period = 0\n"
+                 << "motion_backend = \"" << backend << "\"\n"
+                 << "motion_skip_loop_filter = " << (skip_filter ? "true" : "false") << "\n";
+        }
+        const auto filtered_config = mlvc::LoadEncoderConfig(config);
+        mlvc::Check(filtered_config.stream.motion_backend == backend &&
+                        filtered_config.stream.motion_skip_loop_filter == skip_filter,
+                    "valid online motion loop filter option was not preserved");
+      }
+    }
+
+    const auto write_motion_input = [&](bool camera, const std::string& fields) {
+      std::ofstream output(config);
+      output << "mode = \"encode\"\noutput = \"/tmp/out.mlvc\"\nmanifest = \""
+             << manifest.string() << "\"\nframe_num = 10\nltr_period = 0\n";
+      if (camera) {
+        // Parsing must not open or capture this test-only device.
+        output << "input_camera_device = \"/dev/mlvc-config-test\"\n"
+               << "camera_width = 1920\ncamera_height = 1080\n";
+      } else {
+        output << "input_frame_dir = \"/tmp\"\n";
+      }
+      output << fields;
+    };
+    const auto reject_motion_input = [&](bool camera, const char* fields, const char* reason) {
+      write_motion_input(camera, fields);
+      ExpectReject([&] { (void)mlvc::LoadEncoderConfig(config); }, reason);
+    };
+    reject_motion_input(false, "translation_warp = true\nmotion_prefetch_frames = 2\n"
+                              "motion_camera_nv12 = true\n", "camera sidecar without camera input");
+    reject_motion_input(true, "motion_camera_nv12 = true\n", "camera sidecar without warp");
+    reject_motion_input(true, "translation_warp = true\nmotion_camera_nv12 = true\n",
+                             "camera sidecar without motion prefetch");
+    reject_motion_input(true, "translation_warp = true\nmotion_prefetch_frames = 2\n"
+                             "motion_shifts_file = \"/tmp/shifts.csv\"\nmotion_camera_nv12 = true\n",
+                             "camera sidecar with CSV replay");
+    reject_motion_input(true, "translation_warp = true\nmotion_prefetch_frames = 2\n"
+                             "motion_camera_nv12 = \"true\"\n", "non-boolean camera sidecar option");
+    for (const std::string backend : {"dvpp", "libx264"}) {
+        for (bool camera : {false, true}) {
+          const std::string fields = "translation_warp = true\nmotion_prefetch_frames = 2\n"
+              "motion_backend = \"" + backend + "\"\nmotion_camera_nv12 = " +
+              (camera ? "true\n" : "false\n");
+          write_motion_input(camera, fields);
+          const auto camera_config = mlvc::LoadEncoderConfig(config);
+          mlvc::Check(camera_config.stream.motion_camera_nv12 == camera,
+                      "valid full-resolution sidecar configuration was not preserved");
+          if (camera) {
+            mlvc::Check(camera_config.stream.camera_options.has_value() &&
+                            camera_config.stream.camera_options->width == 1920 &&
+                            camera_config.stream.camera_options->height == 1080 &&
+                            camera_config.stream.camera_options->motion_nv12,
+                        "camera sidecar must preserve full-resolution camera geometry");
+          }
+        }
+    }
 
     std::cout << "encode config test passed\n";
     return 0;

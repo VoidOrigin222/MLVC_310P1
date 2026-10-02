@@ -8,6 +8,7 @@
 #include <mlvc/framework/data_producer.h>
 #include <mlvc/framework/streaming_pipeline.h>
 #include <mlvc/io/mlvc_bitstream.h>
+#include <mlvc/motion/translation_estimator.h>
 
 #include <atomic>
 #include <functional>
@@ -31,6 +32,8 @@ class PreparedFramePacket final : public mlvc::DataObject {
   InputFrame& frame() { return frame_; }
   const InputFrame& frame() const { return frame_; }
   void Release();
+  std::optional<mlvc::motion::Translation> motion;
+  std::chrono::steady_clock::time_point motion_ready_at{};
 
  private:
   AsyncFrameInputQueue* queue_ = nullptr;
@@ -44,6 +47,12 @@ class PreparedFrameProducer final : public mlvc::DataProducer {
   PreparedFrameProducer(mlvc::StreamingPipeline& pipeline, std::atomic<bool>& running,
                         AsyncFrameInputQueue& input_queue)
       : DataProducer(pipeline, running), input_queue_(input_queue) {}
+
+  ~PreparedFrameProducer() override {
+    input_queue_.Cancel();
+    Stop();
+    Join();
+  }
 
  protected:
   void Produce() override;
@@ -80,8 +89,12 @@ class CallbackDataConsumer final : public mlvc::DataConsumer {
   using ConsumeFunction = std::function<void(const std::shared_ptr<mlvc::DataObject>&)>;
 
   CallbackDataConsumer(mlvc::StreamingPipeline& pipeline, std::atomic<bool>& running,
-                       ConsumeFunction consume_function)
-      : DataConsumer(pipeline, running), consume_function_(std::move(consume_function)) {}
+                       ConsumeFunction consume_function, std::function<void()> cancel = {})
+      : DataConsumer(pipeline, running), consume_function_(std::move(consume_function)),
+        cancel_(std::move(cancel)) {}
+
+  double wait_ms() const { return wait_ms_; }
+  double wait_max_ms() const { return wait_max_ms_; }
 
   ~CallbackDataConsumer() override {
     Stop();
@@ -93,6 +106,9 @@ class CallbackDataConsumer final : public mlvc::DataConsumer {
 
  private:
   ConsumeFunction consume_function_;
+  std::function<void()> cancel_;
+  double wait_ms_ = 0.0;
+  double wait_max_ms_ = 0.0;
 };
 
 }  // namespace mlvc::app

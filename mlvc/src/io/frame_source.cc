@@ -24,9 +24,11 @@ FrameSource::FrameSource(int configured_frame_num, std::filesystem::path input_v
   }
 }
 
-bool FrameSource::ReadFrame(int frame_index, codec::TensorData* frame) {
+bool FrameSource::ReadFrame(int frame_index, codec::TensorData* frame,
+                            std::vector<uint8_t>* motion_nv12) {
+  if (motion_nv12) motion_nv12->clear();
   if (video_reader_.has_value()) {
-    if (!video_reader_->ReadFrameAsTensor(frame_spec_, frame)) {
+    if (!video_reader_->ReadFrameAsTensor(frame_spec_, frame, motion_nv12)) {
       if (configured_frame_num_ < 0 && frame_index > 0) {
         return false;
       }

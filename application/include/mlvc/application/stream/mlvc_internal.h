@@ -12,6 +12,8 @@
 #include <mlvc/io/video_io.h>
 #include <mlvc/runtime/model_manifest.h>
 
+#include <chrono>
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <future>
@@ -38,12 +40,21 @@ struct DecodedEntropyFrame {
   mlvc::io::MlvcFrameMetadata metadata;
 };
 
+struct LatencyStats {
+  uint64_t count = 0;
+  double total_ms = 0.0;
+  double max_ms = 0.0;
+  void Add(double ms) { ++count; total_ms += ms; max_ms = std::max(max_ms, ms); }
+  double average_ms() const { return count ? total_ms / count : 0.0; }
+};
+
 struct PendingEncodedFrame {
   int frame_index = -1;
   MlvcFrameType frame_type = MlvcFrameType::kPFrame;
   int q_index = 0;
   mlvc::io::MlvcFrameMetadata metadata;
   std::future<std::vector<uint8_t>> payload;
+  std::chrono::steady_clock::time_point ready_at{};
 };
 
 void SetInt32TensorValue(TensorData* tensor, int32_t value);
@@ -59,6 +70,14 @@ SourceFrameGeometry ResolveSourceGeometry(const std::filesystem::path& input_vid
 void ConfigureRuntimeState(mlvc::codec::StageOutputWorkspace* stage_output_workspace,
                            mlvc::StageRuntime& runtime, bool enable_stage_fusion);
 StageInput BuildReferenceFeatureInput(const ReferenceState& state, const TensorData& zero_feature);
+StageInput BuildWarpedReferenceFeatureInput(ReferenceState* state, const TensorData& zero_feature,
+                                           int kx, int ky, TensorData* scratch);
+void PrepareWarpResetReference(mlvc::StageModelSet* models, ReferenceState* state,
+                               const std::vector<int64_t>& frame_shape, bool is_i_frame,
+                               mlvc::Profiler* profiler);
+void SaveWarpResetFrame(const RunOutput& output, ReferenceState* state, mlvc::Profiler* profiler);
+// Explicit opt-in diagnostic; callers invoke only in translation warp mode.
+void TraceWarpReferenceState(int frame_index, ReferenceState* state);
 void UpdateReferenceFeature(const RunOutput& output, ReferenceState* state,
                             mlvc::Profiler* profiler);
 

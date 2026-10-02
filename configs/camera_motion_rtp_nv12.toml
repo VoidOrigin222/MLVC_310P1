@@ -1,0 +1,37 @@
+# Live camera: full 1920x1080 motion proxy, native NV12, MLVC padded to 1088.
+mode = "encode"
+manifest = "/root/workplace/grifcc/MLVC_310P1/mlvc1080p/manifest_motion_ascend310p1.json"
+input_camera_device = "/dev/video0"
+camera_width = 1920
+camera_height = 1080
+camera_fps = 30
+camera_pixel_format = "MJPG"
+camera_preload_frames = 0
+translation_warp = true
+motion_backend = "dvpp"
+motion_prefetch_frames = 2
+motion_skip_loop_filter = true
+motion_camera_nv12 = true
+qp = 11
+gop = 96
+reset_interval = 32
+ltr_period = 0
+frame_num = 3000
+profile_warmup_frames = 96
+fps = 30
+device = 0
+execution_profile = "pipeline-v1"
+
+output_transport_mode = "rtp"
+output_transport_host = "192.168.5.11"
+output_transport_port = 39340
+output_transport_payload_type = 96
+output_transport_pacing_rate_bps = 2000000
+output_transport_max_burst_bytes = 1240
+
+[pipeline]
+stream_workers = 1
+queue_capacity = 3
+frame_buffer_slots = 3
+entropy_workers = 1
+graph_packet_capacity = 2

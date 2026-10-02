@@ -16,7 +16,8 @@ class FrameSource {
               std::optional<CameraCaptureOptions> camera_options = std::nullopt,
               aclrtContext context = nullptr);
 
-  bool ReadFrame(int frame_index, codec::TensorData* frame);
+  bool ReadFrame(int frame_index, codec::TensorData* frame,
+                 std::vector<uint8_t>* motion_nv12 = nullptr);
   void Close();
   bool has_video_input() const { return video_reader_.has_value(); }
   const std::filesystem::path& input_frame_dir() const { return input_frame_dir_; }

@@ -40,6 +40,8 @@ struct CameraCaptureOptions {
   std::size_t rtsp_queue_capacity = 3;
   // Benchmark only: capture this many native MJPEG frames before timed processing.
   std::size_t preload_frames = 0;
+  // Optional compact NV12 sidecar for the motion proxy; main pixels unchanged.
+  bool motion_nv12 = false;
 };
 
 class VideoFrameReader {
@@ -52,7 +54,8 @@ class VideoFrameReader {
   ~VideoFrameReader();
 
   const VideoInfo& info() const { return info_; }
-  bool ReadFrameAsTensor(const mlvc::TensorSpec& frame_spec, codec::TensorData* tensor);
+  bool ReadFrameAsTensor(const mlvc::TensorSpec& frame_spec, codec::TensorData* tensor,
+                         std::vector<uint8_t>* motion_nv12 = nullptr);
   void Close();
 
  private:

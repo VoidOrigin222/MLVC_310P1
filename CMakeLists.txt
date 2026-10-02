@@ -78,6 +78,24 @@ add_library(mlvc_common
   common/src/transport/rtcp_session.cc
 )
 if(BUILD_TESTING)
+  add_executable(test_translation_warp_media_unit tools/cpp/tests/test_translation_warp_media_unit.cc)
+  target_link_libraries(test_translation_warp_media_unit PRIVATE mlvc_common)
+  add_test(NAME translation_warp_media_unit COMMAND test_translation_warp_media_unit)
+  add_executable(check_translation_warp tools/cpp/validation/check_translation_warp.cc)
+  target_link_libraries(check_translation_warp PRIVATE mlvc_codec)
+  add_test(NAME translation_warp COMMAND check_translation_warp)
+  add_executable(check_motion_translation tools/cpp/validation/check_motion_translation.cc)
+  target_link_libraries(check_motion_translation PRIVATE mlvc_codec)
+  add_test(NAME motion_translation COMMAND check_motion_translation)
+  add_executable(check_motion_proxy tools/cpp/validation/check_motion_proxy.cc)
+  target_link_libraries(check_motion_proxy PRIVATE mlvc_codec)
+  add_test(NAME motion_proxy COMMAND check_motion_proxy)
+  add_executable(check_h264_reference_policy tools/cpp/validation/check_h264_reference_policy.cc)
+  target_link_libraries(check_h264_reference_policy PRIVATE mlvc_codec)
+  add_test(NAME h264_reference_policy COMMAND check_h264_reference_policy)
+  add_executable(test_translation_warp_transport tools/cpp/tests/test_translation_warp_transport.cc)
+  target_link_libraries(test_translation_warp_transport PRIVATE mlvc_codec)
+  add_test(NAME translation_warp_transport COMMAND test_translation_warp_transport)
   add_executable(test_rtp_mlvc tools/cpp/tests/test_rtp_mlvc.cc)
   target_link_libraries(test_rtp_mlvc PRIVATE mlvc_common)
   target_include_directories(test_rtp_mlvc PRIVATE common/include)
@@ -188,6 +206,11 @@ add_library(mlvc_codec
   mlvc/src/codec/rate_control/mlvc_rate_control.cc
   mlvc/src/codec/prior/prior_layout.cc
   mlvc/src/codec/tensor/tensor_utils.cc
+  mlvc/src/codec/tensor/translation_warp.cc
+  mlvc/src/motion/translation_math.cc
+  mlvc/src/motion/translation_estimator.cc
+  mlvc/src/motion/dvpp_translation_estimator.cc
+  mlvc/src/motion/h264_reference_policy.cc
   mlvc/src/codec/profile/allocation_profile.cc
   mlvc/src/codec/profile/allocation_tracking.cc
   mlvc/src/codec/profile/codec_profile.cc
@@ -267,6 +290,11 @@ add_library(mlvc_application STATIC
   application/src/cli/command_line.cc
   application/src/cli/runtime_environment.cc
 )
+add_executable(export_motion_translation tools/cpp/validation/export_motion_translation.cc)
+target_include_directories(export_motion_translation PRIVATE "${FFMPEG_INCLUDE_DIR}")
+target_link_libraries(export_motion_translation PRIVATE mlvc_codec)
+add_executable(check_dvpp_motion_proxy tools/cpp/validation/check_dvpp_motion_proxy.cc)
+target_link_libraries(check_dvpp_motion_proxy PRIVATE mlvc_codec)
 
 target_include_directories(mlvc_application
   PUBLIC
@@ -373,6 +401,10 @@ if(MLVC_BUILD_APPS)
     if(MLVC_TEST_MANIFEST)
       add_test(NAME p1_model_loading COMMAND test_p1_model_loading "${MLVC_TEST_MANIFEST}")
     endif()
+    add_executable(test_motion_nv12_inputs tools/cpp/tests/test_motion_nv12_inputs.cc)
+    target_link_libraries(test_motion_nv12_inputs PRIVATE mlvc_codec)
+    add_test(NAME motion_nv12_inputs COMMAND test_motion_nv12_inputs)
+
     add_executable(test_fp16_yuv444_to_nv12
       tools/cpp/tests/test_fp16_yuv444_to_nv12.cc
     )
@@ -436,6 +468,23 @@ if(MLVC_BUILD_APPS)
     target_compile_options(check_acl_tensor_handle PRIVATE
       $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
     )
+
+    add_executable(check_translation_reference_adaptor
+      tools/cpp/validation/check_translation_reference_adaptor.cc
+    )
+    target_link_libraries(check_translation_reference_adaptor PRIVATE mlvc_common)
+    target_compile_options(check_translation_reference_adaptor PRIVATE
+      $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
+    )
+
+    add_executable(test_encode_entropy_retirement tools/cpp/tests/test_encode_entropy_retirement.cc)
+    target_link_libraries(test_encode_entropy_retirement PRIVATE mlvc_application)
+    add_test(NAME encode_entropy_retirement COMMAND test_encode_entropy_retirement)
+
+    add_executable(test_motion_prefetch tools/cpp/tests/test_motion_prefetch.cc)
+    target_link_libraries(test_motion_prefetch PRIVATE mlvc_application)
+    add_test(NAME motion_prefetch COMMAND test_motion_prefetch)
+    set_tests_properties(motion_prefetch PROPERTIES TIMEOUT 25)
 
     add_executable(test_ordered_future_window
       tools/cpp/tests/test_ordered_future_window.cc

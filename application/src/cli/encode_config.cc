@@ -43,7 +43,9 @@ void ValidateConfigKeys(const toml::table& config) {
                   "camera_preload_frames",
                   "execution_profile", "manifest", "qp", "gop", "reset_interval", "device",
                   "frame_num", "fps", "profile_warmup_frames", "profile_output",
-                  "enable_stage_fusion", "ltr_start_idx", "ltr_period", "ltr_qp_shift",
+                  "enable_stage_fusion", "translation_warp", "motion_shifts_file", "motion_backend", "motion_prefetch_frames",
+                  "motion_x264_preset", "motion_x264_threads", "motion_skip_loop_filter", "motion_camera_nv12",
+                  "ltr_start_idx", "ltr_period", "ltr_qp_shift",
                   "target_bitrate_bps", "min_qp", "max_qp", "forced_ltr_recovery_frame",
                   "forced_ltr_reference_frame", "udp_host", "udp_port",
                   "output_transport_host", "output_transport_mode", "output_transport_port",
@@ -183,6 +185,45 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
         "profile_warmup_frames must be smaller than frame_num");
   options.profile_output_path = GetString(config, "profile_output");
   options.enable_stage_fusion = GetBool(config, "enable_stage_fusion", false);
+  options.translation_warp = GetBool(config, "translation_warp", false);
+  options.motion_shifts_file = GetString(config, "motion_shifts_file");
+  options.motion_backend = GetString(config, "motion_backend", "libx264");
+  options.motion_prefetch_frames = GetInt(config, "motion_prefetch_frames", 0);
+  options.motion_x264_preset = GetString(config, "motion_x264_preset", "medium");
+  options.motion_x264_threads = GetInt(config, "motion_x264_threads", 1);
+  options.motion_skip_loop_filter = GetBool(config, "motion_skip_loop_filter", false);
+  options.motion_camera_nv12 = GetBool(config, "motion_camera_nv12", false);
+  Check(!options.motion_camera_nv12 ||
+            (options.translation_warp && options.motion_shifts_file.empty() &&
+             options.motion_prefetch_frames > 0),
+        "camera motion NV12 requires online translation warp with prefetch");
+  Check(!options.motion_camera_nv12 || !camera_device.empty(),
+        "motion_camera_nv12 requires input_camera_device");
+  Check(!options.motion_skip_loop_filter ||
+            (options.translation_warp && options.motion_shifts_file.empty()),
+        "motion_skip_loop_filter requires online translation warp");
+  Check(options.motion_x264_preset == "medium" || options.motion_x264_preset == "veryfast" ||
+            options.motion_x264_preset == "superfast" || options.motion_x264_preset == "ultrafast",
+        "motion_x264_preset must be medium, veryfast, superfast, or ultrafast");
+  Check(options.motion_x264_threads >= 1 && options.motion_x264_threads <= 16,
+        "motion_x264_threads must be in [1, 16]");
+  Check((options.motion_x264_preset == "medium" && options.motion_x264_threads == 1) ||
+            (options.translation_warp && options.motion_backend == "libx264" &&
+             options.motion_shifts_file.empty()),
+        "non-default x264 settings require online libx264 translation warp");
+
+  Check(options.motion_prefetch_frames >= 0 && options.motion_prefetch_frames <= 2,
+        "motion_prefetch_frames must be 0, 1, or 2");
+  Check(options.motion_prefetch_frames == 0 || options.translation_warp,
+        "motion prefetch requires translation_warp = true");
+  Check(options.motion_backend == "libx264" || options.motion_backend == "dvpp",
+        "motion_backend must be libx264 or dvpp");
+  Check(options.translation_warp || options.motion_backend == "libx264",
+        "a non-default motion_backend requires translation warp");
+  Check(options.motion_shifts_file.empty() || options.motion_backend == "libx264",
+        "motion_shifts_file replays saved motion and cannot be combined with motion_backend=dvpp");
+  Check(options.translation_warp || options.motion_shifts_file.empty(),
+        "motion_shifts_file requires translation_warp = true");
   options.execution_profile = execution_profile;
   options.gop = gop;
   options.reset_interval = reset_interval;
@@ -236,6 +277,7 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
     camera_options.rtsp_gop = static_cast<uint32_t>(camera_rtsp_gop);
     camera_options.rtsp_queue_capacity = static_cast<std::size_t>(camera_rtsp_queue_capacity);
     camera_options.preload_frames = static_cast<std::size_t>(camera_preload_frames);
+    camera_options.motion_nv12 = options.motion_camera_nv12;
     options.camera_options = camera_options;
     options.input_video_path = camera_device;
   }

@@ -13,10 +13,14 @@ EncodeState::EncodeState(const std::vector<int64_t>& feature_shape)
 EncodeFrameDecision EncodeState::BeginFrame(int frame_index, const EncodeStreamOptions& options) {
   const int effective_gop = gop_override_ > 0 ? gop_override_ : options.gop;
   const bool is_i_frame = force_random_access_ ||
-                          IsMlvcIFrame(frame_index, effective_gop, options.reset_interval);
+                          (options.translation_warp ? frame_index % effective_gop == 0
+                              : IsMlvcIFrame(frame_index, effective_gop, options.reset_interval));
   force_random_access_ = false;
   const int gop_cycle_index = effective_gop > 0 ? frame_index % effective_gop : frame_index;
-  if (ShouldResetReferenceFeature(frame_index, effective_gop, options.reset_interval)) {
+  const bool reset_reference = options.translation_warp
+      ? is_i_frame || frame_index % options.reset_interval == 0
+      : ShouldResetReferenceFeature(frame_index, effective_gop, options.reset_interval);
+  if (reset_reference) {
     reference_.ResetFeature();
   }
   if (is_i_frame) {
@@ -41,7 +45,7 @@ EncodeFrameDecision EncodeState::BeginFrame(int frame_index, const EncodeStreamO
       is_i_frame ? MlvcFrameType::kIFrame
                  : (use_ltr_recovery ? MlvcFrameType::kLtrRecovery : MlvcFrameType::kPFrame),
       is_i_frame, mark_as_ltr,
-      ShouldResetReferenceFeature(frame_index, effective_gop, options.reset_interval), -1};
+      reset_reference, -1};
 }
 
 bool EncodeState::ApplyControl(const mlvc::transport::MlvcControlMessage& message,

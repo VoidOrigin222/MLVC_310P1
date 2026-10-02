@@ -86,6 +86,7 @@ void PutBe32(std::vector<uint8_t>* out, uint32_t value) {
 
 mlvc::transport::MlvcScu MakeScu(const MlvcBitstreamHeader& header, uint32_t config_id) {
   mlvc::transport::MlvcScu scu;
+  scu.translation_warp = header.translation_warp;
   scu.config_id = config_id;
   scu.codec_bundle_sha256 = header.codec_bundle_sha256;
   scu.coded_width = static_cast<uint32_t>(header.width);
@@ -146,6 +147,8 @@ UdpMlvcSender::UdpMlvcSender(const std::string& host, uint16_t port,
 UdpMlvcSender::~UdpMlvcSender() = default;
 
 void UdpMlvcSender::SendHeader(const MlvcBitstreamHeader& header) {
+  Check(!header.translation_warp,
+        "translation warp requires MLVC-ES file or RTP; legacy UDP cannot carry geometry");
   Check(!closed_, "MLVC UDP sender is closed");
   Check(!header_sent_, "MLVC UDP header has already been sent");
   MlvcBitstreamHeader normalized = header;
@@ -364,6 +367,11 @@ void RtpMlvcSender::SendFrame(int frame_index, mlvc::codec::MlvcFrameType frame_
                             expected_frame_index_ == 0);
   Check(metadata.explicit_metadata || frame_type == mlvc::codec::MlvcFrameType::kIFrame,
         "RTP inter frames require explicit reference metadata");
+  const bool warp = mlvc::transport::ParseScu(session_config_).translation_warp;
+  Check(metadata.translation_warp == warp,
+        "RTP frame warp mode disagrees with stream capability");
+  Check((metadata.unit_flags & mlvc::transport::kEfuTranslationWarp) == 0 || warp,
+        "unexpected RTP frame warp flag");
   Check(payload.size() <= max_payload_size_,
         "RTP MLVC frame payload exceeds the configured resolution limit");
   Check(payload.size() <= std::numeric_limits<uint32_t>::max(),
@@ -401,6 +409,9 @@ void RtpMlvcSender::SendFrame(int frame_index, mlvc::codec::MlvcFrameType frame_
     efu.short_ref_frame_id = mlvc::transport::kMlvcNoReference;
     efu.long_ref_frame_id = mlvc::transport::kMlvcNoReference;
   }
+  if (warp) efu.unit_flags |= mlvc::transport::kEfuTranslationWarp;
+  efu.kx = metadata.kx;
+  efu.ky = metadata.ky;
   efu.entropy_payload = payload;
   const auto unit = mlvc::transport::SerializeEfu(efu);
   sender_.SendUnit(mlvc::transport::RtpUnitType::kEfu, 0, config_id_,
@@ -765,6 +776,7 @@ MlvcBitstreamHeader RtpMlvcReceiver::ReceiveHeader() {
     active_config_unit_ = unit;
     MlvcBitstreamHeader header;
     header.version = 4;
+    header.translation_warp = scu.translation_warp;
     header.width = static_cast<int>(scu.visible_width);
     header.height = static_cast<int>(scu.visible_height);
     header.coded_width = static_cast<int>(scu.coded_width);
@@ -997,6 +1009,7 @@ bool RtpMlvcReceiver::ReceiveFrame(int* frame_index, mlvc::codec::MlvcFrameType*
     }
     const auto efu = mlvc::transport::ParseEfu(message);
     Check(efu.config_id == config_id_, "RTP EFU references an unknown SCU");
+    mlvc::transport::ValidateEfuTranslationWarp(efu, header_.translation_warp);
     if (pending_config_id_ != 0) {
       Check(efu.config_id == pending_config_id_ && efu.frame_type == 0 &&
                 (efu.unit_flags & (mlvc::transport::kEfuRandomAccess |
@@ -1049,6 +1062,9 @@ bool RtpMlvcReceiver::ReceiveFrame(int* frame_index, mlvc::codec::MlvcFrameType*
           "MLVC RTP frame payload exceeds maximum for resolution");
     *payload = efu.entropy_payload;
     last_frame_metadata_.explicit_metadata = true;
+    last_frame_metadata_.translation_warp = header_.translation_warp;
+    last_frame_metadata_.kx = efu.kx;
+    last_frame_metadata_.ky = efu.ky;
     last_frame_metadata_.model_q_index = efu.model_q_index;
     last_frame_metadata_.unit_flags = efu.unit_flags;
     last_frame_metadata_.short_ref_frame_id = efu.short_ref_frame_id;

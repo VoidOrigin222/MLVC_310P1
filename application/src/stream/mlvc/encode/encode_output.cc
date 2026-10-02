@@ -67,10 +67,15 @@ void EncodeOutput::Flush(PendingEncodedFrame pending) {
                              pending.metadata, payload);
     }
   }
+  if (pending.ready_at != std::chrono::steady_clock::time_point{})
+    ready_to_output_.Add(std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - pending.ready_at).count());
   payload_bytes_ += payload.size();
   rate_controller_.Update(static_cast<double>(pending.frame_index) / fps_, pending.frame_type,
                           pending.q_index, payload.size(),
-                          mlvc::io::kMlvcBitstreamFrameOverheadBytes);
+                          mlvc::io::kMlvcBitstreamFrameOverheadBytes +
+                              (pending.metadata.translation_warp &&
+                               pending.frame_type != MlvcFrameType::kIFrame ? 2 : 0));
 }
 
 void EncodeOutput::Close() {

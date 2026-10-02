@@ -30,6 +30,15 @@ struct EncodeStreamOptions {
   std::filesystem::path profile_output_path;
   std::string execution_profile;
   bool enable_stage_fusion = false;
+  bool translation_warp = false;
+  std::string motion_backend = "libx264";
+  int motion_prefetch_frames = 0;
+  std::string motion_x264_preset = "medium";
+  int motion_x264_threads = 1;
+  bool motion_skip_loop_filter = false;
+  bool motion_camera_nv12 = false;
+  // Optional full-frame CSV: frame_index,kx,ky, including zero GOP starts.
+  std::filesystem::path motion_shifts_file;
   double fps = 30.0;
   int qp = 18;
   int frame_num = -1;
