@@ -199,6 +199,14 @@ skip 路径处理本机 libx264/VENC 产生且经过引用策略校验的受限 
 本次 A/B 使用无节拍文件输入；即使文件吞吐达到 30 FPS，也不等同于实时时钟下的
 camera 采集、完整网络链路或端到端两帧延迟保证。
 
+已部署源码 `afd4a0f` 的 1080p 实拍在线 3000 帧长测中，编码为 26.7962 FPS，
+接收解码为 26.809 FPS（包含等待帧到达），未达到 30 FPS。
+本轮量化平移均为零，未验证持续显著全局平移场景；
+采集序号缺口 333；全部 3000 帧解码不能代表完整采集链路无掉帧。
+相机采集、转换成本、前置队列和完整短/长测结果见
+[实时相机在线速度验收](../acceptance/motion-online-20261002/README.md)。
+此结果与无节拍文件输入的吞吐验收分别记录。
+
 完整测试入口为 `ctest --test-dir build --output-on-failure`；已完成运行的两板日志均为
 `/root/workplace/grifcc/prefetch-validation/tests-final.log`，各 32/32 通过。
 增强 motion proxy 负例复跑日志为同目录 `test-parity-fixed.log`，两板通过。
