@@ -1,5 +1,17 @@
 # Windows 三路低延时对比界面
 
+## HTML 控制台（推荐）
+
+启动本地服务：
+
+```powershell
+python tools/ui/web_ui.py
+```
+
+或双击 `run_web_ui.bat`，然后打开 <http://127.0.0.1:8765>。浏览器页面提供
+RTSP 地址、启停、同带宽/同质量调参和三路统计；实际视频由本机弹出的三个
+`ffplay` 窗口播放。这样保留了低延时 RTSP 播放，同时使用 HTML 做控制面板。
+
 启动：
 
 ```powershell
