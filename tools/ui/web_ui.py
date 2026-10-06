@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import socket
 import subprocess
+import sys
 import threading
 import time
 from collections import deque
@@ -26,6 +28,18 @@ BITRATE_ADJUST_SECONDS = 30.0
 
 
 UI_ROOT = Path(__file__).resolve().parent
+LOG_ROOT = (
+    Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
+    / "SemanticVideoUI" / "logs"
+    if getattr(sys, "frozen", False) else UI_ROOT
+)
+
+
+def default_ffmpeg() -> str:
+    for bundled in (UI_ROOT / "ffmpeg.exe", UI_ROOT / "ffmpeg" / "ffmpeg.exe"):
+        if bundled.is_file():
+            return str(bundled)
+    return "ffmpeg"
 
 
 class Controller:
@@ -37,13 +51,13 @@ class Controller:
             "mlvc": "rtsp://192.168.5.3:8554/mlvc",
             "webrtc": "http://127.0.0.1:8889",
             "transport": "tcp",
-            "ffmpeg": "ffmpeg",
+            "ffmpeg": default_ffmpeg(),
             "h264_kbps": 8000,
             "h264_qp": 40,
             "mlvc_kbps": 2000,
             "h264_bpp": 0.129,
             "mlvc_bpp": 0.032,
-            "mlvc_stats_port": 39341,
+            "mlvc_stats_port": int(os.environ.get("MLVC_UI_STATS_PORT", "39341")),
             "mode": "same_quality",
             "fps": 30,
         }
@@ -334,10 +348,12 @@ class Controller:
             "-pix_fmt", "yuv420p", "-f", "rtsp", "-rtsp_transport", "tcp", output,
         ]
         try:
-            self.ffmpeg_log = open(Path(__file__).with_name("ffmpeg_ui.log"), "ab")
+            LOG_ROOT.mkdir(parents=True, exist_ok=True)
+            self.ffmpeg_log = open(LOG_ROOT / "ffmpeg_ui.log", "ab")
             self.h264_encoder = subprocess.Popen(
                 args, stdout=subprocess.DEVNULL, stderr=self.ffmpeg_log,
-                creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+                creationflags=(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                               | getattr(subprocess, "CREATE_NO_WINDOW", 0)),
             )
         except OSError as exc:
             if self.ffmpeg_log is not None:
@@ -476,6 +492,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_asset("app.js", "text/javascript; charset=utf-8")
         elif path == "/api/config":
             self.send_json(controller.cfg)
+        elif path == "/api/health":
+            self.send_json({"application": "SemanticVideoUI", "version": 1})
         elif path == "/api/status":
             self.send_json(controller.status())
         else:

@@ -50,6 +50,35 @@ H.264 QP 初始值为 40，可在参数设置中调整（0–51 整数）。它�
 
 ## 启动网页服务
 
+### Windows EXE
+
+双击 `SemanticVideoUI.exe`，启动器会启动本地 UI 服务并打开浏览器。
+EXE 内置 Python、网页资源、FFmpeg 及共享库，不需要另外安装 Python 或 FFmpeg。
+启动器窗口中的“停止并退出”或关闭按钮会停止 UI 服务及它管理的 H.264 发布器。
+再次双击时，如果已有 UI 在运行，会打开现有页面。
+MediaMTX 和板端编解码仍按原部署方式提前启动。
+
+EXE 的 FFmpeg 日志保存到 `%LOCALAPPDATA%\SemanticVideoUI\logs\ffmpeg_ui.log`。
+
+在 Windows x64 上重建 EXE（使用含 Tkinter 的 Python 3.10+）：
+
+```powershell
+cd tools/ui
+python -m pip install -r requirements-build.txt
+python build_windows_exe.py
+```
+
+构建时需要 FFmpeg 可在 PATH 中找到，或通过 `--ffmpeg` 指定 `ffmpeg.exe`。
+默认输出为仓库根目录的 `artifacts/ui-exe/dist/SemanticVideoUI.exe`。
+
+验证生成的 EXE（在移除 Python / FFmpeg PATH 的子进程中测试页面、编码、启动及退出）：
+
+```powershell
+python test_windows_exe.py ../../artifacts/ui-exe/dist/SemanticVideoUI.exe --report ../../artifacts/ui-exe/dist/VALIDATION.json
+```
+
+### Python 方式
+
 ```powershell
 # 从仓库根目录执行
 cd tools/ui
