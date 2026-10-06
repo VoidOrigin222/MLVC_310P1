@@ -52,6 +52,9 @@ int main() {
              << "output_transport_pacing_rate_bps = 1000000\n"
              << "output_transport_max_queue_bytes = 65536\n"
              << "output_transport_max_queue_delay_ms = 250\n"
+             << "mlvc_stats_host = \"127.0.0.1\"\n"
+             << "mlvc_stats_port = 39341\n"
+             << "mlvc_stats_interval_frames = 30\n"
              << "[pipeline]\nstream_workers = 3\nframe_buffer_slots = 4\n";
     }
     const mlvc::EncoderApplicationConfig parsed = mlvc::LoadEncoderConfig(config);
@@ -65,6 +68,10 @@ int main() {
     mlvc::Check(parsed.stream.output_transport_max_queue_bytes == 65536 &&
                     parsed.stream.output_transport_max_queue_delay_ms == 250,
                 "transport queue limits were not preserved");
+    mlvc::Check(parsed.stream.mlvc_stats_host == "127.0.0.1" &&
+                    parsed.stream.mlvc_stats_port == 39341 &&
+                    parsed.stream.mlvc_stats_interval_frames == 30,
+                "MLVC stats destination was not preserved");
     mlvc::Check(parsed.stream.pipeline.stream_workers == 3,
                 "configured encoder stream worker count was not preserved");
     mlvc::Check(parsed.stream.motion_prefetch_frames == 0,
@@ -106,6 +113,9 @@ int main() {
                    "burst smaller than an RTP/UDP packet");
     expect_invalid("output_transport_max_queue_delay_ms = -1\n",
                    "negative transport queue delay");
+    expect_invalid("mlvc_stats_port = 65536\n", "MLVC stats port above range");
+    expect_invalid("mlvc_stats_interval_frames = 0\n", "zero MLVC stats interval");
+    expect_invalid("mlvc_stats_port = 39341\n", "MLVC stats port without host");
     expect_invalid("fps = \"25\"\n", "string FPS");
     expect_invalid("execution_profile = 123\n", "non-string execution profile");
     expect_invalid("qp = 1.5\n", "floating-point QP");
@@ -258,6 +268,32 @@ int main() {
           }
         }
     }
+
+    write_motion_input(true,
+        "camera_fps = 30\ncamera_rtsp_url = \"rtsp://127.0.0.1:8554/original\"\n"
+        "camera_rtsp_transport = \"udp\"\ncamera_rtsp_bitrate_bps = 6000000\n"
+        "camera_rtsp_gop = 60\ncamera_rtsp_queue_capacity = 2\n"
+        "translation_warp = true\nmotion_backend = \"dvpp\"\n"
+        "motion_prefetch_frames = 2\nmotion_camera_nv12 = true\n");
+    const auto rtsp_config = mlvc::LoadEncoderConfig(config);
+    mlvc::Check(rtsp_config.stream.camera_options.has_value(), "camera RTSP options missing");
+    const auto& rtsp_options = *rtsp_config.stream.camera_options;
+    mlvc::Check(rtsp_options.fps == 30.0 &&
+                    rtsp_options.rtsp_url == "rtsp://127.0.0.1:8554/original" &&
+                    rtsp_options.rtsp_transport == "udp" &&
+                    rtsp_options.rtsp_bitrate_bps == 6'000'000 &&
+                    rtsp_options.rtsp_gop == 60 && rtsp_options.rtsp_queue_capacity == 2 &&
+                    rtsp_config.stream.motion_backend == "dvpp" && rtsp_options.motion_nv12,
+                "DVPP camera RTSP tuning and simultaneous hardware motion were not preserved");
+    reject_motion_input(true,
+        "camera_fps = 29.97\ncamera_rtsp_url = \"rtsp://127.0.0.1:8554/original\"\n",
+        "fractional DVPP camera RTSP frame rate");
+    reject_motion_input(true,
+        "camera_fps = 0.5\ncamera_rtsp_url = \"rtsp://127.0.0.1:8554/original\"\n",
+        "DVPP camera RTSP frame rate below one");
+    write_motion_input(true, "camera_fps = 29.97\n");
+    mlvc::Check(mlvc::LoadEncoderConfig(config).stream.camera_options->fps == 29.97,
+                "fractional camera FPS without RTSP must remain supported");
 
     std::cout << "encode config test passed\n";
     return 0;

@@ -40,8 +40,8 @@ bash scripts/bash_run.sh [configs/decoder.toml]
 
 可选平移 warp 的模型边界、GOP/reset 语义、x264 与运动指令重放配置见
 [平移 warp 说明](docs/translation_warp.md)，部署示例为
-[`configs/encoder_motion.toml`](configs/encoder_motion.toml) 和
-[`configs/decoder_motion.toml`](configs/decoder_motion.toml)。
+[`configs/encoder.toml`](configs/encoder.toml) 和
+[`configs/decoder.toml`](configs/decoder.toml)。
 
 运行脚本会加载 CANN 环境。解码端 `bash_run.sh` 还会自动加载仓库 `output/custom_opp` 下存在的隔离算子包。仓库中的配置是示例；运行前请修改输入帧目录、模型 manifest、设备地址、端口和输出方式。可通过 `MLVC_VECTOR_OPAPI_LIB=/path/to/libcust_opapi.so` 显式覆盖算子库；需要非系统默认 FFmpeg 时，设置 `MLVC_FFMPEG_BIN=/path/to/ffmpeg/bin`。
 
@@ -60,3 +60,5 @@ ctest --test-dir build --output-on-failure
 ## 模型资产
 
 仓库不包含设备构建目录、生成文件、本地日志和模型二进制文件。模型资产应通过 manifest 和外部部署目录提供，具体部署方式见 [P1_DEPLOYMENT.md](P1_DEPLOYMENT.md)。
+
+编码板目录及历史文件归档位置见 [部署目录说明](docs/encoder_deployment_layout.md)。

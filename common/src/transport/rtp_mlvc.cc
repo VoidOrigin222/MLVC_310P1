@@ -308,6 +308,9 @@ struct RtpMlvcSender::Impl {
   struct PendingPacket {
     std::vector<uint8_t> bytes;
     std::chrono::steady_clock::time_point enqueued_at;
+    // Only the first fragment of a newly queued MLVC media unit carries this
+    // value. Retransmissions leave it at zero so a media unit is counted once.
+    std::size_t media_unit_bytes = 0;
   };
   int socket = -1;
   sockaddr_storage address{};
@@ -337,6 +340,7 @@ struct RtpMlvcSender::Impl {
   std::vector<uint8_t> session_config;
   uint8_t session_config_flags = 0;
   std::atomic<uint64_t> wire_bytes_sent{0};
+  std::atomic<uint64_t> media_unit_bytes_sent{0};
   std::atomic<uint64_t> packets_sent{0};
   std::atomic<uint64_t> burst_bytes{0};
   std::atomic<uint64_t> max_burst_bytes_observed{0};
@@ -599,7 +603,8 @@ struct RtpMlvcSender::Impl {
         packet[10] = static_cast<uint8_t>(ssrc >> 8);
         packet[11] = static_cast<uint8_t>(ssrc);
         std::copy(payload.begin(), payload.end(), packet.begin() + 12);
-        packets.push_back(PendingPacket{std::move(packet), std::chrono::steady_clock::now()});
+        packets.push_back(PendingPacket{std::move(packet), std::chrono::steady_clock::now(),
+                                        i == 0 ? unit.size() : 0});
       }
     } catch (...) {
       ReleaseQueueReservation(reserved_bytes);
@@ -711,6 +716,7 @@ struct RtpMlvcSender::Impl {
             std::chrono::steady_clock::now() - send_begin);
         socket_block_us.fetch_add(static_cast<uint64_t>(blocked.count()));
         wire_bytes_sent.fetch_add(estimated_wire_packet_size);
+        media_unit_bytes_sent.fetch_add(pending.media_unit_bytes);
         packets_sent.fetch_add(1);
         rtp_octets_sent.fetch_add(pending.bytes.size() >= 12 ? pending.bytes.size() - 12 : 0);
         last_rtp_timestamp.store((static_cast<uint32_t>(pending.bytes[4]) << 24) |
@@ -889,6 +895,8 @@ void RtpMlvcSender::ResendSessionConfig(uint32_t timestamp) {
 }
 RtpTransportStats RtpMlvcSender::Stats() const {
   RtpTransportStats stats;
+  stats.media_unit_bytes = impl_->media_unit_bytes_sent.load();
+  stats.rtp_payload_bytes = impl_->rtp_octets_sent.load();
   stats.wire_bytes = impl_->wire_bytes_sent.load();
   stats.packets = impl_->packets_sent.load();
   stats.max_burst_bytes = impl_->max_burst_bytes_observed.load();

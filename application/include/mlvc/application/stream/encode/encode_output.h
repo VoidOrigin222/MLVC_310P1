@@ -36,6 +36,7 @@ class EncodeOutput {
 
   const LatencyStats& ready_to_output() const { return ready_to_output_; }
   uint64_t payload_bytes() const { return payload_bytes_; }
+  mlvc::transport::RtpTransportStats transport_stats() const;
   uint64_t file_bytes() const;
 
  private:

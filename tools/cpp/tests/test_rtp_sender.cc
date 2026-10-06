@@ -41,6 +41,7 @@ int main() {
   sender.Flush();
   const auto stats = sender.Stats();
   assert(stats.packets == 6);
+  assert(stats.media_unit_bytes == initial_scu_unit.size() + input_unit.size());
   assert(stats.wire_bytes == initial_scu_unit.size() + 64 + input_unit.size() + 5 * 64);
   std::vector<uint8_t> output;
   bool complete = false;

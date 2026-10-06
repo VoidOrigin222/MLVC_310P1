@@ -33,6 +33,7 @@ struct CameraCaptureOptions {
   int height = 1080;
   double fps = 30.0;
   std::string pixel_format = "MJPG";
+  // Camera preview: device NV12 -> DVPP H.264 -> libavformat RTSP (VENC channel 0).
   std::string rtsp_url;
   std::string rtsp_transport = "tcp";
   uint32_t rtsp_bitrate_bps = 8'000'000;
