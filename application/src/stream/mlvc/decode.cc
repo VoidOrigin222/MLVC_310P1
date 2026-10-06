@@ -1,5 +1,6 @@
 #include <acl/acl.h>
 #include <mlvc/application/input/frame_input_queue.h>
+#include <mlvc/application/stream/live_quality_capture.h>
 #include <mlvc/application/pipeline/codec_frame_pipeline.h>
 #include <mlvc/application/pipeline/ordered_future_window.h>
 #include <mlvc/application/progress.h>
@@ -754,6 +755,9 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
                     TensorInput("y_raw_1", decoded.y_raw_1), ref_feature_input,
                    TensorInput("q_index_shifted", q_index_shifted_tensor)},
                    &profiler);
+      static mlvc::app::LiveQualityCapture quality_capture;
+      quality_capture.Reconstruction(frame_index, decoder_output.At("x_hat"),
+                                     decoder_output.Handle("x_hat"));
       if (header.translation_warp && (frame_index + 1) % header.reset_interval == 0 &&
           (frame_index + 1) % header.gop != 0) {
         SaveWarpResetFrame(decoder_output, &state, &profiler);

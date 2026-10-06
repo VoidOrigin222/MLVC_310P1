@@ -1,19 +1,27 @@
+# RTP MLVC receiver -> DVPP H.264 RTSP publisher.
 mode = "decode"
+manifest = "/root/workplace/grifcc/MLVC_310P1/mlvc1080p/manifest_motion_ascend310p1.json"
+format = "none"
 device = 0
 frame_num = -1
-format = "none"
-input_transport_port = 39191
-input_transport_mode = "rtp"
-input_transport_payload_type = 96
-output_transport_mode = "none"
+fps = 30
 execution_profile = "pipeline-v1"
+
+input_transport_mode = "rtp"
+input_transport_port = 39340
+input_transport_payload_type = 96
+
+output_transport_mode = "rtsp"
+output_transport_rtsp_url = "rtsp://192.168.5.3:8554/mlvc"
+output_transport_rtsp_encoder = "dvpp"
+output_transport_rtsp_preset = "ultrafast"
+output_transport_rtsp_transport = "udp"
+output_transport_rtsp_crf = 0
+output_transport_queue_capacity = 3
 
 [pipeline]
 stream_workers = 1
 queue_capacity = 3
 frame_buffer_slots = 3
-entropy_workers = 4
+entropy_workers = 1
 graph_packet_capacity = 2
-
-[model]
-manifest = "../mlvc1080p/manifest_decoder_310P1.json"
