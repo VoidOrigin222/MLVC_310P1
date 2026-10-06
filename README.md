@@ -45,6 +45,12 @@ bash scripts/bash_run.sh [configs/decoder.toml]
 
 运行脚本会加载 CANN 环境。解码端 `bash_run.sh` 还会自动加载仓库 `output/custom_opp` 下存在的隔离算子包。仓库中的配置是示例；运行前请修改输入帧目录、模型 manifest、设备地址、端口和输出方式。可通过 `MLVC_VECTOR_OPAPI_LIB=/path/to/libcust_opapi.so` 显式覆盖算子库；需要非系统默认 FFmpeg 时，设置 `MLVC_FFMPEG_BIN=/path/to/ffmpeg/bin`。
 
+## 三路视频 UI
+
+Windows 本地三路视频控制台位于 [`tools/ui/`](tools/ui/README.md)，通过
+MediaMTX WebRTC 播放原图、H.264 和语义压缩，支持固定 QP 对照、显示延时补偿与带宽曲线。
+运行方式及依赖见该目录的说明；板端配套使用 `motion` 分支的 `e32a134` 或更新版本。
+
 ## 测试
 
 ```bash

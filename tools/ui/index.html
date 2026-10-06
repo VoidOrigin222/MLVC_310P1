@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#15181c">
+  <title>语义压缩 · 三路视频控制台</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="workspace">
+    <header class="topbar">
+      <h1 class="product">语义压缩视频监控系统</h1><span id="live-count">0 / 3 在线</span>
+      <div class="control-actions"><button class="button plain" id="reconnect-button"><svg viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></svg>重新连接</button><button class="button secondary" id="stop-button"><svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1"/></svg>停止 H.264</button><button class="button primary" id="start-button"><svg viewBox="0 0 24 24"><path d="m9 5 11 7-11 7z"/></svg>启动 H.264</button></div><div class="topbar-right"><time id="clock">--:--:--</time><button class="button secondary settings-trigger" data-open-settings>参数设置</button></div>
+    </header>
+    <main>
+      <div class="notice" id="notice" role="status" hidden></div>
+      <section id="monitor" class="monitor-section" aria-label="三路视频"><div class="video-grid" id="video-grid"></div></section>
+      <section class="bitrate-panel" aria-labelledby="bitrate-title">
+        <div class="bitrate-heading"><h2 id="bitrate-title">码率对比 <span>kB/s</span></h2><div class="chart-legend"><span class="h264-legend">H.264</span><span class="semantic-legend">语义压缩</span></div></div>
+        <svg id="bitrate-chart" role="img" aria-label="H.264 与语义压缩最近 30 秒码率曲线"></svg>
+      </section>
+    </main>
+  </div>
+  <dialog id="settings-dialog" aria-labelledby="settings-title"><form id="settings-form"><div class="drawer-heading"><div><h2 id="settings-title">推流参数</h2></div><button type="button" class="icon-button" id="close-settings" aria-label="关闭设置">×</button></div><fieldset><legend>视频源与播放</legend><label>原图 RTSP<input id="original" name="original" required value="rtsp://192.168.5.3:8554/camera-original"></label><label>H.264 输出 RTSP<input id="h264" name="h264" required value="rtsp://127.0.0.1:8554/camera-h264"></label><label>语义压缩 RTSP 服务地址<input id="mlvc" name="mlvc" required value="rtsp://192.168.5.3:8554"></label><label>WebRTC 服务地址<input id="webrtc" name="webrtc" required value="http://127.0.0.1:8889"></label></fieldset><fieldset><legend>H.264 编码</legend><div class="form-grid"><label>RTSP 传输<select id="transport" name="transport"><option value="tcp">TCP</option><option value="udp">UDP</option></select></label><label>H.264 QP<input id="h264_qp" name="h264_qp" type="number" min="0" max="51" step="1" value="40" required></label></div><label>FFmpeg 路径<input id="ffmpeg" name="ffmpeg" value="ffmpeg" required></label></fieldset><fieldset><legend>语义压缩统计</legend><label>编码端 UDP 统计端口<input id="mlvc_stats_port" name="mlvc_stats_port" type="number" min="1" max="65535" value="39341" required></label></fieldset><div id="settings-error" role="alert" class="form-error" hidden></div><div class="drawer-actions"><button type="button" class="button secondary" id="cancel-settings">取消</button><button type="submit" class="button primary" id="save-settings">保存并连接</button></div></form></dialog>
+</body>
+</html>

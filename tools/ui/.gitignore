@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.log
+quality_runs/
+*-preview.png
+*-test-*.png
+*-test-*.json
+*-verification.json
+*-status-*.json
+*-fps-*.json
+*-browser-stats-*.json
+*-log-offset.txt
+live_fixed_qp_config.json
+*.mkv
