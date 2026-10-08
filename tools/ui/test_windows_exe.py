@@ -61,6 +61,21 @@ def main() -> None:
             assert process.poll() is None, "Existing launcher must survive the second launch"
             with urlopen(address, timeout=2) as response:
                 assert response.status == 200
+            base = address.removesuffix('/api/health')
+            with urlopen(base + '/api/config', timeout=2) as response:
+                config = json.load(response)
+            expected_urls = {
+                'original': 'rtsp://127.0.0.1:8554/camera-original',
+                'h264': 'rtsp://127.0.0.1:8554/camera-h264',
+                'mlvc': 'rtsp://127.0.0.1:8554/mlvc',
+                'webrtc': 'http://127.0.0.1:8889',
+            }
+            for key, url in expected_urls.items():
+                assert config[key] == url, (key, config[key])
+            with urlopen(base + '/', timeout=2) as response:
+                page = response.read().decode('utf-8')
+            assert 'value="rtsp://127.0.0.1:8554/mlvc"' in page
+            result['default_urls'] = expected_urls
             result["single_instance_reuse"] = True
             assert process.wait(timeout=30) == 0, "GUI shutdown failed"
             try:

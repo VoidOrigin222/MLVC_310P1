@@ -203,13 +203,13 @@ $('start-button').addEventListener('click',()=>pipeline('start'));
 $('stop-button').addEventListener('click',()=>pipeline('stop'));
 $('reconnect-button').addEventListener('click',reconnect);
 for(const button of document.querySelectorAll('[data-fullscreen]'))button.addEventListener('click',()=>$(button.dataset.fullscreen+'-wrap').requestFullscreen().catch(error=>notice('全屏失败：'+error.message,true)));
-function fillSettings(){for(const [key,value] of Object.entries(settings))if($(key)&&$(key).matches('input,select')){let display=value;if(key==='mlvc'){const source=new URL(value);source.pathname='';source.search='';source.hash='';display=source.href;}$(key).value=display;}}
+function fillSettings(){for(const [key,value] of Object.entries(settings))if($(key)&&$(key).matches('input,select'))$(key).value=value;}
 for(const button of document.querySelectorAll('[data-open-settings]'))button.addEventListener('click',()=>{fillSettings();$('settings-error').hidden=true;$('settings-dialog').showModal();});
 for(const id of ['close-settings','cancel-settings'])$(id).addEventListener('click',()=>$('settings-dialog').close());
 $('settings-dialog').addEventListener('close',fillSettings);
 $('settings-form').addEventListener('submit',async e=>{e.preventDefault();const draft={...settings};for(const field of $('settings-form').querySelectorAll('input,select'))draft[field.name]=field.type==='number'?Number(field.value):field.value.trim();
   $('save-settings').disabled=true;
-  try {const semanticSource=new URL(settings.mlvc),semanticServer=new URL(draft.mlvc);semanticServer.pathname=semanticSource.pathname;semanticServer.search=semanticSource.search;draft.mlvc=semanticServer.href;for(const key of ['original','h264','mlvc'])if(new URL(draft[key]).protocol!=='rtsp:')throw new Error('视频源地址必须使用 rtsp://');if(!['http:','https:'].includes(new URL(draft.webrtc).protocol))throw new Error('WebRTC 地址必须使用 http:// 或 https://');const applyQp=draft.mode==='same_quality'&&draft.h264_qp!==settings.h264_qp&&enabled;await api('/api/config',draft);settings=draft;$('settings-dialog').close();if(applyQp)await pipeline('start');else reconnect();notice('已保存');}
+  try {for(const key of ['original','h264','mlvc'])if(new URL(draft[key]).protocol!=='rtsp:')throw new Error('视频源地址必须使用 rtsp://');if(!['http:','https:'].includes(new URL(draft.webrtc).protocol))throw new Error('WebRTC 地址必须使用 http:// 或 https://');const applyQp=draft.mode==='same_quality'&&draft.h264_qp!==settings.h264_qp&&enabled;await api('/api/config',draft);settings=draft;$('settings-dialog').close();if(applyQp)await pipeline('start');else reconnect();notice('已保存');}
   catch(error){$('settings-error').hidden=false;$('settings-error').textContent=String(error.message).replace(/mlvc/gi,'语义压缩');}finally{$('save-settings').disabled=false;}
 });
 function clock(){const now=new Date();$('clock').textContent=now.toLocaleTimeString('zh-CN',{hour12:false});$('clock').dateTime=now.toISOString();}clock();setInterval(clock,1000);

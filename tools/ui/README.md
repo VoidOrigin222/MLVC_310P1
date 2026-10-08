@@ -41,12 +41,16 @@ H.264 QP 初始值为 40，可在参数设置中调整（0–51 整数）。它�
 
 | 用途 | 地址 |
 | --- | --- |
-| 原图 RTSP（编码板发布） | `rtsp://192.168.5.3:8554/camera-original` |
+| 原图 RTSP（编码板发布） | `rtsp://127.0.0.1:8554/camera-original` |
 | H.264 RTSP（Windows FFmpeg 发布） | `rtsp://127.0.0.1:8554/camera-h264` |
-| MLVC RTSP（解码板发布） | `rtsp://192.168.5.3:8554/mlvc` |
+| MLVC RTSP（解码板发布） | `rtsp://127.0.0.1:8554/mlvc` |
 | 网页 | `http://127.0.0.1:8765` |
 | MediaMTX WebRTC | `http://127.0.0.1:8889` |
 | MediaMTX API | `http://127.0.0.1:9997` |
+
+UI 与 MediaMTX 默认在同一台电脑，播放与发布地址使用 `127.0.0.1`。
+参数设置显示并保存完整 RTSP 地址，包括语义压缩的 `/mlvc` 流路径；可直接修改完整路径。
+板端配置中的 RTSP 服务器 IP 和统计接收 IP 仍需填写该电脑的局域网 IP。
 
 ## 启动网页服务
 
@@ -218,4 +222,5 @@ MediaMTX API 中路径必须 `ready=true` 才判定为已发布；“播放中�
 python -m unittest -v test_web_ui.py
 node test_delayed_video.cjs
 node test_bitrate_history.cjs
+node test_settings.cjs
 ```
