@@ -24,10 +24,10 @@ class StreamStatusTests(unittest.TestCase):
             return self.controller.status()
 
     def test_only_ready_paths_are_published(self):
-        result = self.status([{'name': 'camera-original', 'ready': False}, {'name': 'mlvc', 'ready': True}], 100)
+        result = self.status([{'name': 'camera-original', 'ready': False}, {'name': 'ulbvc', 'ready': True}], 100)
         self.assertFalse(result['feeds']['original'])
         self.assertTrue(result['feeds']['mlvc'])
-        self.assertEqual(result['paths'], ['mlvc'])
+        self.assertEqual(result['paths'], ['ulbvc'])
 
     def test_h264_needs_two_samples_and_uses_decimal_kbps(self):
         first = self.status([{'name': 'camera-h264', 'ready': True, 'bytesReceived': 1000}], 100)

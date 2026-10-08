@@ -48,7 +48,7 @@ class Controller:
         self.cfg = {
             "original": "rtsp://127.0.0.1:8554/camera-original",
             "h264": "rtsp://127.0.0.1:8554/camera-h264",
-            "mlvc": "rtsp://127.0.0.1:8554/mlvc",
+            "mlvc": "rtsp://127.0.0.1:8554/ulbvc",
             "webrtc": "http://127.0.0.1:8889",
             "transport": "tcp",
             "ffmpeg": default_ffmpeg(),

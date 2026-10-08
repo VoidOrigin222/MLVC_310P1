@@ -19,7 +19,7 @@ const calls = [];
 const sandbox = {
   URL, Object, Number, String,
   settings: {original:'rtsp://127.0.0.1:8554/camera-original',h264:'rtsp://127.0.0.1:8554/camera-h264',
-    mlvc:'rtsp://127.0.0.1:8554/mlvc',webrtc:'http://127.0.0.1:8889',mode:'same_quality',h264_qp:40},
+    mlvc:'rtsp://127.0.0.1:8554/ulbvc',webrtc:'http://127.0.0.1:8889',mode:'same_quality',h264_qp:40},
   enabled:false, $:id=>elements[id],
   document:{querySelectorAll:()=>[]},
   api:async (path,body)=>calls.push({path,body}), reconnect(){}, notice(){},
@@ -28,7 +28,7 @@ vm.createContext(sandbox);
 vm.runInContext(source.slice(start,end),sandbox);
 (async()=>{
   sandbox.fillSettings();
-  assert.equal(fields.mlvc.value,'rtsp://127.0.0.1:8554/mlvc','full stream path must remain visible');
+  assert.equal(fields.mlvc.value,'rtsp://127.0.0.1:8554/ulbvc','full stream path must remain visible');
   fields.mlvc.value='rtsp://192.168.10.20:8554/custom/semantic?token=sample';
   await listeners.submit({preventDefault(){}});
   assert.equal(calls.length,1);

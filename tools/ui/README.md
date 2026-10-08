@@ -43,13 +43,13 @@ H.264 QP 初始值为 40，可在参数设置中调整（0–51 整数）。它�
 | --- | --- |
 | 原图 RTSP（编码板发布） | `rtsp://127.0.0.1:8554/camera-original` |
 | H.264 RTSP（Windows FFmpeg 发布） | `rtsp://127.0.0.1:8554/camera-h264` |
-| MLVC RTSP（解码板发布） | `rtsp://127.0.0.1:8554/mlvc` |
+| 语义压缩 RTSP（解码板发布） | `rtsp://127.0.0.1:8554/ulbvc` |
 | 网页 | `http://127.0.0.1:8765` |
 | MediaMTX WebRTC | `http://127.0.0.1:8889` |
 | MediaMTX API | `http://127.0.0.1:9997` |
 
 UI 与 MediaMTX 默认在同一台电脑，播放与发布地址使用 `127.0.0.1`。
-参数设置显示并保存完整 RTSP 地址，包括语义压缩的 `/mlvc` 流路径；可直接修改完整路径。
+参数设置显示并保存完整 RTSP 地址，包括语义压缩的 `/ulbvc` 流路径；可直接修改完整路径。
 板端配置中的 RTSP 服务器 IP 和统计接收 IP 仍需填写该电脑的局域网 IP。
 
 ## 启动网页服务
@@ -97,7 +97,7 @@ python web_ui.py
 
 - 原图：编码板将 DVPP JPEGD 输出的设备 NV12 交给 DVPP H.264 编码，再通过 libavformat RTSP 发布到 `camera-original`；原图发布使用 VENC 通道 0，运动估计使用通道 1。
 - H.264：Windows 本地 FFmpeg 从原图 RTSP 读取，使用 `libx264` 编码后发布到 `camera-h264`
-- MLVC：解码板发布的 `mlvc`
+- 语义压缩：解码板发布的 `ulbvc`
 
 视频不经过网页转码，也不使用 HLS 的多段缓冲。MediaMTX 需要开启 WebRTC，默认
 控制端口为 `8889`；当前 `mediamtx.yml` 已开启 `webrtc`、CORS 和低延时 UDP ICE。
@@ -183,12 +183,12 @@ FFmpeg 启动时最多分析 1 秒媒体数据（探测字节上限 5 MB），�
   Select-Object name, ready, tracks
 ```
 
-列表应至少包含：`camera-original`、`camera-h264`、`mlvc`。
+列表应至少包含：`camera-original`、`camera-h264`、`ulbvc`。
 
 ### 4. 打开网页并连接
 
 打开 `http://127.0.0.1:8765`，点击“重新连接视频”（或刷新页面）。三路视频分别对应
-`camera-original`、`camera-h264` 和 `mlvc`。
+`camera-original`、`camera-h264` 和 `ulbvc`。
 
 不要同时使用网页的 `/api/start` 和另一个手工 FFmpeg 进程发布 `camera-h264`，否则会发生
 发布者争用。同一时间只保留一个 H.264 发布进程。

@@ -67,14 +67,14 @@ def main() -> None:
             expected_urls = {
                 'original': 'rtsp://127.0.0.1:8554/camera-original',
                 'h264': 'rtsp://127.0.0.1:8554/camera-h264',
-                'mlvc': 'rtsp://127.0.0.1:8554/mlvc',
+                'mlvc': 'rtsp://127.0.0.1:8554/ulbvc',
                 'webrtc': 'http://127.0.0.1:8889',
             }
             for key, url in expected_urls.items():
                 assert config[key] == url, (key, config[key])
             with urlopen(base + '/', timeout=2) as response:
                 page = response.read().decode('utf-8')
-            assert 'value="rtsp://127.0.0.1:8554/mlvc"' in page
+            assert 'value="rtsp://127.0.0.1:8554/ulbvc"' in page
             result['default_urls'] = expected_urls
             result["single_instance_reuse"] = True
             assert process.wait(timeout=30) == 0, "GUI shutdown failed"
