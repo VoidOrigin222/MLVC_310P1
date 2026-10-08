@@ -29,12 +29,12 @@ def existing_ui(port: int) -> bool:
 def self_test(report: Path) -> int:
     """Exercise the frozen resources, FFmpeg/libx264, HTTP API and shutdown."""
     os.environ["MLVC_UI_STATS_PORT"] = "0"
-    import web_ui
-
     result = {"passed": False}
     server = None
     thread = None
+    web_ui = None
     try:
+        import web_ui
         server = ThreadingHTTPServer(("127.0.0.1", 0), web_ui.Handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -43,7 +43,7 @@ def self_test(report: Path) -> int:
                                 ("/styles.css", b"video-grid"), ("/api/health", b"SemanticVideoUI")):
             with urlopen(address + route, timeout=5) as response:
                 assert response.status == 200 and expected in response.read(), route
-        ffmpeg = web_ui.controller.cfg["ffmpeg"]
+        ffmpeg = web_ui.controller.ffmpeg_command()
         command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi",
                    "-i", "color=c=black:s=64x64:r=5", "-frames:v", "2",
                    "-c:v", "libx264", "-qp", "40", "-f", "null", "-"]
@@ -51,14 +51,15 @@ def self_test(report: Path) -> int:
                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         assert run.returncode == 0, run.stderr
         result.update(passed=True, assets="passed", http_api="passed", ffmpeg_libx264="passed",
-                      ffmpeg=ffmpeg, stats_port=web_ui.controller.cfg["mlvc_stats_port"])
+                      ffmpeg=ffmpeg, config_file=str(web_ui.controller.config_path))
     except Exception:
         result["error"] = traceback.format_exc()
     finally:
         if server is not None:
             server.shutdown()
             server.server_close()
-        web_ui.controller.close()
+        if web_ui is not None:
+            web_ui.controller.close()
         if thread is not None:
             thread.join(timeout=3)
             result["shutdown"] = not thread.is_alive()
@@ -71,10 +72,13 @@ def self_test(report: Path) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="语义压缩三路视频控制台")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--config", type=Path, help="参数文件路径（默认 EXE 同目录 ui_config.json）")
     parser.add_argument("--self-test", type=Path)
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--auto-close", type=float, default=0, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.config:
+        os.environ["MLVC_UI_CONFIG"] = str(args.config.expanduser().resolve())
     if args.self_test:
         return self_test(args.self_test)
     if args.port and existing_ui(args.port):
@@ -84,9 +88,15 @@ def main() -> int:
 
     import tkinter as tk
     from tkinter import messagebox, ttk
-    import web_ui
-
     window = tk.Tk()
+    window.withdraw()
+    try:
+        import web_ui
+    except (OSError, ValueError) as error:
+        messagebox.showerror("参数文件错误", str(error), parent=window)
+        window.destroy()
+        return 1
+    window.deiconify()
     window.title("语义压缩视频控制台")
     window.geometry("390x190")
     window.resizable(False, False)

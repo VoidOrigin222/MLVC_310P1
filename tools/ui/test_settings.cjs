@@ -16,6 +16,7 @@ const elements = {...fields,
   'close-settings': {addEventListener(){}},
 };
 const calls = [];
+const restarts = [];
 const sandbox = {
   URL, Object, Number, String,
   settings: {original:'rtsp://127.0.0.1:8554/camera-original',h264:'rtsp://127.0.0.1:8554/camera-h264',
@@ -23,6 +24,7 @@ const sandbox = {
   enabled:false, $:id=>elements[id],
   document:{querySelectorAll:()=>[]},
   api:async (path,body)=>calls.push({path,body}), reconnect(){}, notice(){},
+  pipeline:async action=>restarts.push(action),
 };
 vm.createContext(sandbox);
 vm.runInContext(source.slice(start,end),sandbox);
@@ -39,5 +41,16 @@ vm.runInContext(source.slice(start,end),sandbox);
   const pathSource=source.slice(source.indexOf('function pathFor('),source.indexOf('function setState('));
   vm.runInContext(pathSource,sandbox);
   assert.equal(sandbox.pathFor(sandbox.settings.mlvc),'custom/semantic','WHEP must use the configured path');
-  console.log('Passed: complete RTSP display, save round trip and configured WHEP path.');
+  sandbox.enabled=true;
+  fields.original.value='rtsp://127.0.0.1:8554/another-camera';
+  await listeners.submit({preventDefault(){}});
+  assert.deepEqual(restarts,['start'],'changed encoder input must be applied');
+  const saved=sandbox.settings.mlvc;
+  sandbox.api=async()=>{throw new Error('Cannot save configuration file');};
+  fields.mlvc.value='rtsp://127.0.0.1:8554/unsaved';
+  await listeners.submit({preventDefault(){}});
+  assert.equal(sandbox.settings.mlvc,saved,'failed persistence must retain the saved settings');
+  assert.equal(elements['settings-error'].hidden,false);
+  assert.match(elements['settings-error'].textContent,/Cannot save/);
+  console.log('Passed: full RTSP paths, save round trip, WHEP path, encoder restart and save failure.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

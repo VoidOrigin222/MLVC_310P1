@@ -12,7 +12,7 @@
 页面会自动连接已有视频源。点击“启动 H.264 推流”才启动本地 FFmpeg；
 关闭或刷新浏览器只释放播放会话，不会停止正在运行的推流进程。
 停止按钮会断开本页预览并停止 UI 管理的 H.264 进程，板端原图和 MLVC 进程仍由板端控制。
-参数通过“参数设置 → 保存并连接”提交，在本次服务运行期间生效；服务重启恢复默认配置。
+参数从独立的 `ui_config.json` 加载；“参数设置 → 保存并连接”会写入该文件，重启后保留。
 
 文件：`web_ui.py` 提供控制接口，`index.html`、`styles.css`、`app.js` 提供界面。
 验证命令：在本目录运行 `python -m unittest -v test_web_ui.py`。
@@ -52,12 +52,38 @@ UI 与 MediaMTX 默认在同一台电脑，播放与发布地址使用 `127.0.0.
 参数设置显示并保存完整 RTSP 地址，包括语义压缩的 `/ulbvc` 流路径；可直接修改完整路径。
 板端配置中的 RTSP 服务器 IP 和统计接收 IP 仍需填写该电脑的局域网 IP。
 
+## 独立参数文件
+
+启动时读取 `ui_config.json`：EXE 版本从 EXE 同目录读取，Python 版本从 `web_ui.py` 同目录读取，与启动时的工作目录无关。文件不存在时自动生成默认参数；已有文件不会被启动过程覆盖。
+
+```json
+{
+  "original": "rtsp://127.0.0.1:8554/camera-original",
+  "h264": "rtsp://127.0.0.1:8554/camera-h264",
+  "semantic": "rtsp://127.0.0.1:8554/ulbvc",
+  "webrtc": "http://127.0.0.1:8889",
+  "transport": "tcp",
+  "h264_qp": 40,
+  "ffmpeg": "auto",
+  "stats_port": 39341
+}
+```
+
+`original`、`h264`、`semantic` 分别为三路完整 RTSP 地址；`webrtc` 为 WebRTC 服务地址。`transport` 可填 `tcp` 或 `udp`；`h264_qp` 为 0–51 的整数；`stats_port` 为 1–65535 的 UDP 接收端口。
+
+`ffmpeg: "auto"` 自动使用 EXE 内置 FFmpeg，Python 版本则使用 PATH 中的 FFmpeg。可填写其他 FFmpeg 的完整路径，或相对于参数文件目录的路径，例如 `bin/ffmpeg.exe`。内置 FFmpeg 的临时解压路径不会写入参数文件。
+
+可直接修改文件后重启 UI，也可在网页参数设置中保存，立即生效并持久保存。修改 H.264 的输入、输出、QP、传输或 FFmpeg 后，处于启用状态的 H.264 发布器会按新参数重启。文件缺少的字段使用默认值；格式或参数有误时提示具体错误，不覆盖原文件。保存失败时保留原参数，并在页面提示错误。
+
+需要指定其他文件时运行 `SemanticVideoUI.exe --config "D:/部署/ui_config.json"`，或为 Python 服务设置环境变量 `MLVC_UI_CONFIG`。相同端口已有 UI 时仍复用原实例；切换参数文件前需退出原启动器。
+
 ## 启动网页服务
 
 ### Windows EXE
 
 双击 `SemanticVideoUI.exe`，启动器会启动本地 UI 服务并打开浏览器。
 EXE 内置 Python、网页资源、FFmpeg 及共享库，不需要另外安装 Python 或 FFmpeg。
+部署时一同复制 `SemanticVideoUI.exe` 和同目录的 `ui_config.json`。
 启动器窗口中的“停止并退出”或关闭按钮会停止 UI 服务及它管理的 H.264 发布器。
 再次双击时，如果已有 UI 在运行，会打开现有页面。
 MediaMTX 和板端编解码仍按原部署方式提前启动。

@@ -13,6 +13,7 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from collections import deque
@@ -42,25 +43,48 @@ def default_ffmpeg() -> str:
     return "ffmpeg"
 
 
+CONFIG_FIELDS = {
+    "original": "original",
+    "h264": "h264",
+    "semantic": "mlvc",
+    "webrtc": "webrtc",
+    "transport": "transport",
+    "h264_qp": "h264_qp",
+    "ffmpeg": "ffmpeg",
+    "stats_port": "mlvc_stats_port",
+}
+
+
+def default_config_path() -> Path:
+    override = os.environ.get("MLVC_UI_CONFIG")
+    if override:
+        return Path(override).expanduser().resolve()
+    directory = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else UI_ROOT
+    return directory / "ui_config.json"
+
+
 class Controller:
-    def __init__(self) -> None:
+    def __init__(self, config_path: Path | None = None) -> None:
         self.lock = threading.RLock()
+        self.config_path = config_path.resolve() if config_path is not None else None
         self.cfg = {
             "original": "rtsp://127.0.0.1:8554/camera-original",
             "h264": "rtsp://127.0.0.1:8554/camera-h264",
             "mlvc": "rtsp://127.0.0.1:8554/ulbvc",
             "webrtc": "http://127.0.0.1:8889",
             "transport": "tcp",
-            "ffmpeg": default_ffmpeg(),
+            "ffmpeg": "auto",
             "h264_kbps": 8000,
             "h264_qp": 40,
             "mlvc_kbps": 2000,
             "h264_bpp": 0.129,
             "mlvc_bpp": 0.032,
-            "mlvc_stats_port": int(os.environ.get("MLVC_UI_STATS_PORT", "39341")),
+            "mlvc_stats_port": 39341,
             "mode": "same_quality",
             "fps": 30,
         }
+        if self.config_path is not None:
+            self._load_config()
         self.h264_encoder: subprocess.Popen | None = None
         self.ffmpeg_log = None
         self.last_error = ""
@@ -83,6 +107,52 @@ class Controller:
         self._control_stop = threading.Event()
         self._control_thread: threading.Thread | None = None
         self._ensure_mlvc_stats_socket()
+
+    def _load_config(self) -> None:
+        path = self.config_path
+        if not path.exists():
+            self._write_config(self.cfg)
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+            if not isinstance(data, dict):
+                raise ValueError("参数文件内容必须为 JSON 对象")
+            unknown = data.keys() - CONFIG_FIELDS.keys()
+            if unknown:
+                raise ValueError("未知参数：" + ", ".join(sorted(unknown)))
+            self.cfg = self._validated_config({CONFIG_FIELDS[key]: value for key, value in data.items()})
+        except (OSError, ValueError) as error:
+            raise ValueError(f"无法读取参数文件 {path}：{error}") from error
+
+    def _write_config(self, cfg: dict) -> None:
+        """Replace the file only after a complete, validated write succeeds."""
+        path = self.config_path
+        data = {name: cfg[key] for name, key in CONFIG_FIELDS.items()}
+        temporary = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                             prefix=path.name + ".", suffix=".tmp", delete=False) as stream:
+                temporary = Path(stream.name)
+                json.dump(data, stream, ensure_ascii=False, indent=2)
+                stream.write("\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+        except OSError as error:
+            raise OSError(f"无法保存参数文件 {path}：{error}") from error
+        finally:
+            if temporary is not None and temporary.exists():
+                temporary.unlink()
+
+    def ffmpeg_command(self) -> str:
+        value = self.cfg["ffmpeg"]
+        if value.lower() in ("auto", "ffmpeg"):
+            return default_ffmpeg()
+        path = Path(value).expanduser()
+        if not path.is_absolute() and ("/" in value or "\\" in value or path.suffix.lower() == ".exe"):
+            path = (self.config_path.parent if self.config_path else UI_ROOT) / path
+        return str(path)
 
     @staticmethod
     def _record_counter_sample(history: deque[tuple[float, int]], now: float, value: int) -> bool:
@@ -133,7 +203,7 @@ class Controller:
         self._mlvc_metrics_ready = True
 
     def _ensure_mlvc_stats_socket(self) -> None:
-        port = int(self.cfg.get("mlvc_stats_port", 39341) or 0)
+        port = int(os.environ.get("MLVC_UI_STATS_PORT", self.cfg.get("mlvc_stats_port", 39341)) or 0)
         if self._mlvc_stats_socket is not None and self._mlvc_stats_bound_port == port:
             return
         if self._mlvc_stats_socket is not None:
@@ -231,22 +301,49 @@ class Controller:
             self._start_locked(cfg)
 
     def _validated_config(self, cfg: dict) -> dict:
+        if not isinstance(cfg, dict):
+            raise ValueError("参数必须为 JSON 对象")
         updated = {**self.cfg, **{k: v for k, v in cfg.items() if k in self.cfg}}
         if updated["mode"] not in ("same_bandwidth", "same_quality"):
             raise ValueError("Unsupported comparison mode")
         qp = updated["h264_qp"]
         if isinstance(qp, bool) or not isinstance(qp, int) or not 0 <= qp <= 51:
             raise ValueError("H.264 QP must be an integer from 0 to 51")
+        for key, schemes in (("original", ("rtsp",)), ("h264", ("rtsp",)),
+                             ("mlvc", ("rtsp",)), ("webrtc", ("http", "https"))):
+            value = updated[key]
+            if not isinstance(value, str):
+                raise ValueError("视频源和服务地址必须为字符串")
+            value = value.strip()
+            parsed = urlparse(value)
+            if parsed.scheme not in schemes or not parsed.hostname:
+                raise ValueError("视频源使用 rtsp://，WebRTC 使用 http:// 或 https://")
+            if key != "webrtc" and not parsed.path.strip("/"):
+                raise ValueError("RTSP 地址必须包含完整流路径")
+            if parsed.port is not None and not 1 <= parsed.port <= 65535:
+                raise ValueError("地址端口必须为 1–65535")
+            updated[key] = value
+        if updated["transport"] not in ("tcp", "udp"):
+            raise ValueError("RTSP 传输必须为 tcp 或 udp")
+        port = updated["mlvc_stats_port"]
+        if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+            raise ValueError("统计端口必须为 1–65535 的整数")
+        if not isinstance(updated["ffmpeg"], str) or not updated["ffmpeg"].strip():
+            raise ValueError("FFmpeg 请填写 auto 或可执行文件路径")
+        updated["ffmpeg"] = updated["ffmpeg"].strip()
         return updated
 
     def configure(self, cfg: dict) -> None:
-        self.cfg.update(self._validated_config(cfg))
-        self._ensure_mlvc_stats_socket()
+        with self.lock:
+            updated = self._validated_config(cfg)
+            if self.config_path is not None and any(updated[key] != self.cfg[key] for key in CONFIG_FIELDS.values()):
+                self._write_config(updated)
+            self.cfg.update(updated)
+            self._ensure_mlvc_stats_socket()
 
     def _start_locked(self, cfg: dict) -> None:
-        self._validated_config(cfg)
-        self.stop()
         self.configure(cfg)
+        self.stop()
         if not self.cfg["original"]:
             raise ValueError("原图 RTSP 地址为空")
         if not self.cfg["h264"]:
@@ -329,7 +426,7 @@ class Controller:
         self._h264_match_state = "settling"
         output = self.cfg["h264"]
         args = [
-            self.cfg["ffmpeg"], "-hide_banner", "-loglevel", "warning",
+            self.ffmpeg_command(), "-hide_banner", "-loglevel", "warning",
             "-rtsp_transport", self.cfg["transport"], "-fflags", "nobuffer",
             # Probe enough frames to distinguish the 90 kHz RTP clock from FPS.
             "-flags", "low_delay", "-probesize", "5000000", "-analyzeduration", "1000000",
@@ -457,7 +554,7 @@ class Controller:
         }
 
 
-controller = Controller()
+controller = Controller(config_path=default_config_path())
 
 
 class Handler(BaseHTTPRequestHandler):

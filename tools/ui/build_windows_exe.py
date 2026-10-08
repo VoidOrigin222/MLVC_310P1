@@ -56,6 +56,9 @@ def main() -> None:
         command += ["--add-data", str(license_file) + ";licenses/ffmpeg"]
     command += [str(ROOT / "launch_ui.py")]
     subprocess.run(command, cwd=ROOT, env=environment, check=True)
+    config = output / "ui_config.json"
+    if not config.exists():
+        shutil.copyfile(ROOT / "ui_config.json", config)
     digest = hashlib.sha256(exe.read_bytes()).hexdigest()
     (output / "SemanticVideoUI.exe.sha256").write_text(digest + "  SemanticVideoUI.exe\n", encoding="utf-8")
     metadata = {"executable": exe.name, "sha256": digest, "bytes": exe.stat().st_size,
@@ -63,7 +66,9 @@ def main() -> None:
                 "ffmpeg_version": subprocess.check_output([str(ffmpeg), "-version"], text=True),
                 "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip(),
                 "source_files": {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
-                                 for name in ("web_ui.py", "launch_ui.py", "index.html", "app.js", "styles.css")}}
+                                 for name in ("web_ui.py", "launch_ui.py", "index.html", "app.js", "styles.css", "ui_config.json")},
+                "config_file": config.name,
+                "config_sha256": hashlib.sha256(config.read_bytes()).hexdigest()}
     (output / "BUILD_INFO.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
     print(str(exe))
 

@@ -2,8 +2,10 @@
 import importlib
 import io
 import json
+import tempfile
 import unittest
 from collections import deque
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 
@@ -183,6 +185,95 @@ class StreamStatusTests(unittest.TestCase):
             launch.assert_not_called()
             self.controller._sync_bitrate(131, True)
             launch.assert_called_once_with(qp=0)
+
+
+class PersistentConfigTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.path = Path(temporary.name).resolve() / 'ui_config.json'
+        stats = patch.object(ui.Controller, '_ensure_mlvc_stats_socket')
+        stats.start()
+        self.addCleanup(stats.stop)
+
+    def controller(self):
+        with patch.object(ui.Controller, '_ensure_mlvc_stats_socket'):
+            controller = ui.Controller(config_path=self.path)
+        self.addCleanup(controller.close)
+        return controller
+
+    def test_missing_file_created_and_settings_survive_restart(self):
+        first = self.controller()
+        self.assertEqual(json.loads(self.path.read_text())['ffmpeg'], 'auto')
+        first.configure({'mlvc': 'rtsp://192.168.10.20:8554/ulbvc?token=example',
+                         'h264_qp': 37, 'transport': 'udp', 'mlvc_stats_port': 40341})
+        saved = json.loads(self.path.read_text())
+        self.assertEqual(saved['semantic'], first.cfg['mlvc'])
+        self.assertEqual(set(saved), set(ui.CONFIG_FIELDS))
+        second = self.controller()
+        for key in ui.CONFIG_FIELDS.values():
+            self.assertEqual(second.cfg[key], first.cfg[key])
+
+    def test_partial_file_with_bom_loads_without_overwrite(self):
+        content = '\ufeff' + json.dumps({'h264_qp': 37})
+        self.path.write_text(content, encoding='utf-8')
+        controller = self.controller()
+        self.assertEqual(controller.cfg['h264_qp'], 37)
+        self.assertEqual(controller.cfg['mlvc'], 'rtsp://127.0.0.1:8554/ulbvc')
+        self.assertEqual(self.path.read_text(encoding='utf-8'), content)
+
+    def test_invalid_files_are_preserved(self):
+        for content in ('{broken', '[]', '{"h264_qp": 52}', '{"stats_port": true}',
+                        '{"transport": "invalid"}', '{"semantic": "rtsp://127.0.0.1:8554"}',
+                        '{"webrtc": "ftp://example.com"}', '{"ffmpeg": ""}',
+                        '{"unknown_setting": 1}'):
+            with self.subTest(content=content):
+                self.path.write_text(content, encoding='utf-8')
+                with self.assertRaisesRegex(ValueError, 'ui_config.json'):
+                    self.controller()
+                self.assertEqual(self.path.read_text(), content)
+
+    def test_invalid_update_does_not_change_file_or_running_encoder(self):
+        controller = self.controller()
+        original = self.path.read_bytes()
+        process = Mock()
+        controller.h264_encoder = process
+        with self.assertRaises(ValueError):
+            controller.start({'h264_qp': -1})
+        self.assertEqual(self.path.read_bytes(), original)
+        self.assertEqual(controller.cfg['h264_qp'], 40)
+        process.terminate.assert_not_called()
+        controller.h264_encoder = None
+
+    def test_write_failure_keeps_file_memory_and_running_encoder(self):
+        controller = self.controller()
+        original = self.path.read_bytes()
+        process = Mock()
+        controller.h264_encoder = process
+        with patch.object(ui.os, 'replace', side_effect=PermissionError('read only')):
+            with self.assertRaisesRegex(OSError, 'ui_config.json'):
+                controller.start({'h264_qp': 37})
+        self.assertEqual(self.path.read_bytes(), original)
+        self.assertEqual(controller.cfg['h264_qp'], 40)
+        self.assertEqual(list(self.path.parent.glob('*.tmp')), [])
+        process.terminate.assert_not_called()
+        controller.h264_encoder = None
+
+    def test_auto_ffmpeg_is_resolved_at_execution_and_remains_portable(self):
+        controller = self.controller()
+        with patch.object(ui, 'default_ffmpeg', return_value='C:/Temp/_MEI123/ffmpeg.exe'):
+            self.assertEqual(controller.ffmpeg_command(), 'C:/Temp/_MEI123/ffmpeg.exe')
+            controller.configure({'h264_qp': 37})
+        self.assertEqual(controller.cfg['ffmpeg'], 'auto')
+        self.assertEqual(json.loads(self.path.read_text())['ffmpeg'], 'auto')
+        controller.configure({'ffmpeg': 'bin/ffmpeg.exe'})
+        self.assertEqual(Path(controller.ffmpeg_command()), self.path.parent / 'bin/ffmpeg.exe')
+
+    def test_frozen_default_path_is_beside_executable(self):
+        executable = self.path.parent / 'SemanticVideoUI.exe'
+        with patch.dict(ui.os.environ, {}, clear=True), patch.object(ui.sys, 'frozen', True, create=True), \
+                patch.object(ui.sys, 'executable', str(executable)):
+            self.assertEqual(ui.default_config_path(), self.path)
 
 
 if __name__ == '__main__':

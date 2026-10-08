@@ -209,7 +209,7 @@ for(const id of ['close-settings','cancel-settings'])$(id).addEventListener('cli
 $('settings-dialog').addEventListener('close',fillSettings);
 $('settings-form').addEventListener('submit',async e=>{e.preventDefault();const draft={...settings};for(const field of $('settings-form').querySelectorAll('input,select'))draft[field.name]=field.type==='number'?Number(field.value):field.value.trim();
   $('save-settings').disabled=true;
-  try {for(const key of ['original','h264','mlvc'])if(new URL(draft[key]).protocol!=='rtsp:')throw new Error('视频源地址必须使用 rtsp://');if(!['http:','https:'].includes(new URL(draft.webrtc).protocol))throw new Error('WebRTC 地址必须使用 http:// 或 https://');const applyQp=draft.mode==='same_quality'&&draft.h264_qp!==settings.h264_qp&&enabled;await api('/api/config',draft);settings=draft;$('settings-dialog').close();if(applyQp)await pipeline('start');else reconnect();notice('已保存');}
+  try {for(const key of ['original','h264','mlvc'])if(new URL(draft[key]).protocol!=='rtsp:')throw new Error('视频源地址必须使用 rtsp://');if(!['http:','https:'].includes(new URL(draft.webrtc).protocol))throw new Error('WebRTC 地址必须使用 http:// 或 https://');const applyEncoder=enabled&&['original','h264','transport','h264_qp','ffmpeg'].some(key=>draft[key]!==settings[key]);await api('/api/config',draft);settings=draft;$('settings-dialog').close();if(applyEncoder)await pipeline('start');else reconnect();notice('已保存');}
   catch(error){$('settings-error').hidden=false;$('settings-error').textContent=String(error.message).replace(/mlvc/gi,'语义压缩');}finally{$('save-settings').disabled=false;}
 });
 function clock(){const now=new Date();$('clock').textContent=now.toLocaleTimeString('zh-CN',{hour12:false});$('clock').dateTime=now.toISOString();}clock();setInterval(clock,1000);

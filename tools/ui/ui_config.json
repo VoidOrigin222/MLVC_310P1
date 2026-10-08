@@ -1,0 +1,10 @@
+{
+  "original": "rtsp://127.0.0.1:8554/camera-original",
+  "h264": "rtsp://127.0.0.1:8554/camera-h264",
+  "semantic": "rtsp://127.0.0.1:8554/ulbvc",
+  "webrtc": "http://127.0.0.1:8889",
+  "transport": "tcp",
+  "h264_qp": 40,
+  "ffmpeg": "auto",
+  "stats_port": 39341
+}
