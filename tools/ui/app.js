@@ -11,14 +11,26 @@ for (const [index,c] of channels.entries()) {
   $('video-grid').insertAdjacentHTML('beforeend', `<article class="video-card ${c.key}" id="${c.key}-card"><div class="video-header"><h3 class="video-name">${c.name}</h3><span class="video-state"><i class="status-dot"></i><span id="${c.key}-state">未连接</span></span><span class="video-resolution" id="${c.key}-res">— × — · — FPS</span></div><div class="video-wrap" id="${c.key}-wrap"><video id="${c.key}-video" autoplay muted playsinline aria-label="${c.name}实时视频"></video><div class="video-empty">${cameraIcon}<strong id="${c.key}-empty">等待视频信号</strong></div><button class="fullscreen" data-fullscreen="${c.key}" aria-label="${c.name}全屏" title="全屏">${expandIcon}</button></div></article>`);
   $(c.key+'-card').insertAdjacentHTML('beforeend', `<div class="metric-card"><div class="metric"><span class="metric-label">bpp</span><div class="metric-value"><b id="${c.key}-bpp">—</b></div></div><div class="metric"><span class="metric-label">带宽</span><div class="metric-value"><b id="${c.key}-kbs">—</b><span>kB/s</span></div></div><div class="metric"><span class="metric-label">压缩比</span><div class="metric-value"><b id="${c.key}-ratio">—</b><span>: 1</span></div></div></div>`);
 }
-let settings = {}, enabled = true, refreshing = false, statusSnapshot = null;
+let settings = {}, configLoaded = false, enabled = true, refreshing = false, statusSnapshot = null;
 const players = {};
 function notice(message, error=false) {$('notice').hidden=false;$('notice').textContent=String(message).replace(/mlvc/gi,'语义压缩');$('notice').className='notice'+(error?' error':'');}
 async function api(path, body) {
-  const response=await fetch(path,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(6000)});
-  const result=await response.json();if(!response.ok)throw new Error(result.error||'请求失败：'+response.status);return result;
+  // AbortController also works in browsers without AbortSignal.timeout().
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),6000);
+  try {
+    const response=await fetch(path,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal:controller.signal});
+    const result=await response.json();if(!response.ok)throw new Error(result.error||'请求失败：'+response.status);return result;
+  } finally {clearTimeout(timer);}
 }
-function pathFor(url) {try{return new URL(url).pathname.replace(/^\/+|\/+$/g,'');}catch{return '';}}
+function pathFor(url) {
+  try {
+    if(typeof url!=='string'||!/^rtsp:\/\//i.test(url.trim()))return '';
+    // Older browsers treat RTSP as an opaque URL and include the authority in
+    // pathname. Parse an HTTP-shaped copy solely to extract the stream path.
+    const parsed=new URL(url.trim().replace(/^rtsp:/i,'http:'));
+    return parsed.pathname.replace(/^\/+|\/+$/g,'');
+  } catch{return '';}
+}
 function setState(key, text, live=false) {
   const card=$(key+'-card');
   $(key+'-state').textContent=text;card.classList.toggle('live',live);
@@ -111,6 +123,7 @@ class Player {
   schedule() {if(!enabled||this.retry)return;this.retry=setTimeout(()=>{this.retry=null;this.connect();},3000);}
   async connect() {
     this.close(false);if(!enabled)return;const generation=this.generation;
+    if(!configLoaded){setState(this.key,'配置未加载');return;}
     const path=pathFor(settings[this.key]);if(!path){setState(this.key,'地址无效');return;}
     setState(this.key,'连接中');const abort=new AbortController();this.abort=abort;const timer=setTimeout(()=>abort.abort(),8000);let pc;
     try {
@@ -121,13 +134,14 @@ class Player {
       if(generation!==this.generation)return;
       const url=settings.webrtc.replace(/\/$/,'')+'/'+path.split('/').map(encodeURIComponent).join('/')+'/whep';
       const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/sdp'},body:pc.localDescription.sdp,signal:abort.signal});
-      if(!response.ok)throw new Error('WHEP '+response.status);
+      if(!response.ok){const detail=(await response.text()).trim();throw new Error('WHEP '+response.status+(detail?'：'+detail.slice(0,300):''));}
       const location=response.headers.get('Location');const session=location?new URL(location,url).href:null;
       if(generation!==this.generation){this.releaseSession(session);return;}this.session=session;
       const sdp=await response.text();if(generation!==this.generation)return;
       await pc.setRemoteDescription({type:'answer',sdp});
     } catch(error) {
       if(generation!==this.generation)return;
+      if(statusSnapshot?.feeds[this.key])notice((channels.find(channel=>channel.key===this.key)?.name||this.key)+'播放连接失败：'+error.message,true);
       this.close(false);setState(this.key,statusSnapshot?.feeds[this.key]?'连接失败':'未发布');this.schedule();
     } finally {clearTimeout(timer);}
   }
@@ -137,7 +151,23 @@ class Player {
   }
 }
 for(const c of channels)players[c.key]=new Player(c.key);
-function reconnect() {enabled=true;for(const p of Object.values(players))p.connect();}
+async function loadSettings() {
+  const loaded=await api('/api/config');
+  for(const channel of channels){
+    const value=loaded?.[channel.key];
+    if(typeof value!=='string'||!pathFor(value)||new URL(value).protocol!=='rtsp:')throw new Error(channel.name+' RTSP 配置无效，请检查参数文件');
+  }
+  if(typeof loaded.webrtc!=='string'||!['http:','https:'].includes(new URL(loaded.webrtc).protocol))throw new Error('WebRTC 配置无效，请检查参数文件');
+  settings={...loaded,mode:'same_quality'};configLoaded=true;fillSettings();
+}
+async function reconnect() {
+  enabled=true;
+  if(!configLoaded){
+    try {await loadSettings();}
+    catch(error){for(const p of Object.values(players)){p.close(false);setState(p.key,'配置读取失败');}notice('读取配置失败：'+error.message+'；请检查 UI 服务后点击“重新连接”。',true);return;}
+  }
+  if(enabled)await Promise.all(Object.values(players).map(p=>p.connect()));
+}
 const format=(number,digits=0)=>Number(number).toLocaleString('en-US',{minimumFractionDigits:digits,maximumFractionDigits:digits});
 function metric(key, value, ready) {
   for(const [field,digits] of [['kbs',1],['bpp',4],['ratio',1]])$(key+'-'+field).textContent=ready&&Number.isFinite(value[field])?format(value[field],digits):'—';
@@ -176,7 +206,7 @@ function drawBitrate(now=performance.now()) {
 new ResizeObserver(()=>drawBitrate()).observe($('bitrate-chart'));
 let lastError='';
 async function refresh() {
-  if(refreshing)return;refreshing=true;
+  if(!configLoaded||refreshing)return;refreshing=true;
   try {
     const status=await api('/api/status');statusSnapshot=status;
     for(const c of channels){const published=!!status.feeds[c.key];
@@ -193,9 +223,11 @@ async function refresh() {
 }
 async function pipeline(action) {
   $('start-button').disabled=$('stop-button').disabled=true;
+  const reconnectAll=action==='start'&&(!configLoaded||!enabled);
   try {if(action==='stop'){enabled=false;for(const p of Object.values(players))p.close();}
+    if(action==='start'&&!configLoaded)await loadSettings();
     const result=await api('/api/'+action,action==='start'?{...settings,mode:'same_quality'}:{});notice(result.message);
-    if(action==='start'){if(enabled)players.h264.connect();else reconnect();}await refresh();
+    if(action==='start'){if(reconnectAll)await reconnect();else players.h264.connect();}await refresh();
   }catch(error){notice(error.message,true);if(action==='start'&&!enabled)reconnect();}
   finally{$('stop-button').disabled=false;$('start-button').disabled=false;}
 }
@@ -209,11 +241,11 @@ for(const id of ['close-settings','cancel-settings'])$(id).addEventListener('cli
 $('settings-dialog').addEventListener('close',fillSettings);
 $('settings-form').addEventListener('submit',async e=>{e.preventDefault();const draft={...settings};for(const field of $('settings-form').querySelectorAll('input,select'))draft[field.name]=field.type==='number'?Number(field.value):field.value.trim();
   $('save-settings').disabled=true;
-  try {for(const key of ['original','h264','mlvc'])if(new URL(draft[key]).protocol!=='rtsp:')throw new Error('视频源地址必须使用 rtsp://');if(!['http:','https:'].includes(new URL(draft.webrtc).protocol))throw new Error('WebRTC 地址必须使用 http:// 或 https://');const applyEncoder=enabled&&['original','h264','transport','h264_qp','ffmpeg'].some(key=>draft[key]!==settings[key]);await api('/api/config',draft);settings=draft;$('settings-dialog').close();if(applyEncoder)await pipeline('start');else reconnect();notice('已保存');}
+  try {for(const key of ['original','h264','mlvc'])if(new URL(draft[key]).protocol!=='rtsp:'||!pathFor(draft[key]))throw new Error('视频源地址必须使用 rtsp:// 并包含流路径');if(!['http:','https:'].includes(new URL(draft.webrtc).protocol))throw new Error('WebRTC 地址必须使用 http:// 或 https://');const applyEncoder=enabled&&['original','h264','transport','h264_qp','ffmpeg'].some(key=>draft[key]!==settings[key]);await api('/api/config',draft);settings=draft;configLoaded=true;$('settings-dialog').close();if(applyEncoder)await pipeline('start');await reconnect();notice('已保存');}
   catch(error){$('settings-error').hidden=false;$('settings-error').textContent=String(error.message).replace(/mlvc/gi,'语义压缩');}finally{$('save-settings').disabled=false;}
 });
 function clock(){const now=new Date();$('clock').textContent=now.toLocaleTimeString('zh-CN',{hour12:false});$('clock').dateTime=now.toISOString();}clock();setInterval(clock,1000);
 window.addEventListener('pagehide',()=>{enabled=false;for(const p of Object.values(players))p.close(false);});
 window.addEventListener('pageshow',e=>{if(e.persisted)reconnect();});
-async function initialize(){try{settings={...await api('/api/config'),mode:'same_quality'};fillSettings();await refresh();reconnect();}catch(error){notice('读取配置失败：'+error.message,true);}}
+async function initialize(){await reconnect();await refresh();}
 initialize();setInterval(refresh,1000);

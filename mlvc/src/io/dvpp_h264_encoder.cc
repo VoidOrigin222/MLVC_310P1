@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <utility>
@@ -26,6 +27,22 @@ void CheckMpi(hi_s32 status, const char* operation) {
   if (status != HI_SUCCESS) {
     throw Error(std::string(operation) + " failed: ret=" + std::to_string(status));
   }
+}
+
+// Camera RTSP and the motion proxy can own different VENC channels concurrently.
+// MPI SYS is process-wide: releasing one encoder must not tear down the other.
+std::mutex mpi_system_mutex;
+std::size_t mpi_system_users = 0;
+
+void AcquireMpiSystem() {
+  std::lock_guard<std::mutex> lock(mpi_system_mutex);
+  if (mpi_system_users == 0) CheckMpi(hi_mpi_sys_init(), "hi_mpi_sys_init");
+  ++mpi_system_users;
+}
+
+void ReleaseMpiSystem() noexcept {
+  std::lock_guard<std::mutex> lock(mpi_system_mutex);
+  if (mpi_system_users > 0 && --mpi_system_users == 0) (void)hi_mpi_sys_exit();
 }
 
 hi_u32 ToMpiBitrate(std::uint32_t bits_per_second) {
@@ -58,7 +75,7 @@ class DvppH264Encoder::Impl {
 
     try {
       CheckAcl(aclrtSetCurrentContext(context_), "aclrtSetCurrentContext for MPI VENC");
-      CheckMpi(hi_mpi_sys_init(), "hi_mpi_sys_init");
+      AcquireMpiSystem();
       mpi_initialized_ = true;
       CreateChannel();
       StartChannel();
@@ -287,7 +304,7 @@ class DvppH264Encoder::Impl {
     }
     input_buffer_ = nullptr;
     if (mpi_initialized_) {
-      (void)hi_mpi_sys_exit();
+      ReleaseMpiSystem();
       mpi_initialized_ = false;
     }
   }

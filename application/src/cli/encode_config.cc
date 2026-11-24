@@ -52,6 +52,7 @@ void ValidateConfigKeys(const toml::table& config) {
                   "output_transport_payload_type",
                   "output_transport_pacing_rate_bps", "output_transport_max_burst_bytes",
                   "output_transport_max_queue_bytes", "output_transport_max_queue_delay_ms",
+                   "mlvc_stats_host", "mlvc_stats_port", "mlvc_stats_interval_frames",
                   "model", "pipeline"},
                  "");
   if (const toml::node* model = config["model"].node(); model != nullptr) {
@@ -261,6 +262,10 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
               camera_options.fps <= 240.0,
           "camera_fps must be in (0, 240]");
     Check(camera_options.pixel_format == "MJPG", "camera_pixel_format must be MJPG");
+    Check(camera_options.rtsp_url.empty() ||
+              (camera_options.fps >= 1.0 &&
+               std::abs(camera_options.fps - std::round(camera_options.fps)) < 1e-6),
+          "DVPP camera RTSP requires an integer camera_fps in [1, 240]");
     Check(camera_options.rtsp_transport == "tcp" || camera_options.rtsp_transport == "udp",
           "camera_rtsp_transport must be tcp or udp");
     Check(camera_rtsp_bitrate >= 2'000 && camera_rtsp_bitrate <= 614'400'000,
@@ -348,6 +353,15 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
   if (options.output_transport_port > 0) {
     options.output_bitstream_path.clear();
   }
+  options.mlvc_stats_host = GetString(config, "mlvc_stats_host");
+  options.mlvc_stats_port = GetInt(config, "mlvc_stats_port", 0);
+  options.mlvc_stats_interval_frames = GetInt(config, "mlvc_stats_interval_frames", 30);
+  Check(options.mlvc_stats_port >= 0 && options.mlvc_stats_port <= 65535,
+        "mlvc_stats_port must be in [0, 65535]");
+  Check(options.mlvc_stats_interval_frames > 0,
+        "mlvc_stats_interval_frames must be positive");
+  Check(options.mlvc_stats_port == 0 || !options.mlvc_stats_host.empty(),
+        "mlvc_stats_host is required when mlvc_stats_port is set");
   const int stream_workers = GetNestedInt(config, "pipeline", "stream_workers", 1);
   const int queue_capacity = GetNestedInt(config, "pipeline", "queue_capacity", 3);
   const int frame_buffer_slots = GetNestedInt(config, "pipeline", "frame_buffer_slots", 3);

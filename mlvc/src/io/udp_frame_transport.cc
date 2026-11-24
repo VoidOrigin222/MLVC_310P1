@@ -445,6 +445,7 @@ bool RtpMlvcSender::ConsumeRandomAccessRequest() {
 bool RtpMlvcSender::PopMlvcControl(mlvc::transport::MlvcControlMessage* message) {
   return sender_.PopMlvcControl(message);
 }
+mlvc::transport::RtpTransportStats RtpMlvcSender::Stats() const { return sender_.Stats(); }
 uint16_t RtpMlvcSender::rtcp_local_port() const { return sender_.rtcp_local_port(); }
 void RtpMlvcSender::SendMlvcControlResponse(
     const mlvc::transport::MlvcControlMessage& request, bool accepted,

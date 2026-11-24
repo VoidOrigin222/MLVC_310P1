@@ -17,19 +17,87 @@
 #include <mlvc/runtime/stage_runtime.h>
 
 #include <algorithm>
+#include <arpa/inet.h>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <deque>
 #include <filesystem>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <netdb.h>
 #include <optional>
+#include <sstream>
+#include <sys/socket.h>
+#include <unistd.h>
 
 #include "mlvc/core/status.h"
 #include <mlvc/codec/translation_warp.h>
 #include <mlvc/io/fp16_yuv444_to_nv12.h>
+
+namespace {
+
+// Sends cumulative MLVC RTP counters to the local UI. The media counter is
+// serialized MLVC media-unit bytes; wire_bytes additionally includes RTP, UDP,
+// and IPv4 headers and is therefore the network bandwidth counter.
+class MlvcStatsPublisher {
+ public:
+  MlvcStatsPublisher(const std::string& host, int port) {
+    mlvc::Check(port > 0 && port <= 65535, "MLVC stats port must be in [1, 65535]");
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    addrinfo* result = nullptr;
+    const std::string service = std::to_string(port);
+    const int error = getaddrinfo(host.c_str(), service.c_str(), &hints, &result);
+    mlvc::Check(error == 0 && result != nullptr,
+                "failed to resolve MLVC stats destination: " + host);
+    std::memcpy(&destination_, result->ai_addr, result->ai_addrlen);
+    destination_length_ = static_cast<socklen_t>(result->ai_addrlen);
+    freeaddrinfo(result);
+    socket_ = ::socket(AF_INET, SOCK_DGRAM, 0);
+    mlvc::Check(socket_ >= 0, "failed to create MLVC stats socket");
+  }
+
+  MlvcStatsPublisher(const MlvcStatsPublisher&) = delete;
+  MlvcStatsPublisher& operator=(const MlvcStatsPublisher&) = delete;
+
+  ~MlvcStatsPublisher() {
+    if (socket_ >= 0) ::close(socket_);
+  }
+
+  void Publish(int frames, double fps, const mlvc::transport::RtpTransportStats& stats,
+               uint64_t payload_bytes) {
+    std::ostringstream json;
+    json << std::fixed << std::setprecision(6)
+         << "{\"kind\":\"mlvc_rtp_stats\",\"version\":1"
+         << ",\"frames\":" << frames << ",\"fps\":" << fps
+         << ",\"media_unit_bytes\":" << stats.media_unit_bytes
+         << ",\"rtp_payload_bytes\":" << stats.rtp_payload_bytes
+         << ",\"wire_bytes\":" << stats.wire_bytes
+         << ",\"payload_bytes\":" << payload_bytes << "}";
+    const std::string message = json.str();
+    const ssize_t sent = ::sendto(socket_, message.data(), message.size(), 0,
+                                   reinterpret_cast<const sockaddr*>(&destination_),
+                                   destination_length_);
+    if (sent < 0 && !warned_) {
+      std::cerr << "MLVC stats publish failed: " << std::strerror(errno) << std::endl;
+      warned_ = true;
+    }
+  }
+
+ private:
+  int socket_ = -1;
+  sockaddr_storage destination_{};
+  socklen_t destination_length_ = 0;
+  bool warned_ = false;
+};
+
+}  // namespace
 
 namespace mlvc::codec {
 
@@ -118,6 +186,16 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
     rate_options.min_q_index = options.min_qp;
     rate_options.max_q_index = options.max_qp;
     EncodeOutput output(options, header, rate_options, &profiler);
+    std::optional<MlvcStatsPublisher> stats_publisher;
+    if (options.mlvc_stats_port > 0) {
+      stats_publisher.emplace(options.mlvc_stats_host, options.mlvc_stats_port);
+    }
+    const auto publish_stats = [&](int frame_count) {
+      if (stats_publisher.has_value()) {
+        stats_publisher->Publish(frame_count, fps, output.transport_stats(),
+                                 output.payload_bytes());
+      }
+    };
     MlvcOfficialEntropyEncoder entropy_encoder(models.manifest());
     EncodeState state(encoder_record.outputs.at(0).shape);
     EncodeFrameProcessor frame_processor(options, &models, &sidecar, &profiler, &entropy_worker,
@@ -245,6 +323,9 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
         encode_start = std::chrono::steady_clock::now();
         timing_started = true;
       }
+      if (encoded_frames % options.mlvc_stats_interval_frames == 0) {
+        publish_stats(encoded_frames);
+      }
       if (encoded_frames % 900 == 0) {
         const auto now = std::chrono::steady_clock::now();
         const double interval_seconds =
@@ -285,6 +366,7 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
     }
     output.SendEnd();
     output.Close();
+    publish_stats(encoded_frames);
 
     const auto encode_end = std::chrono::steady_clock::now();
     if (!options.profile_output_path.empty())
@@ -325,6 +407,10 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
               << "\n";
     std::cout << "bitstream_bytes=" << output.file_bytes() << "\n";
     std::cout << "payload_bytes=" << output.payload_bytes() << "\n";
+    const auto transport_stats = output.transport_stats();
+    std::cout << "mlvc_media_unit_bytes=" << transport_stats.media_unit_bytes << "\n";
+    std::cout << "rtp_payload_bytes=" << transport_stats.rtp_payload_bytes << "\n";
+    std::cout << "rtp_wire_bytes=" << transport_stats.wire_bytes << "\n";
     if (options.translation_warp) {
       const uint64_t geometry_bytes = 2u * static_cast<uint64_t>(p_frames);
       std::cout << "translation_warp=true\n";

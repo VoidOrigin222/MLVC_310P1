@@ -5,6 +5,30 @@ negotiates MJPG 1920×1080 at 30 FPS; its 1080p mode cannot deliver more than
 30 distinct live frames per second. The requested **processing throughput** is
 measured separately by preloading real V4L2 frames before the timed run.
 
+## Camera RTSP preview (2026-10-04)
+
+The current `configs/encoder.toml` camera preview uses device NV12 from DVPP
+JPEGD, DVPP H.264 VENC on channel 0, and the libavformat RTSP publisher in
+H.264 copy mode. It no longer downloads and packs full NV12 frames on the CPU
+or invokes libx264 for this preview. The encoder honors the JPEGD surface
+strides and retains its buffer lease until the synchronous VENC call completes.
+VENC uses owned device input slots, as in the decoder preview.
+
+`camera_rtsp_bitrate_bps`, `camera_rtsp_gop`, `camera_rtsp_queue_capacity`, and
+`camera_rtsp_transport` control this path. DVPP camera RTSP requires an integer
+`camera_fps` between 1 and 240. Capture without RTSP still accepts fractional
+frame rates. The bounded preview queue drops the oldest pending frame under
+load. `camera_progress` reports `rtsp_frames` and `rtsp_dropped`; the publisher
+also maintains its own bounded output queue.
+
+The motion proxy uses VENC channel 1. Both encoders share a reference-counted
+MPI SYS lifetime so that closing one does not shut down the other. The camera
+preview retains the decoder's existing per-frame channel restart workaround
+for CANN 9.1; its persistent-channel mode is disabled. This change does not
+establish the live preview FPS, which requires a separate camera run.
+
+The sections below record the earlier isolated camera benchmark.
+
 ## Selected path
 
 `scripts/bash_run_encode_camera_1080p.sh` selects the isolated camera binary

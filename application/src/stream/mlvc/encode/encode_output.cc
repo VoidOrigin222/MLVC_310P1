@@ -122,4 +122,9 @@ uint64_t EncodeOutput::file_bytes() const {
   return payload_bytes_;
 }
 
+mlvc::transport::RtpTransportStats EncodeOutput::transport_stats() const {
+  if (rtp_sender_.has_value()) return rtp_sender_->Stats();
+  return {};
+}
+
 }  // namespace mlvc::codec

@@ -1,5 +1,6 @@
 #include <acl/acl.h>
 #include <mlvc/application/input/frame_input_queue.h>
+#include <mlvc/application/stream/live_quality_capture.h>
 #include <mlvc/application/pipeline/codec_frame_pipeline.h>
 #include <mlvc/application/pipeline/ordered_future_window.h>
 #include <mlvc/application/progress.h>
@@ -46,6 +47,7 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -591,6 +593,8 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
     mlvc::app::OrderedFutureWindow<DecodedEntropyFrame> entropy_window(
         options.pipeline.entropy_workers);
     const auto decode_start = std::chrono::steady_clock::now();
+    auto last_progress_time = decode_start;
+    int last_progress_frames = 0;
     int decoded_frames = 0;
     int input_frames_seen = 0;
     int expected_udp_frame_index = 0;
@@ -754,6 +758,9 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
                     TensorInput("y_raw_1", decoded.y_raw_1), ref_feature_input,
                    TensorInput("q_index_shifted", q_index_shifted_tensor)},
                    &profiler);
+      static mlvc::app::LiveQualityCapture quality_capture;
+      quality_capture.Reconstruction(frame_index, decoder_output.At("x_hat"),
+                                     decoder_output.Handle("x_hat"));
       if (header.translation_warp && (frame_index + 1) % header.reset_interval == 0 &&
           (frame_index + 1) % header.gop != 0) {
         SaveWarpResetFrame(decoder_output, &state, &profiler);
@@ -817,6 +824,18 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
       active_short_reference_frame = frame_index;
       if (header.translation_warp) TraceWarpReferenceState(frame_index, &state);
       ++decoded_frames;
+      const auto progress_now = std::chrono::steady_clock::now();
+      if (progress_now - last_progress_time >= std::chrono::seconds(1)) {
+        const double interval_seconds =
+            std::chrono::duration<double>(progress_now - last_progress_time).count();
+        std::ostringstream line;
+        line << "decode_progress frames=" << decoded_frames
+             << " fps=" << std::fixed << std::setprecision(2)
+             << (decoded_frames - last_progress_frames) / interval_seconds;
+        std::cerr << line.str() << std::endl;
+        last_progress_time = progress_now;
+        last_progress_frames = decoded_frames;
+      }
     };
 
     auto consume_packet = [&](const std::shared_ptr<mlvc::DataObject>& data) {

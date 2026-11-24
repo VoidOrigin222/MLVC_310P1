@@ -13,6 +13,11 @@
 #include "mlvc/transport/mlvc_media_unit.h"
 namespace mlvc::transport {
 struct RtpTransportStats {
+  // Bytes of serialized MLVC media units successfully sent.  This excludes
+  // RTP, UDP, and IP headers and is the value used for MLVC codec bitrate.
+  uint64_t media_unit_bytes = 0;
+  // Bytes carried in RTP payloads, including the MLVC fragment descriptor.
+  uint64_t rtp_payload_bytes = 0;
   uint64_t wire_bytes = 0;
   uint64_t packets = 0;
   uint64_t max_burst_bytes = 0;

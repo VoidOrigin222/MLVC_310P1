@@ -1,21 +1,46 @@
+# Live 1080p camera -> motion MLVC -> RTP decoder input.
 mode = "encode"
-input_frame_dir = "../data/preprocessed_frames/614lab_1080p_fp16"
-device = 0
-frame_num = 537
-qp = 2
+manifest = "/root/workplace/grifcc/MLVC_310P1/mlvc1080p/manifest_motion_ascend310p1.json"
+input_camera_device = "/dev/video0"
+camera_width = 1920
+camera_height = 1080
+camera_fps = 30
+camera_pixel_format = "MJPG"
+camera_preload_frames = 0
+# Original preview uses DVPP H.264 on channel 0; motion proxy uses channel 1.
+camera_rtsp_url = "rtsp://192.168.5.3:8554/camera-original"
+camera_rtsp_transport = "tcp"
+camera_rtsp_bitrate_bps = 8000000
+camera_rtsp_gop = 96
+camera_rtsp_queue_capacity = 3
+
+translation_warp = true
+motion_backend = "dvpp"
+motion_prefetch_frames = 2
+motion_skip_loop_filter = true
+motion_camera_nv12 = true
+
+qp = 11
 gop = 96
 reset_interval = 32
-ltr_start_idx = 8
-ltr_period = 64
-ltr_qp_shift = 8
+ltr_period = 0
+frame_num = -1
+fps = 30
+device = 0
 execution_profile = "pipeline-v1"
+
 output_transport_mode = "rtp"
+output_transport_host = "192.168.5.11"
+output_transport_port = 39340
 output_transport_payload_type = 96
-# Documentation-only address; replace with the decoder's reachable IP.
-output_transport_host = "192.0.2.1"
-output_transport_port = 39191
-output_transport_pacing_rate_bps = 1000000
+output_transport_pacing_rate_bps = 2000000
 output_transport_max_burst_bytes = 1240
+
+# Cumulative encoded MLVC RTP counters for the Windows comparison UI.
+# media_unit_bytes is the MLVC codec stream; wire_bytes includes RTP/UDP/IP.
+mlvc_stats_host = "192.168.5.3"
+mlvc_stats_port = 39341
+mlvc_stats_interval_frames = 30
 
 [pipeline]
 stream_workers = 1
@@ -23,6 +48,3 @@ queue_capacity = 3
 frame_buffer_slots = 3
 entropy_workers = 1
 graph_packet_capacity = 2
-
-[model]
-manifest = "../mlvc1080p/manifest_310P1.json"

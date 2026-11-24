@@ -21,12 +21,14 @@ const sandbox = {
   URL, Object, Number, String,
   settings: {original:'rtsp://127.0.0.1:8554/camera-original',h264:'rtsp://127.0.0.1:8554/camera-h264',
     mlvc:'rtsp://127.0.0.1:8554/ulbvc',webrtc:'http://127.0.0.1:8889',mode:'same_quality',h264_qp:40},
-  enabled:false, $:id=>elements[id],
+  configLoaded:true, enabled:false, $:id=>elements[id],
   document:{querySelectorAll:()=>[]},
   api:async (path,body)=>calls.push({path,body}), reconnect(){}, notice(){},
   pipeline:async action=>restarts.push(action),
 };
 vm.createContext(sandbox);
+const pathSource=source.slice(source.indexOf('function pathFor('),source.indexOf('function setState('));
+vm.runInContext(pathSource,sandbox);
 vm.runInContext(source.slice(start,end),sandbox);
 (async()=>{
   sandbox.fillSettings();
@@ -38,8 +40,6 @@ vm.runInContext(source.slice(start,end),sandbox);
   assert.equal(calls[0].body.mlvc,fields.mlvc.value,'saving must preserve the new stream path and query');
   sandbox.fillSettings();
   assert.equal(fields.mlvc.value,'rtsp://192.168.10.20:8554/custom/semantic?token=sample');
-  const pathSource=source.slice(source.indexOf('function pathFor('),source.indexOf('function setState('));
-  vm.runInContext(pathSource,sandbox);
   assert.equal(sandbox.pathFor(sandbox.settings.mlvc),'custom/semantic','WHEP must use the configured path');
   sandbox.enabled=true;
   fields.original.value='rtsp://127.0.0.1:8554/another-camera';

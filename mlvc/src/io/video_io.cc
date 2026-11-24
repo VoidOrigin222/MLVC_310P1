@@ -348,9 +348,22 @@ class CameraRtspPipeline {
         queue_capacity_(options.rtsp_queue_capacity) {
     Check(!options.rtsp_url.empty(), "camera RTSP output URL must not be empty");
     Check(queue_capacity_ > 0, "camera RTSP queue capacity must be positive");
+    Check(std::isfinite(options.fps) && options.fps >= 1.0 && options.fps <= 240.0 &&
+              std::abs(options.fps - std::round(options.fps)) < 1e-6,
+          "DVPP camera RTSP requires an integer frame rate in [1, 240]");
+    encoder_config_.layout = {width_, height_, width_, height_};
+    encoder_config_.fps = static_cast<uint32_t>(std::lround(options.fps));
+    encoder_config_.gop = options.rtsp_gop;
+    encoder_config_.bitrate = options.rtsp_bitrate_bps;
+    // The motion proxy owns channel 1; match the decoder RTSP policy on channel 0.
+    // Keep owned input slots and the validated per-frame channel restart policy.
+    encoder_config_.channel = 0;
     publisher_ = std::make_unique<RtspVideoPublisher>(
         options.rtsp_url, options.fps, options.width, options.height, "ultrafast", 18,
-        queue_capacity_, options.rtsp_transport, false);
+        queue_capacity_, options.rtsp_transport, true);
+    std::cerr << "camera_rtsp_encoder=dvpp channel=" << encoder_config_.channel
+              << " fps=" << encoder_config_.fps << " bitrate_bps=" << encoder_config_.bitrate
+              << " gop=" << encoder_config_.gop << std::endl;
     worker_ = std::thread([this] { WorkerMain(); });
   }
 
@@ -367,7 +380,8 @@ class CameraRtspPipeline {
   void Enqueue(DvppJpegDecodedFrame frame) {
     Check(frame.device_data() != nullptr, "camera RTSP received an empty NV12 surface");
     std::lock_guard<std::mutex> lock(mutex_);
-    if (worker_error_ != nullptr || stopping_ || closed_) return;
+    if (worker_error_ != nullptr) std::rethrow_exception(worker_error_);
+    if (stopping_ || closed_) return;
     if (queue_.size() >= queue_capacity_) {
       queue_.pop_front();
       ++dropped_frames_;
@@ -426,6 +440,7 @@ class CameraRtspPipeline {
   void WorkerMain() {
     try {
       CheckAcl(aclrtSetCurrentContext(context_), "aclrtSetCurrentContext camera RTSP worker");
+      std::unique_ptr<DvppH264Encoder> encoder;
       for (;;) {
         DvppJpegDecodedFrame frame;
         {
@@ -435,26 +450,21 @@ class CameraRtspPipeline {
           frame = std::move(queue_.front());
           queue_.pop_front();
         }
-        std::vector<uint8_t> padded_nv12(frame.bytes());
-        CheckAcl(aclrtMemcpy(padded_nv12.data(), padded_nv12.size(), frame.device_data(),
-                             frame.bytes(), ACL_MEMCPY_DEVICE_TO_HOST),
-                 "copy camera NV12 to host for RTSP encoder");
-        const std::size_t output_y_bytes = static_cast<std::size_t>(width_) * height_;
-        std::vector<uint8_t> packed_nv12(output_y_bytes + output_y_bytes / 2);
-        const std::size_t source_y_bytes =
-            static_cast<std::size_t>(frame.width_stride()) * frame.height_stride();
-        for (int row = 0; row < height_; ++row) {
-          std::memcpy(packed_nv12.data() + static_cast<std::size_t>(row) * width_,
-                      padded_nv12.data() + static_cast<std::size_t>(row) * frame.width_stride(),
-                      width_);
+        if (!encoder) {
+          // JPEGD already supplies a synchronized, device-resident NV12 surface.
+          // Honor its strides instead of downloading and packing pixels on the CPU.
+          encoder_config_.layout.width_stride = frame.width_stride();
+          encoder_config_.layout.height_stride = frame.height_stride();
+          Check(frame.bytes() == Nv12BufferSize(encoder_config_.layout),
+                "camera RTSP JPEGD NV12 storage does not match its strides");
+          encoder = std::make_unique<DvppH264Encoder>(context_, encoder_config_);
         }
-        uint8_t* output_uv = packed_nv12.data() + output_y_bytes;
-        const uint8_t* source_uv = padded_nv12.data() + source_y_bytes;
-        for (int row = 0; row < height_ / 2; ++row) {
-          std::memcpy(output_uv + static_cast<std::size_t>(row) * width_,
-                      source_uv + static_cast<std::size_t>(row) * frame.width_stride(), width_);
-        }
-        publisher_->WriteNv12Frame(std::move(packed_nv12));
+        Check(frame.width_stride() == encoder_config_.layout.width_stride &&
+                  frame.height_stride() == encoder_config_.layout.height_stride &&
+                  frame.bytes() == Nv12BufferSize(encoder_config_.layout),
+              "camera RTSP JPEGD NV12 layout changed during capture");
+        // Keep the surface lease alive until the synchronous VENC call completes.
+        publisher_->WriteH264Frame(encoder->EncodeDevice(frame.device_data(), frame.bytes()));
         std::lock_guard<std::mutex> lock(mutex_);
         ++frames_;
       }
@@ -471,6 +481,7 @@ class CameraRtspPipeline {
   int width_ = 0;
   int height_ = 0;
   std::size_t queue_capacity_ = 3;
+  DvppH264EncoderConfig encoder_config_;
   std::unique_ptr<RtspVideoPublisher> publisher_;
   std::deque<DvppJpegDecodedFrame> queue_;
   mutable std::mutex mutex_;
@@ -962,6 +973,10 @@ class VideoFrameReader::Impl {
               std::cerr << "camera_progress frames=" << camera_frames_
                         << " v4l2_sequence_gaps=" << v4l2_sequence_gaps_
                         << " camera_queue_full_waits=" << camera_queue_full_waits_
+                        << " rtsp_frames="
+                        << (rtsp_pipeline_ != nullptr ? rtsp_pipeline_->frames() : 0)
+                        << " rtsp_dropped="
+                        << (rtsp_pipeline_ != nullptr ? rtsp_pipeline_->dropped_frames() : 0)
                         << std::endl;
             }
           }

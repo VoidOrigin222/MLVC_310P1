@@ -62,6 +62,11 @@ struct EncodeStreamOptions {
   std::size_t output_transport_max_burst_bytes = 4096;
   std::size_t output_transport_max_queue_bytes = 4u * 1024u * 1024u;
   uint64_t output_transport_max_queue_delay_ms = 1000;
+  // Optional UDP JSON telemetry for the UI.  The counters describe the
+  // encoded MLVC RTP stream, not the decoder's H.264 preview stream.
+  std::string mlvc_stats_host;
+  int mlvc_stats_port = 0;
+  int mlvc_stats_interval_frames = 30;
   PipelineOptions pipeline;
 };
 

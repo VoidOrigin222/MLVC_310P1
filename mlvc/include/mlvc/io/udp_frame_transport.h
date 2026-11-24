@@ -78,6 +78,7 @@ class RtpMlvcSender {
   void Close();
   bool ConsumeRandomAccessRequest();
   bool PopMlvcControl(mlvc::transport::MlvcControlMessage* message);
+  mlvc::transport::RtpTransportStats Stats() const;
   uint16_t rtcp_local_port() const;
   void SendMlvcControlResponse(const mlvc::transport::MlvcControlMessage& request, bool accepted,
                                const std::string& reason);

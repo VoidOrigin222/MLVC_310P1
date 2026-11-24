@@ -1,4 +1,5 @@
 #include <mlvc/application/stream/encode/encode_frame.h>
+#include <mlvc/application/stream/live_quality_capture.h>
 #include <mlvc/codec/detail/stage/constants.h>
 #include <mlvc/codec/detail/stage/stage_runner.h>
 #include <mlvc/codec/detail/tensor/tensor_utils.h>
@@ -155,6 +156,9 @@ PendingEncodedFrame EncodeFrameProcessor::Process(const std::shared_ptr<mlvc::Da
   Check(prepared_frame.frame != nullptr, "async input returned an empty frame");
   const int frame_index = prepared_frame.frame_index;
   Check(frame_index == expected_frame_index, "async input frame order mismatch");
+
+  static mlvc::app::LiveQualityCapture quality_capture;
+  quality_capture.Reference(frame_index, *prepared_frame.frame, prepared_frame.motion_nv12);
 
   const EncodeFrameDecision decision = state_->BeginFrame(frame_index, options_);
   if (options_.translation_warp && decision.reset_reference) {
