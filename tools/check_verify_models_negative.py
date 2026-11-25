@@ -24,7 +24,7 @@ def write_file(path: Path, payload: bytes) -> dict[str, object]:
 
 
 def base_manifest(root: Path) -> dict[str, object]:
-    sidecar_meta = write_file(root / "sidecars.mlvcsc", b"sidecar")
+    sidecar_meta = write_file(root / "sidecars.ulbvcsc", b"sidecar")
     runtime_artifacts = []
     for name in ("metadata.json", "gaussian_pmf.json", "bit_estimator_pmf.json"):
         runtime_artifacts.append({"name": name, "file": name, **write_file(root / name, b"{}")})
@@ -41,7 +41,7 @@ def base_manifest(root: Path) -> dict[str, object]:
         "soc_version": "Ascend310P3",
         "dtype": "fp16",
         "sidecar": {
-            "file": "sidecars.mlvcsc",
+            "file": "sidecars.ulbvcsc",
             "bytes": sidecar_meta["bytes"],
             "sha256": sidecar_meta["sha256"],
         },
@@ -88,7 +88,7 @@ def expect_failure(path: Path, expected: str) -> None:
 
 
 def main() -> int:
-    temp_root = Path(tempfile.mkdtemp(prefix="mlvc_verify_models_negative_"))
+    temp_root = Path(tempfile.mkdtemp(prefix="ulbvc_verify_models_negative_"))
     try:
         manifest = base_manifest(temp_root)
         valid_path = write_manifest(temp_root, manifest, "valid.json")

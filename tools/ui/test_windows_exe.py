@@ -21,8 +21,8 @@ def main() -> None:
     environment = os.environ.copy()
     systemroot = environment.get("SystemRoot", "C:\\Windows")
     environment["PATH"] = systemroot + "\\System32;" + systemroot
-    environment["MLVC_UI_STATS_PORT"] = "0"
-    environment.pop("MLVC_UI_CONFIG", None)
+    environment["ULBVC_UI_STATS_PORT"] = "0"
+    environment.pop("ULBVC_UI_CONFIG", None)
     startup = subprocess.STARTUPINFO()
     startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
     startup.wShowWindow = 0
@@ -83,7 +83,7 @@ def main() -> None:
             expected_urls = {
                 'original': 'rtsp://127.0.0.1:8554/camera-original',
                 'h264': 'rtsp://127.0.0.1:8554/camera-h264',
-                'mlvc': edited['semantic'],
+                'ulbvc': edited['semantic'],
                 'webrtc': 'http://127.0.0.1:8889',
             }
             for key, url in expected_urls.items():
@@ -94,14 +94,14 @@ def main() -> None:
                 page = response.read().decode('utf-8')
             assert 'value="rtsp://127.0.0.1:8554/ulbvc"' in page
             result['loaded_config_file'] = True
-            saved = {**config, 'h264_qp': 38, 'mlvc_stats_port': 40341,
-                     'mlvc': 'rtsp://127.0.0.1:8554/ulbvc-updated'}
+            saved = {**config, 'h264_qp': 38, 'ulbvc_stats_port': 40341,
+                     'ulbvc': 'rtsp://127.0.0.1:8554/ulbvc-updated'}
             request = Request(base + '/api/config', data=json.dumps(saved).encode('utf-8'),
                               headers={'Content-Type': 'application/json'}, method='POST')
             with urlopen(request, timeout=3) as response:
                 assert response.status == 200
             disk = json.loads(config_file.read_text(encoding='utf-8'))
-            assert disk['semantic'] == saved['mlvc'] and disk['h264_qp'] == 38
+            assert disk['semantic'] == saved['ulbvc'] and disk['h264_qp'] == 38
             assert disk['stats_port'] == 40341 and disk['ffmpeg'] == 'auto'
             result['api_saved_config_file'] = True
             result["single_instance_reuse"] = True
@@ -125,7 +125,7 @@ def main() -> None:
                     assert process.poll() is None, 'Restart exited before becoming ready'
                     assert time.monotonic() < deadline, 'Restart did not become ready'
                     time.sleep(0.15)
-            for key in ('original', 'h264', 'mlvc', 'webrtc', 'transport', 'h264_qp', 'ffmpeg', 'mlvc_stats_port'):
+            for key in ('original', 'h264', 'ulbvc', 'webrtc', 'transport', 'h264_qp', 'ffmpeg', 'ulbvc_stats_port'):
                 assert restored[key] == saved[key], (key, restored[key], saved[key])
             assert process.wait(timeout=30) == 0
             result['settings_survive_restart'] = True

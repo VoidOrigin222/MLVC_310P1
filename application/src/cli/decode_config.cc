@@ -1,8 +1,8 @@
-#include <mlvc/application/cli/decoder_app.h>
-#include <mlvc/application/stream/mlvc_stream.h>
-#include <mlvc/codec/execution_profile.h>
-#include <mlvc/io/video_io.h>
-#include <mlvc/runtime/model_manifest.h>
+#include <ulbvc/application/cli/decoder_app.h>
+#include <ulbvc/application/stream/ulbvc_stream.h>
+#include <ulbvc/codec/execution_profile.h>
+#include <ulbvc/io/video_io.h>
+#include <ulbvc/runtime/model_manifest.h>
 #include <toml++/toml.h>
 
 #include <cmath>
@@ -16,7 +16,7 @@
 #include <string>
 #include <string_view>
 
-#include "mlvc/core/status.h"
+#include "ulbvc/core/status.h"
 
 namespace {
 
@@ -26,7 +26,7 @@ void CheckKnownKeys(const toml::table& table, std::initializer_list<std::string_
     (void)value;
     const std::string name(key.str());
     if (std::find(allowed.begin(), allowed.end(), name) == allowed.end()) {
-      throw mlvc::Error("unknown config key: " +
+      throw ulbvc::Error("unknown config key: " +
                         (section.empty() ? name : section + "." + name));
     }
   }
@@ -49,11 +49,11 @@ void ValidateConfigKeys(const toml::table& config) {
                   "model", "pipeline"},
                  "");
   if (const toml::node* model = config["model"].node(); model != nullptr) {
-    mlvc::Check(model->is_table(), "config section must be a table: model");
+    ulbvc::Check(model->is_table(), "config section must be a table: model");
     CheckKnownKeys(*model->as_table(), {"manifest"}, "model");
   }
   if (const toml::node* pipeline = config["pipeline"].node(); pipeline != nullptr) {
-    mlvc::Check(pipeline->is_table(), "config section must be a table: pipeline");
+    ulbvc::Check(pipeline->is_table(), "config section must be a table: pipeline");
     CheckKnownKeys(*pipeline->as_table(), {"stream_workers", "queue_capacity", "frame_buffer_slots",
                                             "entropy_workers", "graph_packet_capacity",
                                             "entropy_execution"},
@@ -65,7 +65,7 @@ toml::table ReadTomlConfig(const std::filesystem::path& path) {
   try {
     return toml::parse_file(path.string());
   } catch (const toml::parse_error& error) {
-    throw mlvc::Error("failed to parse config TOML: " + std::string(error.description()));
+    throw ulbvc::Error("failed to parse config TOML: " + std::string(error.description()));
   }
 }
 
@@ -73,7 +73,7 @@ std::string GetString(const toml::table& config, const std::string& key,
                       const std::string& fallback = "") {
   if (config[key].node() == nullptr) return fallback;
   const std::optional<std::string> value = config[key].value<std::string>();
-  mlvc::Check(value.has_value(), "config key must be a string: " + key);
+  ulbvc::Check(value.has_value(), "config key must be a string: " + key);
   return *value;
 }
 
@@ -81,18 +81,18 @@ std::string GetNestedString(const toml::table& config, const std::string& table_
                             const std::string& key, const std::string& fallback = "") {
   const toml::node* table_node = config[table_name].node();
   if (table_node == nullptr) return fallback;
-  mlvc::Check(table_node->is_table(), "config section must be a table: " + table_name);
+  ulbvc::Check(table_node->is_table(), "config section must be a table: " + table_name);
   if (config[table_name][key].node() == nullptr) return fallback;
   const std::optional<std::string> value = config[table_name][key].value<std::string>();
-  mlvc::Check(value.has_value(), "config key must be a string: " + table_name + "." + key);
+  ulbvc::Check(value.has_value(), "config key must be a string: " + table_name + "." + key);
   return *value;
 }
 
 int GetInt(const toml::table& config, const std::string& key, int fallback) {
   if (config[key].node() == nullptr) return fallback;
   const std::optional<int64_t> value = config[key].value<int64_t>();
-  mlvc::Check(value.has_value(), "config key must be an integer: " + key);
-  mlvc::Check(
+  ulbvc::Check(value.has_value(), "config key must be an integer: " + key);
+  ulbvc::Check(
       *value >= std::numeric_limits<int>::min() && *value <= std::numeric_limits<int>::max(),
       "config integer is out of int range: " + key);
   return static_cast<int>(*value);
@@ -102,11 +102,11 @@ int GetNestedInt(const toml::table& config, const std::string& table_name, const
                  int fallback) {
   const toml::node* table_node = config[table_name].node();
   if (table_node == nullptr) return fallback;
-  mlvc::Check(table_node->is_table(), "config section must be a table: " + table_name);
+  ulbvc::Check(table_node->is_table(), "config section must be a table: " + table_name);
   if (config[table_name][key].node() == nullptr) return fallback;
   const std::optional<int64_t> value = config[table_name][key].value<int64_t>();
-  mlvc::Check(value.has_value(), "config key must be an integer: " + table_name + "." + key);
-  mlvc::Check(
+  ulbvc::Check(value.has_value(), "config key must be an integer: " + table_name + "." + key);
+  ulbvc::Check(
       *value >= std::numeric_limits<int>::min() && *value <= std::numeric_limits<int>::max(),
       "config integer is out of int range: " + table_name + "." + key);
   return static_cast<int>(*value);
@@ -120,13 +120,13 @@ double GetDouble(const toml::table& config, const std::string& key, double fallb
   if (const std::optional<int64_t> value = config[key].value<int64_t>(); value.has_value()) {
     return static_cast<double>(*value);
   }
-  mlvc::Check(false, "config key must be a number: " + key);
+  ulbvc::Check(false, "config key must be a number: " + key);
   return fallback;
 }
 
 }  // namespace
 
-namespace mlvc {
+namespace ulbvc {
 
 DecoderApplicationConfig LoadDecoderConfig(const std::filesystem::path& config_path) {
   const toml::table config = ReadTomlConfig(config_path);
@@ -140,7 +140,7 @@ DecoderApplicationConfig LoadDecoderConfig(const std::filesystem::path& config_p
   const std::string bitrate = GetString(config, "bitrate", "6500k");
   const std::string preset = GetString(config, "preset", "medium");
   const std::string execution_profile =
-      GetString(config, "execution_profile", std::string(mlvc::codec::kCodecExecutionProfile));
+      GetString(config, "execution_profile", std::string(ulbvc::codec::kCodecExecutionProfile));
   Check(execution_profile == "pipeline-v1",
         "only pipeline-v1 execution profile is supported, got: " + execution_profile);
   const int crf = GetInt(config, "crf", 23);
@@ -192,7 +192,7 @@ DecoderApplicationConfig LoadDecoderConfig(const std::filesystem::path& config_p
           "output_transport_rtsp_url is required when output_transport_mode is rtsp");
     Check(!output_transport_rtsp_preset.empty(), "output_transport_rtsp_preset must not be empty");
   }
-  const mlvc::ModelManifest manifest = mlvc::ModelManifest::Load(manifest_path);
+  const ulbvc::ModelManifest manifest = ulbvc::ModelManifest::Load(manifest_path);
   DecoderApplicationConfig result;
   result.stream.manifest_path = manifest_path;
   result.stream.input_bitstream_path = input;
@@ -226,8 +226,8 @@ DecoderApplicationConfig LoadDecoderConfig(const std::filesystem::path& config_p
   result.stream.output_transport_rtsp_preset = output_transport_rtsp_preset;
   result.stream.output_transport_rtsp_transport = output_transport_rtsp_transport;
   result.stream.output_transport_rtsp_crf = output_transport_rtsp_crf;
-  Check(mlvc::codec::IsMlvcManifest(manifest),
-        "decoder manifest must contain MLVCEncoder and MLVCDecoder models");
+  Check(ulbvc::codec::IsUlbvcManifest(manifest),
+        "decoder manifest must contain ULBVCEncoder and ULBVCDecoder models");
   const int stream_workers = GetNestedInt(config, "pipeline", "stream_workers", 1);
   const int queue_capacity = GetNestedInt(config, "pipeline", "queue_capacity", 3);
   const int frame_buffer_slots = GetNestedInt(config, "pipeline", "frame_buffer_slots", 3);
@@ -248,4 +248,4 @@ DecoderApplicationConfig LoadDecoderConfig(const std::filesystem::path& config_p
   return result;
 }
 
-}  // namespace mlvc
+}  // namespace ulbvc

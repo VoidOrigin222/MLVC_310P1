@@ -1,8 +1,8 @@
-#include "mlvc/framework/data_consumer.h"
+#include "ulbvc/framework/data_consumer.h"
 
-#include "mlvc/framework/streaming_pipeline.h"
+#include "ulbvc/framework/streaming_pipeline.h"
 
-namespace mlvc {
+namespace ulbvc {
 
 DataConsumer::DataConsumer(StreamingPipeline& pipeline, std::atomic<bool>& running)
     : pipeline_(pipeline), running_(running) {}
@@ -49,4 +49,4 @@ bool DataConsumer::GetData(std::shared_ptr<DataObject>* data) {
   return pipeline_.TryGetOutput(data);
 }
 
-}  // namespace mlvc
+}  // namespace ulbvc

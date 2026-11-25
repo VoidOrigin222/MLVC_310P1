@@ -20,6 +20,9 @@ models/*
 logs/
 reports/
 artifacts/
+/sdk/
+/lib/
+/runtime-bin/
 output/
 .agents/
 ref

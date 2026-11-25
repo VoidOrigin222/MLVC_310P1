@@ -1,13 +1,13 @@
-#include "mlvc/core/buffer.h"
+#include "ulbvc/core/buffer.h"
 
 #include <acl/acl.h>
 
 #include <cstring>
 #include <utility>
 
-#include "mlvc/core/status.h"
+#include "ulbvc/core/status.h"
 
-namespace mlvc {
+namespace ulbvc {
 namespace {
 
 void CheckAclStatus(aclError status, const char* operation) {
@@ -105,4 +105,4 @@ TensorView DeviceBuffer::View(const TensorShape& shape, DataType dtype) {
   return TensorView::Borrowed(data(), &shape, dtype, MemoryLocation::kAcl);
 }
 
-}  // namespace mlvc
+}  // namespace ulbvc

@@ -1,0 +1,102 @@
+#include <ulbvc/application/stream/encode/encode_setup.h>
+#include <ulbvc/codec/execution_profile.h>
+
+#include <filesystem>
+
+#include "ulbvc/core/status.h"
+
+namespace ulbvc::codec {
+
+void ValidateEncodeInput(const EncodeStreamOptions& options) {
+  Check(!options.motion_camera_nv12 ||
+            (options.translation_warp && options.motion_shifts_file.empty() &&
+             options.motion_prefetch_frames > 0),
+        "camera motion NV12 requires online translation warp with prefetch");
+  Check(!options.motion_camera_nv12 ||
+            (!options.input_camera_device.empty() && options.camera_options.has_value()),
+        "motion_camera_nv12 requires camera input");
+  Check(!options.motion_skip_loop_filter ||
+            (options.translation_warp && options.motion_shifts_file.empty()),
+        "motion_skip_loop_filter requires online translation warp");
+  Check(options.motion_x264_preset == "medium" || options.motion_x264_preset == "veryfast" ||
+            options.motion_x264_preset == "superfast" || options.motion_x264_preset == "ultrafast",
+        "motion_x264_preset must be medium, veryfast, superfast, or ultrafast");
+  Check(options.motion_x264_threads >= 1 && options.motion_x264_threads <= 16,
+        "motion_x264_threads must be in [1, 16]");
+  Check((options.motion_x264_preset == "medium" && options.motion_x264_threads == 1) ||
+            (options.translation_warp && options.motion_backend == "libx264" &&
+             options.motion_shifts_file.empty()),
+        "non-default x264 settings require online libx264 translation warp");
+
+  Check(options.motion_prefetch_frames >= 0 && options.motion_prefetch_frames <= 2,
+        "motion_prefetch_frames must be 0, 1, or 2");
+  Check(options.motion_prefetch_frames == 0 || options.translation_warp,
+        "motion prefetch requires translation warp");
+  Check(options.motion_backend == "libx264" || options.motion_backend == "dvpp",
+        "motion_backend must be libx264 or dvpp");
+  Check(options.translation_warp || options.motion_backend == "libx264",
+        "a non-default motion_backend requires translation warp");
+  Check(options.motion_shifts_file.empty() || options.motion_backend == "libx264",
+        "motion_shifts_file replays saved motion and cannot be combined with motion_backend=dvpp");
+  Check(options.translation_warp || options.motion_shifts_file.empty(),
+        "motion_shifts_file requires translation warp");
+  if (options.translation_warp) {
+    Check(options.gop == 96 && options.reset_interval == 32,
+          "translation warp currently requires GOP 96 and reset interval 32");
+    Check(options.ltr_period == 0 && options.forced_ltr_recovery_frame < 0 &&
+              options.forced_ltr_reference_frame < 0,
+          "translation warp requires LTR disabled because proxy motion uses the previous frame");
+    Check(options.output_transport_port == 0 || options.output_transport_mode == "rtp",
+          "translation warp requires ULBVC-ES files or RTP transport");
+  }
+  Check(ulbvc::codec::IsCodecExecutionProfile(options.execution_profile),
+        "unsupported codec execution profile: " + options.execution_profile);
+  Check(!options.manifest_path.empty(), "encode stream requires a manifest path");
+  Check(options.input_synthetic || !options.input_camera_device.empty() || !options.input_video_path.empty() ||
+            !options.input_frame_dir.empty(),
+        "ULBVC encode requires input_synthetic, input_camera_device, input_frame_dir, or input_video");
+  if (options.input_synthetic) {
+    Check(options.input_camera_device.empty() && options.input_video_path.empty() &&
+              options.input_frame_dir.empty() && options.frame_num > 0,
+          "synthetic input requires a finite frame count and no other source");
+    return;
+  }
+  if (!options.input_camera_device.empty()) {
+    Check(options.camera_options.has_value(), "camera options are required for camera input");
+    Check(options.input_camera_device == options.input_video_path,
+          "camera device and selected input path must match");
+  }
+  if (!options.input_video_path.empty()) {
+    Check(std::filesystem::exists(options.input_video_path),
+          "ULBVC input video does not exist: " + options.input_video_path.string());
+    return;
+  }
+  Check(std::filesystem::is_directory(options.input_frame_dir),
+        "ULBVC input frame directory does not exist: " + options.input_frame_dir.string());
+  Check(std::filesystem::exists(options.input_frame_dir / "source_info.txt"),
+        "ULBVC frame directory requires source_info.txt: " + options.input_frame_dir.string());
+}
+
+ulbvc::io::UlbvcBitstreamHeader BuildEncodeHeader(const EncodeStreamOptions& options,
+                                                const SourceFrameGeometry& geometry, double fps) {
+  ulbvc::io::UlbvcBitstreamHeader header;
+  header.version = 4;
+  header.width = geometry.width;
+  header.height = geometry.height;
+  header.fps = fps;
+  header.q_index = options.qp;
+  header.gop = options.gop;
+  header.reset_interval = options.reset_interval;
+  header.translation_warp = options.translation_warp;
+  header.ltr_start_idx = options.ltr_start_idx;
+  header.ltr_period = options.ltr_period;
+  header.ltr_qp_shift = options.ltr_qp_shift;
+  header.target_bitrate_bps = options.target_bitrate_bps;
+  header.flags = 0;
+  header.forced_ltr_recovery_frame = options.forced_ltr_recovery_frame;
+  header.forced_ltr_reference_frame = options.forced_ltr_reference_frame;
+  ulbvc::io::ValidateUlbvcBitstreamHeader(header);
+  return header;
+}
+
+}  // namespace ulbvc::codec

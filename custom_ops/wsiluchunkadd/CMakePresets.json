@@ -35,7 +35,7 @@
                 },
                 "vendor_name": {
                     "type": "STRING",
-                    "value": "mlvc"
+                    "value": "ulbvc"
                 },
                 "ASCEND_CANN_PACKAGE_PATH": {
                     "type": "PATH",

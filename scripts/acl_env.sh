@@ -3,7 +3,10 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-export MLVC_ACL_REPO_ROOT="${repo_root}"
+export ULBVC_ACL_REPO_ROOT="${repo_root}"
+if [[ -d "${repo_root}/.deps/python" ]]; then
+  export PYTHONPATH="${repo_root}/.deps/python${PYTHONPATH:+:${PYTHONPATH}}"
+fi
 export CANN_HOME="${CANN_HOME:-/usr/local/Ascend/cann}"
 export ASCEND_HOME_PATH="${ASCEND_HOME_PATH:-${CANN_HOME}}"
 
@@ -20,8 +23,8 @@ if [ -x "$(dirname "${PYTHON_BIN}")/python" ]; then
 fi
 
 custom_opp_envs=(
-  "${MLVC_ACL_REPO_ROOT}/output/custom_opp/wsiluchunkadd/vendors/mlvc/bin/set_env.bash"
-  "${MLVC_ACL_REPO_ROOT}/output/custom_opp/mlvc_prior_ops/vendors/mlvc/bin/set_env.bash"
+  "${ULBVC_ACL_REPO_ROOT}/output/custom_opp/wsiluchunkadd/vendors/ulbvc/bin/set_env.bash"
+  "${ULBVC_ACL_REPO_ROOT}/output/custom_opp/ulbvc_prior_ops/vendors/ulbvc/bin/set_env.bash"
 )
 loaded_custom_opp_envs=()
 for custom_opp_env in "${custom_opp_envs[@]}"; do
@@ -34,12 +37,12 @@ for custom_opp_env in "${custom_opp_envs[@]}"; do
   fi
 done
 
-prior_opapi_lib="${MLVC_ACL_REPO_ROOT}/output/custom_opp/mlvc_prior_ops/vendors/mlvc/op_api/lib/libcust_opapi.so"
+prior_opapi_lib="${ULBVC_ACL_REPO_ROOT}/output/custom_opp/ulbvc_prior_ops/vendors/ulbvc/op_api/lib/libcust_opapi.so"
 if [ -f "${prior_opapi_lib}" ]; then
-  export MLVC_PRIOR_OPAPI_LIB="${prior_opapi_lib}"
+  export ULBVC_PRIOR_OPAPI_LIB="${prior_opapi_lib}"
 fi
 
-echo "MLVC_ACL_REPO_ROOT=${MLVC_ACL_REPO_ROOT}"
+echo "ULBVC_ACL_REPO_ROOT=${ULBVC_ACL_REPO_ROOT}"
 echo "CANN_HOME=${CANN_HOME}"
 echo "PYTHON_BIN=${PYTHON_BIN}"
 if [ "${#loaded_custom_opp_envs[@]}" -gt 0 ]; then
@@ -47,4 +50,4 @@ if [ "${#loaded_custom_opp_envs[@]}" -gt 0 ]; then
 else
   echo "custom_opp_envs=not-installed"
 fi
-echo "MLVC_PRIOR_OPAPI_LIB=${MLVC_PRIOR_OPAPI_LIB:-not-installed}"
+echo "ULBVC_PRIOR_OPAPI_LIB=${ULBVC_PRIOR_OPAPI_LIB:-not-installed}"

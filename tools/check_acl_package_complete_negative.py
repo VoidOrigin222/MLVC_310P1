@@ -36,7 +36,7 @@ def assert_true(condition: bool, message: str) -> None:
 
 
 def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="mlvc_acl_package_complete_") as temp:
+    with tempfile.TemporaryDirectory(prefix="ulbvc_acl_package_complete_") as temp:
         root = Path(temp)
         source = write_manifest(root / "source.json", ["a", "b", "c"])
         complete = write_manifest(root / "complete.json", ["a", "b", "c"])

@@ -1,4 +1,4 @@
-#include <mlvc/motion/h264_reference_policy.h>
+#include <ulbvc/motion/h264_reference_policy.h>
 
 #include <iostream>
 #include <stdexcept>
@@ -63,7 +63,7 @@ std::vector<uint8_t> PFrame(unsigned frame_num = 1, unsigned override_refs = 0,
 }
 
 void ExpectRejected(const std::vector<uint8_t>& packet, unsigned default_refs = 1) {
-  mlvc::motion::H264ReferencePolicy policy;
+  ulbvc::motion::H264ReferencePolicy policy;
   const auto keyframe = Keyframe(default_refs);
   policy.Inspect(keyframe.data(), keyframe.size(), true);
   bool rejected = false;
@@ -76,7 +76,7 @@ void ExpectRejected(const std::vector<uint8_t>& packet, unsigned default_refs = 
 
 int main() {
   try {
-    mlvc::motion::H264ReferencePolicy policy;
+    ulbvc::motion::H264ReferencePolicy policy;
     auto keyframe = Keyframe();
     policy.Inspect(keyframe.data(), keyframe.size(), true);
     for (unsigned frame = 1; frame < 20; ++frame) {
@@ -94,7 +94,7 @@ int main() {
     ExpectRejected(PFrame(1, 0, false, false, false));
     ExpectRejected(PFrame(2));
     ExpectRejected(PFrame(1, 0, false, false, true, 1));
-    mlvc::motion::H264ReferencePolicy override_policy;
+    ulbvc::motion::H264ReferencePolicy override_policy;
     keyframe = Keyframe(2);
     override_policy.Inspect(keyframe.data(), keyframe.size(), true);
     packet = PFrame(1, 1);

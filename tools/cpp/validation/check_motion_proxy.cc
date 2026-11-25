@@ -1,5 +1,5 @@
-#include <mlvc/motion/translation_estimator.h>
-#include <mlvc/io/fp16_yuv444_to_nv12.h>
+#include <ulbvc/motion/translation_estimator.h>
+#include <ulbvc/io/fp16_yuv444_to_nv12.h>
 #include "motion_mv_parity.h"
 
 #include <iostream>
@@ -12,13 +12,13 @@ void CheckProxy(const std::string& preset, int threads) {
     const int width = threads == 1 ? 256 : 512;
     const int height = threads == 1 ? 128 : 256;
     constexpr int gop = 4;
-    mlvc::validation::MotionMvParity parity(gop);
-    mlvc::motion::Translation observed;
-    mlvc::motion::TranslationEstimator estimator({width, height, 30, gop, preset, threads},
+    ulbvc::validation::MotionMvParity parity(gop);
+    ulbvc::motion::Translation observed;
+    ulbvc::motion::TranslationEstimator estimator({width, height, 30, gop, preset, threads},
         [&](const uint8_t* packet, std::size_t bytes, uint64_t index, bool random_access) {
           observed = parity.Inspect(packet, bytes, index, random_access);
         });
-    const mlvc::io::Nv12Layout layout{width, height, width + 32, height + 16};
+    const ulbvc::io::Nv12Layout layout{width, height, width + 32, height + 16};
     std::vector<uint8_t> base(width * height);
     uint32_t random = 0x12345678;
     for (std::size_t index = 0; index < base.size(); ++index) {
@@ -30,7 +30,7 @@ void CheckProxy(const std::string& preset, int threads) {
       base[index] = static_cast<uint8_t>(128 + 30 * std::sin(x / 17.0) +
           35 * std::cos(y / 11.0) + 20 * std::sin((x + y) / 27.0) + random % 5);
     }
-    std::vector<uint8_t> nv12(mlvc::io::Nv12BufferSize(layout), 128);
+    std::vector<uint8_t> nv12(ulbvc::io::Nv12BufferSize(layout), 128);
     constexpr int frames = 14;
     int offset_x = 0, offset_y = 0;
     for (int frame = 0; frame < frames; ++frame) {
@@ -83,11 +83,11 @@ int main() {
     CheckProxy("veryfast", 4);
     CheckProxy("superfast", 4);
     CheckProxy("ultrafast", 4);
-    for (const auto& config : std::vector<mlvc::motion::TranslationEstimatorConfig>{
+    for (const auto& config : std::vector<ulbvc::motion::TranslationEstimatorConfig>{
              {256, 128, 30, 4, "slow", 1}, {256, 128, 30, 4, "medium", 0},
              {256, 128, 30, 4, "medium", 17}}) {
       bool rejected = false;
-      try { mlvc::motion::TranslationEstimator invalid(config); }
+      try { ulbvc::motion::TranslationEstimator invalid(config); }
       catch (const std::exception&) { rejected = true; }
       if (!rejected) throw std::runtime_error("invalid preset/thread config was accepted");
     }

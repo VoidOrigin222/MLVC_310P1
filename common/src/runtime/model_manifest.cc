@@ -1,4 +1,4 @@
-#include "mlvc/runtime/model_manifest.h"
+#include "ulbvc/runtime/model_manifest.h"
 
 #include <algorithm>
 #include <array>
@@ -13,9 +13,9 @@
 #include <utility>
 #include <vector>
 
-#include "mlvc/core/status.h"
+#include "ulbvc/core/status.h"
 
-namespace mlvc {
+namespace ulbvc {
 namespace {
 
 constexpr std::array<uint32_t, 64> kSha256K = {
@@ -533,7 +533,7 @@ std::array<uint8_t, 32> ComputeModelBundleSha256(const ModelManifest& manifest) 
   // Length-prefix every field so that two different manifests cannot collide
   // merely because their textual fields happen to concatenate identically.
   std::vector<uint8_t> canonical;
-  AppendString(&canonical, "MLVC-MODEL-BUNDLE-V2");
+  AppendString(&canonical, "ULBVC-MODEL-BUNDLE-V2");
   AppendString(&canonical, manifest.runtime());
   AppendString(&canonical, manifest.soc_version());
   AppendString(&canonical, manifest.dtype());
@@ -580,4 +580,4 @@ std::array<uint8_t, 32> ComputeModelBundleSha256(const ModelManifest& manifest) 
   return Sha256(canonical);
 }
 
-}  // namespace mlvc
+}  // namespace ulbvc

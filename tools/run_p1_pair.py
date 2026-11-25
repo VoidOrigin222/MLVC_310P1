@@ -39,7 +39,7 @@ def main():
     ap.add_argument('--decoder-host', required=True, help='SSH host or alias for the decoder P1')
     ap.add_argument('--decoder-ip', required=True, help='decoder address reachable from the encoder')
     ap.add_argument('--remote-root', required=True,
-                    help='remote data/model root containing data/ and mlvc* model directories')
+                    help='remote data/model root containing data/ and ulbvc* model directories')
     ap.add_argument('--deploy-dir', required=True, help='remote checkout directory containing build/')
     ap.add_argument('--cann-env', default='/usr/local/Ascend/cann/set_env.sh',
                     help='remote CANN set_env.sh path')
@@ -60,9 +60,9 @@ def main():
     logs = Path(__file__).resolve().parents[1] / 'acceptance' / tag
     logs.mkdir(parents=True)
     remote = deploy_dir + '/acceptance/' + tag
-    encoder_model = remote_root + ('/mlvc720p/1280x720/manifest_310P1.json' if args.resolution == '720p'
-                                   else '/mlvc1080p/manifest_310P1.json')
-    decoder_model = encoder_model if args.resolution == '720p' else remote_root + '/mlvc1080p/manifest_decoder_310P1.json'
+    encoder_model = remote_root + ('/ulbvc720p/1280x720/manifest_310P1.json' if args.resolution == '720p'
+                                   else '/ulbvc1080p/manifest_310P1.json')
+    decoder_model = encoder_model if args.resolution == '720p' else remote_root + '/ulbvc1080p/manifest_decoder_310P1.json'
     pipeline = '\n[pipeline]\nstream_workers = 1\nqueue_capacity = 3\nframe_buffer_slots = 3\nentropy_workers = {}\ngraph_packet_capacity = 2\n[model]\nmanifest = "{}"\n'
     pacing_rate = 1000000 if args.transport == 'rtp' else 10000000
     burst_bytes = 1200 if args.transport == 'rtp' else 4160
@@ -95,7 +95,7 @@ def main():
     print('START ' + tag, flush=True)
     with (logs / 'decoder.log').open('w') as out:
         decoder = subprocess.Popen(ssh(args.decoder_host, cann_setup + '; cd ' + shlex.quote(deploy_dir) +
-                    '; exec timeout 180s ./build/mlvc_decode --config ' + shlex.quote(remote + '/decoder.toml')),
+                    '; exec timeout 180s ./build/ulbvc_decode --config ' + shlex.quote(remote + '/decoder.toml')),
                     stdout=out, stderr=subprocess.STDOUT)
         try:
             # Model loading on the decoder can take several seconds.  A fixed
@@ -108,7 +108,7 @@ def main():
             print('Decoder bound; starting encoder', flush=True)
             with (logs / 'encoder.log').open('w') as encout:
                 encoder = subprocess.run(ssh(args.encoder_host, cann_setup + '; cd ' + shlex.quote(deploy_dir) +
-                             '; exec timeout 120s ./build/mlvc_encode --config ' + shlex.quote(remote + '/encoder.toml')),
+                             '; exec timeout 120s ./build/ulbvc_encode --config ' + shlex.quote(remote + '/encoder.toml')),
                              stdout=encout, stderr=subprocess.STDOUT, timeout=135)
             print('Encoder exit: ' + str(encoder.returncode), flush=True)
         finally:

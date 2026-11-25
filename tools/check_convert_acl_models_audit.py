@@ -33,12 +33,12 @@ def dirs_for(root: Path) -> dict[str, Path]:
 
 
 def make_source_manifest(source_root: Path, manifest_path: Path) -> dict[str, Any]:
-    write_file(source_root / "sidecars.mlvcsc", b"sidecar")
+    write_file(source_root / "sidecars.ulbvcsc", b"sidecar")
     for stage in ("stage_a", "stage_b"):
         write_file(source_root / f"{stage}.sim.onnx", stage.encode("ascii"))
     manifest = {
         "dtype": "fp16",
-        "sidecar": {"file": "sidecars.mlvcsc"},
+        "sidecar": {"file": "sidecars.ulbvcsc"},
         "models": [
             {"name": "stage_a", "file": "stage_a.sim.onnx", "frame_type": "I", "route": "encode"},
             {"name": "stage_b", "file": "stage_b.sim.onnx", "frame_type": "P", "route": "decode"},
@@ -79,7 +79,7 @@ def assert_true(condition: bool, message: str) -> None:
 
 
 def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="mlvc_convert_audit_") as temp:
+    with tempfile.TemporaryDirectory(prefix="ulbvc_convert_audit_") as temp:
         temp_root = Path(temp)
         source_root = temp_root / "source"
         manifest_path = source_root / "manifest.json"

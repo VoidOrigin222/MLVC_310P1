@@ -1,4 +1,4 @@
-#include <mlvc/motion/translation_math.h>
+#include <ulbvc/motion/translation_math.h>
 
 #include <cmath>
 #include <iostream>
@@ -22,8 +22,8 @@ void MustThrow(Operation operation) {
 
 int main() {
   try {
-    using mlvc::motion::EstimateTranslation;
-    using mlvc::motion::NearestFeatureCell;
+    using ulbvc::motion::EstimateTranslation;
+    using ulbvc::motion::NearestFeatureCell;
     Check(NearestFeatureCell(0) == 0, "zero displacement");
     for (int cell = 0; cell < 126; ++cell) {
       const double boundary = 8.0 * cell + 4.0;

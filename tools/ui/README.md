@@ -11,7 +11,7 @@
 
 页面会自动连接已有视频源。点击“启动 H.264 推流”才启动本地 FFmpeg；
 关闭或刷新浏览器只释放播放会话，不会停止正在运行的推流进程。
-停止按钮会断开本页预览并停止 UI 管理的 H.264 进程，板端原图和 MLVC 进程仍由板端控制。
+停止按钮会断开本页预览并停止 UI 管理的 H.264 进程，板端原图和 ULBVC 进程仍由板端控制。
 参数从独立的 `ui_config.json` 加载；“参数设置 → 保存并连接”会写入该文件，重启后保留。
 
 文件：`web_ui.py` 提供控制接口，`index.html`、`styles.css`、`app.js` 提供界面。
@@ -89,7 +89,7 @@ UI 与 MediaMTX 默认在同一台电脑，播放与发布地址使用 `127.0.0.
 
 可直接修改文件后重启 UI，也可在网页参数设置中保存，立即生效并持久保存。修改 H.264 的输入、输出、QP、传输或 FFmpeg 后，处于启用状态的 H.264 发布器会按新参数重启。文件缺少的字段使用默认值；格式或参数有误时提示具体错误，不覆盖原文件。保存失败时保留原参数，并在页面提示错误。
 
-需要指定其他文件时运行 `SemanticVideoUI.exe --config "D:/部署/ui_config.json"`，或为 Python 服务设置环境变量 `MLVC_UI_CONFIG`。相同端口已有 UI 时仍复用原实例；切换参数文件前需退出原启动器。
+需要指定其他文件时运行 `SemanticVideoUI.exe --config "D:/部署/ui_config.json"`，或为 Python 服务设置环境变量 `ULBVC_UI_CONFIG`。相同端口已有 UI 时仍复用原实例；切换参数文件前需退出原启动器。
 
 ## 启动网页服务
 
@@ -148,9 +148,9 @@ python web_ui.py
 编码板配置需要设置：
 
 ```toml
-mlvc_stats_host = "192.168.5.3"
-mlvc_stats_port = 39341
-mlvc_stats_interval_frames = 30
+ulbvc_stats_host = "192.168.5.3"
+ulbvc_stats_port = 39341
+ulbvc_stats_interval_frames = 30
 ```
 
 ## 正确启动顺序
@@ -167,14 +167,14 @@ mlvc_stats_interval_frames = 30
 解码板 `192.168.5.11`：
 
 ```bash
-cd /root/workplace/grifcc/MLVC_310P1
+cd /root/workplace/grifcc/ULBVC_310P1
 bash scripts/bash_run.sh configs/decoder.toml
 ```
 
 编码板 `192.168.5.13`：
 
 ```bash
-cd /root/workplace/grifcc/MLVC_310P1
+cd /root/workplace/grifcc/ULBVC_310P1
 bash scripts/bash_run_encode.sh configs/encoder.toml
 ```
 

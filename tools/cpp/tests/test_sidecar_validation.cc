@@ -1,5 +1,5 @@
-#include <mlvc/core/status.h>
-#include <mlvc/entropy/sidecar.h>
+#include <ulbvc/core/status.h>
+#include <ulbvc/entropy/sidecar.h>
 
 #include <cstdint>
 #include <cstring>
@@ -50,63 +50,63 @@ void Reject(F&& f, const char* message) {
   } catch (const std::exception&) {
     rejected = true;
   }
-  mlvc::Check(rejected, message);
+  ulbvc::Check(rejected, message);
 }
 }  // namespace
 
 int main() {
   try {
     const auto root = std::filesystem::temp_directory_path();
-    const auto valid = root / "mlvc_sidecar_valid.bin";
+    const auto valid = root / "ulbvc_sidecar_valid.bin";
     auto bytes = Base();
     const float value = 0.5f;
     std::vector<uint8_t> scalar(sizeof(value));
     std::memcpy(scalar.data(), &value, sizeof(value));
     PutArray(&bytes, "force_zero_thres", 1, {1}, sizeof(value), scalar);
     Write(valid, bytes);
-    const auto loaded = mlvc::RuntimeSidecar::Load(valid);
-    mlvc::Check(loaded.force_zero_thres() == value, "valid sidecar failed to load");
+    const auto loaded = ulbvc::RuntimeSidecar::Load(valid);
+    ulbvc::Check(loaded.force_zero_thres() == value, "valid sidecar failed to load");
 
     auto qp_bytes = Base(2);
     PutArray(&qp_bytes, "q_shift", 2, {1}, 4, Int32Bytes({100}));
     PutArray(&qp_bytes, "i_encoder_q_scale", 0, {8, 1}, 16,
              std::vector<uint8_t>(16, 0));
-    const auto qp_path = root / "mlvc_sidecar_qp.bin";
+    const auto qp_path = root / "ulbvc_sidecar_qp.bin";
     Write(qp_path, qp_bytes);
-    const auto qp_sidecar = mlvc::RuntimeSidecar::Load(qp_path);
-    mlvc::Check(qp_sidecar.q_index_count() == 8, "sidecar QP row count mismatch");
-    mlvc::Check(qp_sidecar.ShiftedQp(2, 0) == 7, "shifted QP was not clamped to sidecar rows");
-    mlvc::Check(qp_sidecar.ShiftedQp(-100, 0) == 0, "negative shifted QP was not clamped");
+    const auto qp_sidecar = ulbvc::RuntimeSidecar::Load(qp_path);
+    ulbvc::Check(qp_sidecar.q_index_count() == 8, "sidecar QP row count mismatch");
+    ulbvc::Check(qp_sidecar.ShiftedQp(2, 0) == 7, "shifted QP was not clamped to sidecar rows");
+    ulbvc::Check(qp_sidecar.ShiftedQp(-100, 0) == 0, "negative shifted QP was not clamped");
     Reject([&] { (void)qp_sidecar.ShiftedQp(0, -1); },
            "negative frame adaptation index accepted");
 
     auto trailing = bytes;
     trailing.push_back(0);
-    const auto trailing_path = root / "mlvc_sidecar_trailing.bin";
+    const auto trailing_path = root / "ulbvc_sidecar_trailing.bin";
     Write(trailing_path, trailing);
-    Reject([&] { (void)mlvc::RuntimeSidecar::Load(trailing_path); },
+    Reject([&] { (void)ulbvc::RuntimeSidecar::Load(trailing_path); },
            "trailing sidecar bytes accepted");
 
     auto duplicate = Base(2);
     PutArray(&duplicate, "x", 2, {1}, 4, {1, 2, 3, 4});
     PutArray(&duplicate, "x", 2, {1}, 4, {1, 2, 3, 4});
-    const auto duplicate_path = root / "mlvc_sidecar_duplicate.bin";
+    const auto duplicate_path = root / "ulbvc_sidecar_duplicate.bin";
     Write(duplicate_path, duplicate);
-    Reject([&] { (void)mlvc::RuntimeSidecar::Load(duplicate_path); },
+    Reject([&] { (void)ulbvc::RuntimeSidecar::Load(duplicate_path); },
            "duplicate sidecar name accepted");
 
     auto mismatch = Base();
     PutArray(&mismatch, "x", 2, {1}, 8, {1, 2, 3, 4});
-    const auto mismatch_path = root / "mlvc_sidecar_mismatch.bin";
+    const auto mismatch_path = root / "ulbvc_sidecar_mismatch.bin";
     Write(mismatch_path, mismatch);
-    Reject([&] { (void)mlvc::RuntimeSidecar::Load(mismatch_path); },
+    Reject([&] { (void)ulbvc::RuntimeSidecar::Load(mismatch_path); },
            "sidecar byte mismatch accepted");
 
     auto negative = Base();
     PutArray(&negative, "x", 2, {-1}, 0, {});
-    const auto negative_path = root / "mlvc_sidecar_negative.bin";
+    const auto negative_path = root / "ulbvc_sidecar_negative.bin";
     Write(negative_path, negative);
-    Reject([&] { (void)mlvc::RuntimeSidecar::Load(negative_path); },
+    Reject([&] { (void)ulbvc::RuntimeSidecar::Load(negative_path); },
            "negative sidecar dimension accepted");
     std::cout << "sidecar validation test passed\n";
     return 0;

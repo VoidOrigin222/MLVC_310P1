@@ -1,14 +1,14 @@
-#include "mlvc/core/tensor_handle.h"
+#include "ulbvc/core/tensor_handle.h"
 
 #include <acl/acl.h>
 
 #include <cstring>
 #include <utility>
 
-#include "mlvc/core/status.h"
-#include "mlvc/framework/profile_range.h"
+#include "ulbvc/core/status.h"
+#include "ulbvc/framework/profile_range.h"
 
-namespace mlvc {
+namespace ulbvc {
 namespace {
 
 std::size_t TensorByteSize(const TensorShape& shape, DataType dtype) {
@@ -206,7 +206,7 @@ void TensorHandle::MarkAclValid() {
 }
 
 TensorCopyResult TensorHandle::EnsureAcl(void*) {
-  MLVC_PROFILE_RANGE_FUNCTION();
+  ULBVC_PROFILE_RANGE_FUNCTION();
   CheckNoConflictingDirtyState();
   if (!has_acl_buffer()) {
     AllocateAclBuffer(false);
@@ -234,7 +234,7 @@ TensorCopyResult TensorHandle::EnsureAcl(void*) {
 }
 
 TensorCopyResult TensorHandle::MaterializeToCpu(std::string_view reason, void*) {
-  MLVC_PROFILE_RANGE_FUNCTION();
+  ULBVC_PROFILE_RANGE_FUNCTION();
   CheckNoConflictingDirtyState();
   last_materialization_reason_ = std::string(reason);
   if (!has_cpu_buffer()) {
@@ -297,4 +297,4 @@ const char* TensorResidencyName(TensorResidency residency) {
   return "empty";
 }
 
-}  // namespace mlvc
+}  // namespace ulbvc

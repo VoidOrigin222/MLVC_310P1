@@ -4,7 +4,7 @@
 
 - 编码端：Ascend 310P1
 - 解码端：Ascend 310P1
-- 传输：RTP，MLVC v1
+- 传输：RTP，ULBVC v1
 - 每秒调用一次 `npu-smi info -t usages -i 0 -c 0`
 
 ## 结果

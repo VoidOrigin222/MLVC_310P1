@@ -1,5 +1,5 @@
-#include "mlvc/transport/rtp_message_receiver.h"
-#include "mlvc/transport/rtp_mlvc.h"
+#include "ulbvc/transport/rtp_message_receiver.h"
+#include "ulbvc/transport/rtp_ulbvc.h"
 
 #include <cassert>
 #include <arpa/inet.h>
@@ -11,7 +11,7 @@
 #include <thread>
 #include <vector>
 
-using namespace mlvc::transport;
+using namespace ulbvc::transport;
 
 namespace {
 
@@ -39,17 +39,17 @@ void TestNackRetransmitsCachedRtpPacket() {
   sockaddr_in rtcp_address{};
   const int rtcp_socket = BindUdp(static_cast<uint16_t>(rtp_port + 1), &rtcp_address);
   constexpr uint32_t kMediaSsrc = 0x10203040u;
-  RtpMlvcSender sender("127.0.0.1", rtp_port, kMediaSsrc, 0, 4096,
+  RtpUlbvcSender sender("127.0.0.1", rtp_port, kMediaSsrc, 0, 4096,
                        1024u * 1024u, 1000, 96, std::chrono::milliseconds(100));
 
-  MlvcScu scu;
+  UlbvcScu scu;
   scu.config_id = 1;
   scu.coded_width = scu.visible_width = 64;
   scu.coded_height = scu.visible_height = 64;
   scu.codec_bundle_sha256.fill(0x3a);
   const auto scu_bytes = SerializeScu(scu);
   sender.SetSessionConfig(1, scu_bytes);
-  MlvcEfu efu;
+  UlbvcEfu efu;
   efu.config_id = 1;
   efu.frame_id = 0;
   efu.frame_type = 0;
@@ -110,10 +110,10 @@ void TestNackRetransmitsCachedRtpPacket() {
 int main() {
   constexpr uint32_t kMediaSsrc = 0x10203040u;
   RtpMessageReceiver receiver(0, "RTP/RTCP session test");
-  RtpMlvcSender sender("127.0.0.1", receiver.local_port(), kMediaSsrc, 0, 4096,
+  RtpUlbvcSender sender("127.0.0.1", receiver.local_port(), kMediaSsrc, 0, 4096,
                        1024u * 1024u, 1000, 96, std::chrono::milliseconds(100));
 
-  MlvcScu scu;
+  UlbvcScu scu;
   scu.config_id = 1;
   scu.coded_width = scu.visible_width = 64;
   scu.coded_height = scu.visible_height = 64;
@@ -121,7 +121,7 @@ int main() {
   const auto scu_bytes = SerializeScu(scu);
   sender.SetSessionConfig(1, scu_bytes);
 
-  MlvcEfu efu;
+  UlbvcEfu efu;
   efu.config_id = 1;
   efu.frame_id = 0;
   efu.frame_type = 0;

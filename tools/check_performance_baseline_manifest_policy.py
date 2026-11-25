@@ -32,7 +32,7 @@ def expect_missing_default(root: Path, resolution: str) -> None:
 
 
 def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="mlvc_perf_manifest_policy_") as temp:
+    with tempfile.TemporaryDirectory(prefix="ulbvc_perf_manifest_policy_") as temp:
         root = Path(temp)
         expect_missing_default(root, "720p")
         expect_missing_default(root, "1080p")

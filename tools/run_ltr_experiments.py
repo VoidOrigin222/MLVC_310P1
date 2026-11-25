@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the MLVC 1080P GOP/reset/LTR and packet-loss experiments."""
+"""Run the ULBVC 1080P GOP/reset/LTR and packet-loss experiments."""
 
 from __future__ import annotations
 
@@ -11,9 +11,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-DEFAULT_SOURCE = Path("/root/workspace/cgc/mlvc_ly/results/frames_60s_1080p_fp16_gop32")
-DEFAULT_MANIFEST = Path("/root/workspace/cgc/mlvc_ly/mlvc1080p/manifest.json")
-DEFAULT_VIDEO = Path("/root/workspace/cgc/mlvc_ly/mlvc_acl_cpp/test_video/60s_1080p.mp4")
+DEFAULT_SOURCE = Path("/root/workspace/cgc/ulbvc_ly/results/frames_60s_1080p_fp16_gop32")
+DEFAULT_MANIFEST = Path("/root/workspace/cgc/ulbvc_ly/ulbvc1080p/manifest.json")
+DEFAULT_VIDEO = Path("/root/workspace/cgc/ulbvc_ly/ulbvc_acl_cpp/test_video/60s_1080p.mp4")
 
 
 @dataclass(frozen=True)
@@ -80,7 +80,7 @@ def psnr_y(original: Path, reconstructed: Path, log_path: Path) -> float | None:
 def run_case(args: argparse.Namespace, case: Case, root: Path, decode: bool) -> dict[str, object]:
     case_root = root / case.name
     case_root.mkdir(parents=True, exist_ok=True)
-    bitstream = case_root / "output.mlvc"
+    bitstream = case_root / "output.ulbvc"
     recon = case_root / "reconstructed.mp4"
     enc_log = case_root / "encoder.log"
     dec_log = case_root / "decoder.log"
@@ -134,7 +134,7 @@ def run_loss_case(args: argparse.Namespace, root: Path) -> list[dict[str, object
         case = Case(f"ltr64_{mode}_gop128_reset32", 128, 32, 64)
         case_root = root / case.name
         case_root.mkdir(parents=True, exist_ok=True)
-        bitstream = case_root / "output.mlvc"
+        bitstream = case_root / "output.ulbvc"
         recon = case_root / "reconstructed.mp4"
         enc_log = case_root / "encoder.log"
         dec_log = case_root / "decoder.log"
@@ -179,7 +179,7 @@ def run_loss_case(args: argparse.Namespace, root: Path) -> list[dict[str, object
 def write_summary(path: Path, results: list[dict[str, object]], args: argparse.Namespace) -> None:
     normal = [item for item in results if "bitstream_kB_1024" in item]
     lines = [
-        "# MLVC LTR / Reset / GOP 实验",
+        "# ULBVC LTR / Reset / GOP 实验",
         "",
         "## 实验条件",
         "",

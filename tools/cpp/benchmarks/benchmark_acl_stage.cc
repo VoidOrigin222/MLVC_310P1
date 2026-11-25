@@ -1,5 +1,5 @@
-#include <mlvc/core/status.h>
-#include <mlvc/runtime/stage_runtime.h>
+#include <ulbvc/core/status.h>
+#include <ulbvc/runtime/stage_runtime.h>
 
 #include <chrono>
 #include <cstdint>
@@ -15,12 +15,12 @@
 namespace {
 
 struct TensorBuffer {
-  mlvc::TensorShape shape;
-  mlvc::DataType dtype = mlvc::DataType::kFloat16;
+  ulbvc::TensorShape shape;
+  ulbvc::DataType dtype = ulbvc::DataType::kFloat16;
   std::vector<uint8_t> bytes;
 
-  mlvc::TensorView View() {
-    return mlvc::TensorView::Borrowed(bytes.data(), &shape, dtype, mlvc::MemoryLocation::kCpu);
+  ulbvc::TensorView View() {
+    return ulbvc::TensorView::Borrowed(bytes.data(), &shape, dtype, ulbvc::MemoryLocation::kCpu);
   }
 };
 
@@ -46,7 +46,7 @@ bool ParseInputFileBinding(const std::string& value, InputFileBinding* binding) 
   return true;
 }
 
-void LoadInputFiles(const std::vector<InputFileBinding>& bindings, const mlvc::StageModel& stage,
+void LoadInputFiles(const std::vector<InputFileBinding>& bindings, const ulbvc::StageModel& stage,
                     std::vector<TensorBuffer>* inputs) {
   for (const InputFileBinding& binding : bindings) {
     std::size_t input_index = stage.record().inputs.size();
@@ -84,13 +84,13 @@ void LoadInputFiles(const std::vector<InputFileBinding>& bindings, const mlvc::S
   }
 }
 
-TensorBuffer MakeTensor(const mlvc::TensorSpec& spec, uint32_t seed) {
+TensorBuffer MakeTensor(const ulbvc::TensorSpec& spec, uint32_t seed) {
   TensorBuffer buffer;
-  buffer.shape = mlvc::TensorShape(spec.shape);
+  buffer.shape = ulbvc::TensorShape(spec.shape);
   buffer.dtype = spec.dtype;
-  buffer.bytes.resize(buffer.shape.NumElements() * mlvc::ElementSize(spec.dtype));
+  buffer.bytes.resize(buffer.shape.NumElements() * ulbvc::ElementSize(spec.dtype));
 
-  if (spec.dtype == mlvc::DataType::kInt32) {
+  if (spec.dtype == ulbvc::DataType::kInt32) {
     auto* values = reinterpret_cast<int32_t*>(buffer.bytes.data());
     const std::size_t count = buffer.bytes.size() / sizeof(int32_t);
     for (std::size_t i = 0; i < count; ++i) {
@@ -99,7 +99,7 @@ TensorBuffer MakeTensor(const mlvc::TensorSpec& spec, uint32_t seed) {
     return buffer;
   }
 
-  if (spec.dtype == mlvc::DataType::kFloat16) {
+  if (spec.dtype == ulbvc::DataType::kFloat16) {
     auto* values = reinterpret_cast<uint16_t*>(buffer.bytes.data());
     const std::size_t count = buffer.bytes.size() / sizeof(uint16_t);
     for (std::size_t i = 0; i < count; ++i) {
@@ -164,21 +164,21 @@ int main(int argc, char** argv) {
   }
 
   try {
-    mlvc::StageRuntime runtime(device);
-    mlvc::StageModelSet models(&runtime, mlvc::ModelManifest::Load(manifest_path));
-    mlvc::StageModel& stage = models.GetStage(stage_name);
+    ulbvc::StageRuntime runtime(device);
+    ulbvc::StageModelSet models(&runtime, ulbvc::ModelManifest::Load(manifest_path));
+    ulbvc::StageModel& stage = models.GetStage(stage_name);
 
     std::vector<TensorBuffer> inputs;
     std::vector<TensorBuffer> outputs;
-    std::vector<mlvc::NamedTensorView> input_views;
-    std::vector<mlvc::NamedTensorView> output_views;
+    std::vector<ulbvc::NamedTensorView> input_views;
+    std::vector<ulbvc::NamedTensorView> output_views;
 
     uint32_t seed = 1;
-    for (const mlvc::TensorSpec& spec : stage.record().inputs) {
+    for (const ulbvc::TensorSpec& spec : stage.record().inputs) {
       inputs.push_back(MakeTensor(spec, seed++));
     }
     LoadInputFiles(input_file_bindings, stage, &inputs);
-    for (const mlvc::TensorSpec& spec : stage.record().outputs) {
+    for (const ulbvc::TensorSpec& spec : stage.record().outputs) {
       outputs.push_back(MakeTensor(spec, 0));
     }
     for (std::size_t i = 0; i < inputs.size(); ++i) {

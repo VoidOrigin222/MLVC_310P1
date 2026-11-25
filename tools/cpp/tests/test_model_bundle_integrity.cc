@@ -1,5 +1,5 @@
-#include <mlvc/core/status.h>
-#include <mlvc/runtime/model_manifest.h>
+#include <ulbvc/core/status.h>
+#include <ulbvc/runtime/model_manifest.h>
 
 #include <algorithm>
 #include <array>
@@ -53,9 +53,9 @@ std::filesystem::path WriteManifest(const std::filesystem::path& root) {
   return path;
 }
 
-bool VerifyRejects(const mlvc::ModelManifest& manifest) {
+bool VerifyRejects(const ulbvc::ModelManifest& manifest) {
   try {
-    mlvc::VerifyRuntimeArtifacts(manifest);
+    ulbvc::VerifyRuntimeArtifacts(manifest);
   } catch (const std::exception&) {
     return true;
   }
@@ -67,23 +67,23 @@ bool VerifyRejects(const mlvc::ModelManifest& manifest) {
 int main() {
   const auto unique_id = std::chrono::steady_clock::now().time_since_epoch().count();
   const auto root = std::filesystem::temp_directory_path() /
-                    ("mlvc_model_bundle_integrity_test_" + std::to_string(unique_id));
+                    ("ulbvc_model_bundle_integrity_test_" + std::to_string(unique_id));
   try {
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root);
-    const mlvc::ModelManifest manifest = mlvc::ModelManifest::Load(WriteManifest(root));
-    mlvc::VerifyRuntimeArtifacts(manifest);
-    const auto original_hash = mlvc::ComputeModelBundleSha256(manifest);
+    const ulbvc::ModelManifest manifest = ulbvc::ModelManifest::Load(WriteManifest(root));
+    ulbvc::VerifyRuntimeArtifacts(manifest);
+    const auto original_hash = ulbvc::ComputeModelBundleSha256(manifest);
 
     for (const char* name : kArtifacts) {
       auto changed_manifest = manifest;
       auto artifact = std::find_if(
           changed_manifest.runtime_artifacts().begin(), changed_manifest.runtime_artifacts().end(),
-          [name](const mlvc::RuntimeArtifactRecord& record) { return record.name == name; });
+          [name](const ulbvc::RuntimeArtifactRecord& record) { return record.name == name; });
       Expect(artifact != changed_manifest.runtime_artifacts().end(),
              std::string("missing runtime artifact record: ") + name);
       artifact->sha256 = "changed";
-      Expect(mlvc::ComputeModelBundleSha256(changed_manifest) != original_hash,
+      Expect(ulbvc::ComputeModelBundleSha256(changed_manifest) != original_hash,
              std::string("bundle digest ignored runtime artifact: ") + name);
 
       WriteText(root / name, "tampered");
@@ -95,7 +95,7 @@ int main() {
     incomplete_manifest.runtime_artifacts().pop_back();
     bool incomplete_rejected = false;
     try {
-      (void)mlvc::ComputeModelBundleSha256(incomplete_manifest);
+      (void)ulbvc::ComputeModelBundleSha256(incomplete_manifest);
     } catch (const std::exception&) {
       incomplete_rejected = true;
     }

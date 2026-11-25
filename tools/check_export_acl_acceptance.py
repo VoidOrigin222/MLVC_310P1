@@ -21,7 +21,7 @@ def assert_true(condition: bool, message: str) -> None:
 
 
 def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="mlvc_acl_acceptance_") as temp:
+    with tempfile.TemporaryDirectory(prefix="ulbvc_acl_acceptance_") as temp:
         root = Path(temp)
         metrics = root / "metrics.json"
         output_root = root / "acceptance"

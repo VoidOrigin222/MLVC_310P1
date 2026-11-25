@@ -1,22 +1,22 @@
-#include "mlvc/entropy/rans_core.h"
+#include "ulbvc/entropy/rans_core.h"
 
 #include <algorithm>
 #include <array>
 #include <cassert>
 #include <cstring>
 
-#include "mlvc/core/status.h"
-#include "mlvc/framework/profile_range.h"
+#include "ulbvc/core/status.h"
+#include "ulbvc/framework/profile_range.h"
 
-namespace mlvc {
+namespace ulbvc {
 namespace {
 
 constexpr uint16_t kBypassPrecision = 2;
 constexpr uint16_t kMaxBypassValue = (1 << kBypassPrecision) - 1;
 
 void RansEncPutBits(RansState& state, uint8_t*& ptr, uint32_t value) {
-  MLVC_RANS_ASSERT(kBypassPrecision <= 8);
-  MLVC_RANS_ASSERT(value < (1u << kBypassPrecision));
+  ULBVC_RANS_ASSERT(kBypassPrecision <= 8);
+  ULBVC_RANS_ASSERT(value < (1u << kBypassPrecision));
 
   constexpr uint32_t kFreq = 1 << (kRansScaleBits - kBypassPrecision);
   constexpr uint32_t kMaxState = kFreq << kRansEncRenormShiftBits;
@@ -33,7 +33,7 @@ uint32_t RansDecGetBits(RansState& state, uint8_t*& ptr) {
   state = state >> kBypassPrecision;
   if (state < kRansByteL) {
     state = (state << 8) | *ptr++;
-    MLVC_RANS_ASSERT(state >= kRansByteL);
+    ULBVC_RANS_ASSERT(state >= kRansByteL);
   }
   return value;
 }
@@ -208,7 +208,7 @@ void RansEncoderCore::EncodeOneSymbol(uint8_t*& ptr, RansState& state, int32_t s
 }
 
 void RansEncoderCore::EncodeYInternal(uint8_t*& ptr, RansState& state, const PendingTask& task) {
-  MLVC_PROFILE_RANGE_FUNCTION();
+  ULBVC_PROFILE_RANGE_FUNCTION();
   const CdfGroup& group = *cdf_groups_.at(task.cdf_group_index);
   for (int i = static_cast<int>(SymbolCount(task)) - 1; i >= 0; --i) {
     const int32_t combined_symbol = YSymbolAt(task, static_cast<std::size_t>(i));
@@ -220,7 +220,7 @@ void RansEncoderCore::EncodeYInternal(uint8_t*& ptr, RansState& state, const Pen
 }
 
 void RansEncoderCore::EncodeZInternal(uint8_t*& ptr, RansState& state, const PendingTask& task) {
-  MLVC_PROFILE_RANGE_FUNCTION();
+  ULBVC_PROFILE_RANGE_FUNCTION();
   const CdfGroup& group = *cdf_groups_.at(task.cdf_group_index);
   for (int i = static_cast<int>(SymbolCount(task)) - 1; i >= 0; --i) {
     const int32_t cdf_index = i / task.per_channel_size + task.start_offset;
@@ -231,7 +231,7 @@ void RansEncoderCore::EncodeZInternal(uint8_t*& ptr, RansState& state, const Pen
 }
 
 void RansEncoderCore::Flush() {
-  MLVC_PROFILE_RANGE_FUNCTION();
+  ULBVC_PROFILE_RANGE_FUNCTION();
   RansState state;
   RansEncInit(state);
 
@@ -362,4 +362,4 @@ void RansDecoderCore::DecodeZInto(int total_size, int cdf_group_index, int start
   }
 }
 
-}  // namespace mlvc
+}  // namespace ulbvc

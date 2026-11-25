@@ -4,7 +4,7 @@ const vm = require('node:vm');
 const source = fs.readFileSync(__dirname + '/app.js', 'utf8');
 const start = source.indexOf('function fillSettings()');
 const end = source.indexOf('function clock()', start);
-const fields = Object.fromEntries(['original','h264','mlvc','webrtc'].map(name => [name, {
+const fields = Object.fromEntries(['original','h264','ulbvc','webrtc'].map(name => [name, {
   name, type:'text', value:'', matches:()=>true,
 }]));
 const listeners = {};
@@ -20,7 +20,7 @@ const restarts = [];
 const sandbox = {
   URL, Object, Number, String,
   settings: {original:'rtsp://127.0.0.1:8554/camera-original',h264:'rtsp://127.0.0.1:8554/camera-h264',
-    mlvc:'rtsp://127.0.0.1:8554/ulbvc',webrtc:'http://127.0.0.1:8889',mode:'same_quality',h264_qp:40},
+    ulbvc:'rtsp://127.0.0.1:8554/ulbvc',webrtc:'http://127.0.0.1:8889',mode:'same_quality',h264_qp:40},
   configLoaded:true, enabled:false, $:id=>elements[id],
   document:{querySelectorAll:()=>[]},
   api:async (path,body)=>calls.push({path,body}), reconnect(){}, notice(){},
@@ -32,24 +32,24 @@ vm.runInContext(pathSource,sandbox);
 vm.runInContext(source.slice(start,end),sandbox);
 (async()=>{
   sandbox.fillSettings();
-  assert.equal(fields.mlvc.value,'rtsp://127.0.0.1:8554/ulbvc','full stream path must remain visible');
-  fields.mlvc.value='rtsp://192.168.10.20:8554/custom/semantic?token=sample';
+  assert.equal(fields.ulbvc.value,'rtsp://127.0.0.1:8554/ulbvc','full stream path must remain visible');
+  fields.ulbvc.value='rtsp://192.168.10.20:8554/custom/semantic?token=sample';
   await listeners.submit({preventDefault(){}});
   assert.equal(calls.length,1);
   assert.equal(calls[0].path,'/api/config');
-  assert.equal(calls[0].body.mlvc,fields.mlvc.value,'saving must preserve the new stream path and query');
+  assert.equal(calls[0].body.ulbvc,fields.ulbvc.value,'saving must preserve the new stream path and query');
   sandbox.fillSettings();
-  assert.equal(fields.mlvc.value,'rtsp://192.168.10.20:8554/custom/semantic?token=sample');
-  assert.equal(sandbox.pathFor(sandbox.settings.mlvc),'custom/semantic','WHEP must use the configured path');
+  assert.equal(fields.ulbvc.value,'rtsp://192.168.10.20:8554/custom/semantic?token=sample');
+  assert.equal(sandbox.pathFor(sandbox.settings.ulbvc),'custom/semantic','WHEP must use the configured path');
   sandbox.enabled=true;
   fields.original.value='rtsp://127.0.0.1:8554/another-camera';
   await listeners.submit({preventDefault(){}});
   assert.deepEqual(restarts,['start'],'changed encoder input must be applied');
-  const saved=sandbox.settings.mlvc;
+  const saved=sandbox.settings.ulbvc;
   sandbox.api=async()=>{throw new Error('Cannot save configuration file');};
-  fields.mlvc.value='rtsp://127.0.0.1:8554/unsaved';
+  fields.ulbvc.value='rtsp://127.0.0.1:8554/unsaved';
   await listeners.submit({preventDefault(){}});
-  assert.equal(sandbox.settings.mlvc,saved,'failed persistence must retain the saved settings');
+  assert.equal(sandbox.settings.ulbvc,saved,'failed persistence must retain the saved settings');
   assert.equal(elements['settings-error'].hidden,false);
   assert.match(elements['settings-error'].textContent,/Cannot save/);
   console.log('Passed: full RTSP paths, save round trip, WHEP path, encoder restart and save failure.');

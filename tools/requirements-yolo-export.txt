@@ -1,0 +1,8 @@
+ultralytics==8.3.228
+torch==2.10.0
+torchvision==0.25.0
+onnx==1.19.1
+onnxruntime==1.29.0
+onnxslim==0.1.99
+numpy==2.5.2
+pillow==12.3.0

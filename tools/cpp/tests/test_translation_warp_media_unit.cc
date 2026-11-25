@@ -1,4 +1,4 @@
-#include "mlvc/transport/mlvc_media_unit.h"
+#include "ulbvc/transport/ulbvc_media_unit.h"
 
 #include <iostream>
 #include <stdexcept>
@@ -20,9 +20,9 @@ void Put32(std::vector<uint8_t>* bytes, std::size_t offset, uint32_t value) {
 }  // namespace
 
 int main() {
-  using namespace mlvc::transport;
+  using namespace ulbvc::transport;
   try {
-    MlvcScu legacy;
+    UlbvcScu legacy;
     legacy.coded_width = legacy.visible_width = 64;
     legacy.coded_height = legacy.visible_height = 64;
     legacy.codec_bundle_sha256.fill(0x55);
@@ -33,18 +33,18 @@ int main() {
     Require(warp_scu.size() == legacy_scu.size() + 8, "SCU capability overhead must be 8 bytes");
     Require(!ParseScu(legacy_scu).translation_warp && ParseScu(warp_scu).translation_warp,
             "SCU capability round trip");
-    Require(!MlvcScuDecoderCompatible(legacy, warp), "warp mode switch must be rejected");
+    Require(!UlbvcScuDecoderCompatible(legacy, warp), "warp mode switch must be rejected");
     Require(SerializeScu(ParseScu(legacy_scu)) == legacy_scu, "legacy SCU bytes changed");
     auto invalid = warp;
-    invalid.tlvs.push_back({kMlvcTlvTranslationWarp, {2}});
+    invalid.tlvs.push_back({kUlbvcTlvTranslationWarp, {2}});
     Reject([&] { SerializeScu(invalid); }, "unsupported warp version accepted");
-    invalid.tlvs = {{kMlvcTlvTranslationWarp, {1}}, {kMlvcTlvTranslationWarp, {1}}};
+    invalid.tlvs = {{kUlbvcTlvTranslationWarp, {1}}, {kUlbvcTlvTranslationWarp, {1}}};
     Reject([&] { SerializeScu(invalid); }, "duplicate capability accepted");
     invalid = legacy;
-    invalid.tlvs.push_back({kMlvcTlvTranslationWarp, {1}});
+    invalid.tlvs.push_back({kUlbvcTlvTranslationWarp, {1}});
     Reject([&] { SerializeScu(invalid); }, "contradictory capability accepted");
 
-    MlvcEfu iframe;
+    UlbvcEfu iframe;
     iframe.unit_flags |= kEfuRandomAccess | kEfuResetReference;
     iframe.entropy_payload = {8, 9, 10};
     const auto old_i = SerializeEfu(iframe);
@@ -55,7 +55,7 @@ int main() {
     iframe.kx = 1;
     Reject([&] { SerializeEfu(iframe); }, "nonzero I geometry accepted");
 
-    MlvcEfu pframe;
+    UlbvcEfu pframe;
     pframe.frame_type = 1;
     pframe.frame_id = 1;
     pframe.short_ref_frame_id = 0;
@@ -74,28 +74,28 @@ int main() {
                 "signed geometry round trip");
         ValidateEfuTranslationWarp(parsed, true);
         Reject([&] { ValidateEfuTranslationWarp(parsed, false); }, "unexpected warp flag accepted");
-        bytes[kMlvcEfuFixedBytes] ^= 1;
+        bytes[kUlbvcEfuFixedBytes] ^= 1;
         Reject([&] { ParseEfu(bytes); }, "geometry corruption not covered by CRC");
       }
     }
     Reject([&] { ValidateEfuTranslationWarp(ParseEfu(old_p), true); }, "missing warp flag accepted");
     auto reset_p = pframe;
     reset_p.unit_flags |= kEfuResetReference;
-    reset_p.short_ref_frame_id = kMlvcNoReference;
+    reset_p.short_ref_frame_id = kUlbvcNoReference;
     Reject([&] { SerializeEfu(reset_p); }, "warp P frame accepted removed previous-frame dependency");
     auto reset_wire = SerializeEfu(pframe);
     reset_wire[19] |= kEfuResetReference;
-    Put32(&reset_wire, 32, kMlvcNoReference);
+    Put32(&reset_wire, 32, kUlbvcNoReference);
     Reject([&] { ParseEfu(reset_wire); }, "valid CRC warp P frame accepted reset reference flag");
     auto truncated = SerializeEfu(pframe);
-    truncated.resize(kMlvcEfuFixedBytes + 1);
+    truncated.resize(kUlbvcEfuFixedBytes + 1);
     Put32(&truncated, 4, static_cast<uint32_t>(truncated.size()));
     Put32(&truncated, 40, 1);
-    Put32(&truncated, 44, MlvcCrc32c({truncated.back()}));
+    Put32(&truncated, 44, UlbvcCrc32c({truncated.back()}));
     Reject([&] { ParseEfu(truncated); }, "truncated geometry accepted even with valid CRC");
     auto ltr = pframe;
     ltr.frame_type = 2;
-    ltr.short_ref_frame_id = kMlvcNoReference;
+    ltr.short_ref_frame_id = kUlbvcNoReference;
     ltr.long_ref_frame_id = 0;
     Reject([&] { SerializeEfu(ltr); }, "undefined warp LTR semantics accepted");
     std::cout << "translation warp media unit tests passed\n";

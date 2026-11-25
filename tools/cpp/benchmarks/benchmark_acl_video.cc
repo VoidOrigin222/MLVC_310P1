@@ -1,7 +1,7 @@
-#include <mlvc/application/input/frame_input_queue.h>
-#include <mlvc/core/status.h>
-#include <mlvc/io/video_io.h>
-#include <mlvc/runtime/stage_runtime.h>
+#include <ulbvc/application/input/frame_input_queue.h>
+#include <ulbvc/core/status.h>
+#include <ulbvc/io/video_io.h>
+#include <ulbvc/runtime/stage_runtime.h>
 
 #include <algorithm>
 #include <array>
@@ -22,7 +22,7 @@
 
 namespace {
 
-constexpr std::string_view kDefaultManifest = "../mlvc1080p/manifest.json";
+constexpr std::string_view kDefaultManifest = "../ulbvc1080p/manifest.json";
 constexpr int kDefaultQIndex = 21;
 
 template <typename T>
@@ -32,7 +32,7 @@ class BlockingQueue {
     {
       std::lock_guard<std::mutex> lock(mutex_);
       if (closed_) {
-        throw mlvc::Error("push on closed queue");
+        throw ulbvc::Error("push on closed queue");
       }
       queue_.push_back(std::move(value));
     }
@@ -67,7 +67,7 @@ class BlockingQueue {
 
 struct OutputFrame {
   int frame_index = 0;
-  mlvc::codec::TensorData tensor;
+  ulbvc::codec::TensorData tensor;
 };
 
 void PrintUsage(const char* argv0) {
@@ -78,24 +78,24 @@ void PrintUsage(const char* argv0) {
                " [--output-video <output.mp4>]\n";
 }
 
-const mlvc::TensorSpec& FindTensorSpec(const mlvc::ModelRecord& record, std::string_view name) {
-  for (const mlvc::TensorSpec& spec : record.inputs) {
+const ulbvc::TensorSpec& FindTensorSpec(const ulbvc::ModelRecord& record, std::string_view name) {
+  for (const ulbvc::TensorSpec& spec : record.inputs) {
     if (spec.name == name) {
       return spec;
     }
   }
-  for (const mlvc::TensorSpec& spec : record.outputs) {
+  for (const ulbvc::TensorSpec& spec : record.outputs) {
     if (spec.name == name) {
       return spec;
     }
   }
-  throw mlvc::Error("missing tensor spec: " + record.name + "." + std::string(name));
+  throw ulbvc::Error("missing tensor spec: " + record.name + "." + std::string(name));
 }
 
-mlvc::codec::TensorData MakeInt32Tensor(const mlvc::TensorSpec& spec, int32_t value) {
-  mlvc::codec::TensorData tensor = mlvc::codec::MakeTensorLike(spec);
-  mlvc::Check(spec.dtype == mlvc::DataType::kInt32, "q-index tensor must be int32");
-  mlvc::Check(spec.shape.size() == 1 && spec.shape[0] == 1, "q-index tensor must be shape [1]");
+ulbvc::codec::TensorData MakeInt32Tensor(const ulbvc::TensorSpec& spec, int32_t value) {
+  ulbvc::codec::TensorData tensor = ulbvc::codec::MakeTensorLike(spec);
+  ulbvc::Check(spec.dtype == ulbvc::DataType::kInt32, "q-index tensor must be int32");
+  ulbvc::Check(spec.shape.size() == 1 && spec.shape[0] == 1, "q-index tensor must be shape [1]");
   std::memcpy(tensor.bytes.data(), &value, sizeof(value));
   return tensor;
 }
@@ -146,40 +146,40 @@ int main(int argc, char** argv) {
     PrintUsage(argv[0]);
     return 2;
   }
-  mlvc::Check(input_path.empty() || input_frame_dir.empty(),
+  ulbvc::Check(input_path.empty() || input_frame_dir.empty(),
               "--video and --input-frame-dir are mutually exclusive");
 
   try {
-    mlvc::StageRuntime runtime(device);
-    mlvc::ModelManifest manifest = mlvc::ModelManifest::Load(manifest_path);
-    mlvc::StageModelSet models(&runtime, std::move(manifest));
-    mlvc::StageModel& encoder = models.GetStage(std::string("MLVCEncoder"));
-    mlvc::StageModel& decoder = models.GetStage(std::string("MLVCDecoder"));
+    ulbvc::StageRuntime runtime(device);
+    ulbvc::ModelManifest manifest = ulbvc::ModelManifest::Load(manifest_path);
+    ulbvc::StageModelSet models(&runtime, std::move(manifest));
+    ulbvc::StageModel& encoder = models.GetStage(std::string("ULBVCEncoder"));
+    ulbvc::StageModel& decoder = models.GetStage(std::string("ULBVCDecoder"));
 
-    const mlvc::TensorSpec& frame_spec = FindTensorSpec(encoder.record(), "x");
-    const mlvc::TensorSpec& ref_feature_spec = FindTensorSpec(encoder.record(), "ref_feature");
-    const mlvc::TensorSpec& q_index_spec = FindTensorSpec(encoder.record(), "q_index_shifted");
-    const mlvc::TensorSpec& encoder_feature_spec = FindTensorSpec(encoder.record(), "feature");
-    const mlvc::TensorSpec& z_raw_spec = FindTensorSpec(encoder.record(), "z_raw");
-    const mlvc::TensorSpec& y_raw_0_spec = FindTensorSpec(encoder.record(), "y_raw_0");
-    const mlvc::TensorSpec& y_raw_1_spec = FindTensorSpec(encoder.record(), "y_raw_1");
-    const mlvc::TensorSpec& x_hat_spec = FindTensorSpec(decoder.record(), "x_hat");
-    const mlvc::TensorSpec& decoder_feature_spec = FindTensorSpec(decoder.record(), "feature");
+    const ulbvc::TensorSpec& frame_spec = FindTensorSpec(encoder.record(), "x");
+    const ulbvc::TensorSpec& ref_feature_spec = FindTensorSpec(encoder.record(), "ref_feature");
+    const ulbvc::TensorSpec& q_index_spec = FindTensorSpec(encoder.record(), "q_index_shifted");
+    const ulbvc::TensorSpec& encoder_feature_spec = FindTensorSpec(encoder.record(), "feature");
+    const ulbvc::TensorSpec& z_raw_spec = FindTensorSpec(encoder.record(), "z_raw");
+    const ulbvc::TensorSpec& y_raw_0_spec = FindTensorSpec(encoder.record(), "y_raw_0");
+    const ulbvc::TensorSpec& y_raw_1_spec = FindTensorSpec(encoder.record(), "y_raw_1");
+    const ulbvc::TensorSpec& x_hat_spec = FindTensorSpec(decoder.record(), "x_hat");
+    const ulbvc::TensorSpec& decoder_feature_spec = FindTensorSpec(decoder.record(), "feature");
 
-    mlvc::Check(encoder.record().inputs.size() == 3, "MLVCEncoder input count mismatch");
-    mlvc::Check(encoder.record().outputs.size() == 4, "MLVCEncoder output count mismatch");
-    mlvc::Check(decoder.record().inputs.size() == 5, "MLVCDecoder input count mismatch");
-    mlvc::Check(decoder.record().outputs.size() == 2, "MLVCDecoder output count mismatch");
+    ulbvc::Check(encoder.record().inputs.size() == 3, "ULBVCEncoder input count mismatch");
+    ulbvc::Check(encoder.record().outputs.size() == 4, "ULBVCEncoder output count mismatch");
+    ulbvc::Check(decoder.record().inputs.size() == 5, "ULBVCDecoder input count mismatch");
+    ulbvc::Check(decoder.record().outputs.size() == 2, "ULBVCDecoder output count mismatch");
 
-    std::optional<mlvc::io::VideoFrameReader> video_reader;
-    std::optional<mlvc::io::VideoInfo> video_info;
+    std::optional<ulbvc::io::VideoFrameReader> video_reader;
+    std::optional<ulbvc::io::VideoInfo> video_info;
     int source_width = static_cast<int>(frame_spec.shape[3]);
     int source_height = static_cast<int>(frame_spec.shape[2]);
     double source_fps = fallback_fps;
     if (!input_path.empty()) {
       video_reader.emplace(input_path);
       video_info = video_reader->info();
-      mlvc::Check(video_info->width <= static_cast<int>(frame_spec.shape[3]) &&
+      ulbvc::Check(video_info->width <= static_cast<int>(frame_spec.shape[3]) &&
                       video_info->height <= static_cast<int>(frame_spec.shape[2]),
                   "input video exceeds model frame tensor shape");
       source_width = video_info->width;
@@ -204,20 +204,20 @@ int main(int argc, char** argv) {
       frames_to_attempt = warmup + frames;
     }
 
-    mlvc::CodecGraphExecutor graph_executor(2);
-    mlvc::app::FrameInputArena frame_prepare_arena(frame_spec, 3);
-    mlvc::app::AsyncFrameInputQueue prepare_queue(
+    ulbvc::CodecGraphExecutor graph_executor(2);
+    ulbvc::app::FrameInputArena frame_prepare_arena(frame_spec, 3);
+    ulbvc::app::AsyncFrameInputQueue prepare_queue(
         frames_to_attempt, frames, input_path, input_frame_dir, std::nullopt, nullptr, frame_spec, source_width,
         source_height, &frame_prepare_arena, nullptr, &graph_executor);
 
-    mlvc::codec::TensorData ref_feature = mlvc::codec::MakeTensorLike(ref_feature_spec);
-    mlvc::codec::TensorData q_index_tensor = MakeInt32Tensor(q_index_spec, q_index);
-    mlvc::codec::TensorData encoder_feature = mlvc::codec::MakeTensorLike(encoder_feature_spec);
-    mlvc::codec::TensorData z_raw = mlvc::codec::MakeTensorLike(z_raw_spec);
-    mlvc::codec::TensorData y_raw_0 = mlvc::codec::MakeTensorLike(y_raw_0_spec);
-    mlvc::codec::TensorData y_raw_1 = mlvc::codec::MakeTensorLike(y_raw_1_spec);
-    mlvc::codec::TensorData x_hat = mlvc::codec::MakeTensorLike(x_hat_spec);
-    mlvc::codec::TensorData decoded_feature = mlvc::codec::MakeTensorLike(decoder_feature_spec);
+    ulbvc::codec::TensorData ref_feature = ulbvc::codec::MakeTensorLike(ref_feature_spec);
+    ulbvc::codec::TensorData q_index_tensor = MakeInt32Tensor(q_index_spec, q_index);
+    ulbvc::codec::TensorData encoder_feature = ulbvc::codec::MakeTensorLike(encoder_feature_spec);
+    ulbvc::codec::TensorData z_raw = ulbvc::codec::MakeTensorLike(z_raw_spec);
+    ulbvc::codec::TensorData y_raw_0 = ulbvc::codec::MakeTensorLike(y_raw_0_spec);
+    ulbvc::codec::TensorData y_raw_1 = ulbvc::codec::MakeTensorLike(y_raw_1_spec);
+    ulbvc::codec::TensorData x_hat = ulbvc::codec::MakeTensorLike(x_hat_spec);
+    ulbvc::codec::TensorData decoded_feature = ulbvc::codec::MakeTensorLike(decoder_feature_spec);
 
     double async_wait_ms = 0.0;
     double encoder_ms = 0.0;
@@ -226,7 +226,7 @@ int main(int argc, char** argv) {
     double output_push_ms = 0.0;
     double writer_ms = 0.0;
     BlockingQueue<OutputFrame> output_queue;
-    std::optional<mlvc::io::DecodedVideoWriter> writer;
+    std::optional<ulbvc::io::DecodedVideoWriter> writer;
     std::optional<std::thread> writer_thread;
     std::exception_ptr writer_error;
     if (!output_video_path.empty()) {
@@ -252,28 +252,28 @@ int main(int argc, char** argv) {
       });
     }
 
-    auto process_frame = [&](int frame_index, const mlvc::codec::TensorData& current_frame) {
-      const std::array<mlvc::NamedTensorView, 3> encoder_inputs = {
-          mlvc::NamedTensorView{"x", current_frame.View()},
-          mlvc::NamedTensorView{"ref_feature", ref_feature.View()},
-          mlvc::NamedTensorView{"q_index_shifted", q_index_tensor.View()},
+    auto process_frame = [&](int frame_index, const ulbvc::codec::TensorData& current_frame) {
+      const std::array<ulbvc::NamedTensorView, 3> encoder_inputs = {
+          ulbvc::NamedTensorView{"x", current_frame.View()},
+          ulbvc::NamedTensorView{"ref_feature", ref_feature.View()},
+          ulbvc::NamedTensorView{"q_index_shifted", q_index_tensor.View()},
       };
-      const std::array<mlvc::NamedTensorView, 4> encoder_output_views = {
-          mlvc::NamedTensorView{"feature", encoder_feature.View()},
-          mlvc::NamedTensorView{"z_raw", z_raw.View()},
-          mlvc::NamedTensorView{"y_raw_0", y_raw_0.View()},
-          mlvc::NamedTensorView{"y_raw_1", y_raw_1.View()},
+      const std::array<ulbvc::NamedTensorView, 4> encoder_output_views = {
+          ulbvc::NamedTensorView{"feature", encoder_feature.View()},
+          ulbvc::NamedTensorView{"z_raw", z_raw.View()},
+          ulbvc::NamedTensorView{"y_raw_0", y_raw_0.View()},
+          ulbvc::NamedTensorView{"y_raw_1", y_raw_1.View()},
       };
-      const std::array<mlvc::NamedTensorView, 5> decoder_inputs = {
-          mlvc::NamedTensorView{"z_raw", z_raw.View()},
-          mlvc::NamedTensorView{"y_raw_0", y_raw_0.View()},
-          mlvc::NamedTensorView{"y_raw_1", y_raw_1.View()},
-          mlvc::NamedTensorView{"ref_feature", ref_feature.View()},
-          mlvc::NamedTensorView{"q_index_shifted", q_index_tensor.View()},
+      const std::array<ulbvc::NamedTensorView, 5> decoder_inputs = {
+          ulbvc::NamedTensorView{"z_raw", z_raw.View()},
+          ulbvc::NamedTensorView{"y_raw_0", y_raw_0.View()},
+          ulbvc::NamedTensorView{"y_raw_1", y_raw_1.View()},
+          ulbvc::NamedTensorView{"ref_feature", ref_feature.View()},
+          ulbvc::NamedTensorView{"q_index_shifted", q_index_tensor.View()},
       };
-      const std::array<mlvc::NamedTensorView, 2> decoder_output_views = {
-          mlvc::NamedTensorView{"x_hat", x_hat.View()},
-          mlvc::NamedTensorView{"feature", decoded_feature.View()},
+      const std::array<ulbvc::NamedTensorView, 2> decoder_output_views = {
+          ulbvc::NamedTensorView{"x_hat", x_hat.View()},
+          ulbvc::NamedTensorView{"feature", decoded_feature.View()},
       };
 
       const auto encoder_begin = std::chrono::steady_clock::now();
@@ -289,24 +289,24 @@ int main(int argc, char** argv) {
       decoder_ms += std::chrono::duration<double, std::milli>(decoder_end - decoder_begin).count();
 
       const auto copy_begin = std::chrono::steady_clock::now();
-      mlvc::codec::CloneTensorInto(decoded_feature, &ref_feature);
+      ulbvc::codec::CloneTensorInto(decoded_feature, &ref_feature);
       const auto copy_end = std::chrono::steady_clock::now();
       feature_copy_ms += std::chrono::duration<double, std::milli>(copy_end - copy_begin).count();
       if (writer.has_value()) {
         const auto push_begin = std::chrono::steady_clock::now();
-        output_queue.Push(OutputFrame{frame_index, mlvc::codec::CloneTensor(x_hat)});
+        output_queue.Push(OutputFrame{frame_index, ulbvc::codec::CloneTensor(x_hat)});
         const auto push_end = std::chrono::steady_clock::now();
         output_push_ms += std::chrono::duration<double, std::milli>(push_end - push_begin).count();
       }
     };
 
     for (int i = 0; i < warmup; ++i) {
-      mlvc::app::InputFrame prepared_frame = prepare_queue.Pop();
+      ulbvc::app::InputFrame prepared_frame = prepare_queue.Pop();
       if (prepared_frame.eof) {
-        throw mlvc::Error("input ended before warmup frames completed");
+        throw ulbvc::Error("input ended before warmup frames completed");
       }
-      mlvc::Check(prepared_frame.frame != nullptr, "prepared frame slot is empty");
-      mlvc::Check(prepared_frame.frame_index == i,
+      ulbvc::Check(prepared_frame.frame != nullptr, "prepared frame slot is empty");
+      ulbvc::Check(prepared_frame.frame_index == i,
                   "async frame prepare queue returned out-of-order frame");
       process_frame(i, *prepared_frame.frame);
       prepare_queue.Release(&prepared_frame);
@@ -316,25 +316,25 @@ int main(int argc, char** argv) {
     int processed = 0;
     while (measured_frames < 0 || processed < measured_frames) {
       const auto pop_begin = std::chrono::steady_clock::now();
-      mlvc::app::InputFrame prepared_frame = prepare_queue.Pop();
+      ulbvc::app::InputFrame prepared_frame = prepare_queue.Pop();
       const auto pop_end = std::chrono::steady_clock::now();
       async_wait_ms += std::chrono::duration<double, std::milli>(pop_end - pop_begin).count();
       if (prepared_frame.eof) {
         if (measured_frames >= 0) {
-          throw mlvc::Error("input ended before requested frame count");
+          throw ulbvc::Error("input ended before requested frame count");
         }
         break;
       }
-      mlvc::Check(prepared_frame.frame != nullptr, "prepared frame slot is empty");
+      ulbvc::Check(prepared_frame.frame != nullptr, "prepared frame slot is empty");
       const int frame_index = warmup + processed;
-      mlvc::Check(prepared_frame.frame_index == frame_index,
+      ulbvc::Check(prepared_frame.frame_index == frame_index,
                   "async frame prepare queue returned out-of-order frame");
       process_frame(frame_index, *prepared_frame.frame);
       prepare_queue.Release(&prepared_frame);
       ++processed;
     }
 
-    const mlvc::app::AsyncFrameInputQueue::Stats prepare_stats = prepare_queue.stats();
+    const ulbvc::app::AsyncFrameInputQueue::Stats prepare_stats = prepare_queue.stats();
     output_queue.Close();
     if (writer_thread.has_value()) {
       writer_thread->join();
@@ -346,7 +346,7 @@ int main(int argc, char** argv) {
 
     const double total_ms = std::chrono::duration<double, std::milli>(end - begin).count();
     const double fps = processed > 0 ? (1000.0 * static_cast<double>(processed) / total_ms) : 0.0;
-    std::cout << "stage=MLVCEncoder+MLVCDecoder\n";
+    std::cout << "stage=ULBVCEncoder+ULBVCDecoder\n";
     std::cout << "pipeline=async\n";
     if (input_frame_dir.empty()) {
       std::cout << "input_mode=video\n";

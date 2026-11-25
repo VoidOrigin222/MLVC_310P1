@@ -1,6 +1,6 @@
-#include "mlvc/core/status.h"
+#include "ulbvc/core/status.h"
 
-namespace mlvc {
+namespace ulbvc {
 
 Error::Error(const std::string& message) : std::runtime_error(message) {}
 
@@ -10,4 +10,4 @@ void Check(bool condition, const std::string& message) {
   }
 }
 
-}  // namespace mlvc
+}  // namespace ulbvc

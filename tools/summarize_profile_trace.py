@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Summarize MLVC Chrome trace JSON into copy/stage telemetry."""
+"""Summarize ULBVC Chrome trace JSON into copy/stage telemetry."""
 
 from __future__ import annotations
 

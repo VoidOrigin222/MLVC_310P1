@@ -1,4 +1,4 @@
-#include "mlvc/runtime/acl_runtime.h"
+#include "ulbvc/runtime/acl_runtime.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -6,13 +6,13 @@
 #include <mutex>
 #include <utility>
 
-#include "mlvc/core/status.h"
-#include "mlvc/framework/profile_range.h"
+#include "ulbvc/core/status.h"
+#include "ulbvc/framework/profile_range.h"
 
-namespace mlvc {
+namespace ulbvc {
 namespace {
 
-DataType MlvcDataType(aclDataType dtype) {
+DataType UlbvcDataType(aclDataType dtype) {
   switch (dtype) {
     case ACL_FLOAT16:
       return DataType::kFloat16;
@@ -116,7 +116,7 @@ void AppendEnvPath(const char* name, const std::filesystem::path& path) {
 }
 
 std::filesystem::path RepoRootFromEnvironmentOrCwd() {
-  const char* repo_root = std::getenv("MLVC_ACL_REPO_ROOT");
+  const char* repo_root = std::getenv("ULBVC_ACL_REPO_ROOT");
   if (repo_root != nullptr && repo_root[0] != '\0') {
     return repo_root;
   }
@@ -188,18 +188,18 @@ void BootstrapAclEnvironment() {
     SetEnvIfUnset("ASCEND_AICPU_PATH", cann_home);
     SetEnvIfUnset("ASCEND_OPP_PATH", cann_home / "opp");
     SetEnvIfUnset("TOOLCHAIN_HOME", cann_home / "toolkit");
-    setenv("MLVC_ACL_REPO_ROOT", repo_root.c_str(), 0);
+    setenv("ULBVC_ACL_REPO_ROOT", repo_root.c_str(), 0);
     const std::filesystem::path custom_opp_root = repo_root / "output" / "custom_opp";
-    AppendEnvPath("ASCEND_CUSTOM_OPP_PATH", custom_opp_root / "wsiluchunkadd" / "vendors" / "mlvc");
+    AppendEnvPath("ASCEND_CUSTOM_OPP_PATH", custom_opp_root / "wsiluchunkadd" / "vendors" / "ulbvc");
     AppendEnvPath("ASCEND_CUSTOM_OPP_PATH",
-                  custom_opp_root / "mlvc_prior_ops" / "vendors" / "mlvc");
+                  custom_opp_root / "ulbvc_prior_ops" / "vendors" / "ulbvc");
 
-    const std::filesystem::path prior_opapi = custom_opp_root / "mlvc_prior_ops" / "vendors" /
-                                              "mlvc" / "op_api" / "lib" / "libcust_opapi.so";
+    const std::filesystem::path prior_opapi = custom_opp_root / "ulbvc_prior_ops" / "vendors" /
+                                              "ulbvc" / "op_api" / "lib" / "libcust_opapi.so";
     std::error_code error;
-    if (std::getenv("MLVC_PRIOR_OPAPI_LIB") == nullptr &&
+    if (std::getenv("ULBVC_PRIOR_OPAPI_LIB") == nullptr &&
         std::filesystem::is_regular_file(prior_opapi, error)) {
-      setenv("MLVC_PRIOR_OPAPI_LIB", prior_opapi.c_str(), 1);
+      setenv("ULBVC_PRIOR_OPAPI_LIB", prior_opapi.c_str(), 1);
     }
   });
 }
@@ -241,12 +241,19 @@ AclRuntime::AclRuntime(int device_id) : device_id_(device_id) {
   }
 }
 
+AclRuntime::AclRuntime(aclrtContext borrowed_context)
+    : context_(borrowed_context), owns_context_(false) {
+  Check(context_ != nullptr, "a live ACL context is required for the detection stream");
+  MakeCurrent();
+  CheckAcl(aclrtCreateStream(&stream_), "aclrtCreateStream detection");
+}
+
 AclRuntime::~AclRuntime() {
   if (stream_ != nullptr) {
     (void)aclrtDestroyStream(stream_);
     stream_ = nullptr;
   }
-  if (context_ != nullptr) {
+  if (context_ != nullptr && owns_context_) {
     (void)aclrtDestroyContext(context_);
     context_ = nullptr;
   }
@@ -262,8 +269,9 @@ void AclRuntime::MakeCurrent() const {
   CheckAcl(aclrtSetCurrentContext(context_), "aclrtSetCurrentContext");
 }
 
-AclStage::AclStage(AclRuntime* runtime, ModelRecord record, std::filesystem::path model_path)
-    : runtime_(runtime), record_(std::move(record)) {
+AclStage::AclStage(AclRuntime* runtime, ModelRecord record, std::filesystem::path model_path,
+                    bool async_execution)
+    : runtime_(runtime), record_(std::move(record)), async_execution_(async_execution) {
   try {
     Check(runtime_ != nullptr, "ACL runtime is required");
     Check(std::filesystem::exists(model_path),
@@ -357,7 +365,7 @@ TensorSpec AclStage::ReadInputSpec(aclmdlDesc* desc, std::size_t index) {
   TensorSpec spec;
   const char* name = aclmdlGetInputNameByIndex(desc, index);
   spec.name = name != nullptr ? name : "input_" + std::to_string(index);
-  spec.dtype = MlvcDataType(aclmdlGetInputDataType(desc, index));
+  spec.dtype = UlbvcDataType(aclmdlGetInputDataType(desc, index));
   aclmdlIODims dims{};
   CheckAcl(spec.dtype == DataType::kUInt8
                ? aclmdlGetInputDimsV2(desc, index, &dims)
@@ -371,7 +379,7 @@ TensorSpec AclStage::ReadOutputSpec(aclmdlDesc* desc, std::size_t index) {
   TensorSpec spec;
   const char* name = aclmdlGetOutputNameByIndex(desc, index);
   spec.name = name != nullptr ? name : "output_" + std::to_string(index);
-  spec.dtype = MlvcDataType(aclmdlGetOutputDataType(desc, index));
+  spec.dtype = UlbvcDataType(aclmdlGetOutputDataType(desc, index));
   aclmdlIODims dims{};
   CheckAcl(aclmdlGetOutputDims(desc, index, &dims), "aclmdlGetOutputDims");
   spec.shape = DimsVector(dims);
@@ -452,7 +460,7 @@ void AclStage::Run(std::initializer_list<NamedTensorView> inputs,
 
 void AclStage::RunNamed(const NamedTensorView* inputs, std::size_t input_count,
                         const NamedTensorView* outputs, std::size_t output_count) {
-  MLVC_PROFILE_RANGE_FUNCTION();
+  ULBVC_PROFILE_RANGE_FUNCTION();
   CheckAcl(aclrtSetCurrentContext(runtime_->context()), "aclrtSetCurrentContext");
   for (std::size_t index = 0; index < record_.inputs.size(); ++index) {
     const TensorSpec& spec = record_.inputs[index];
@@ -493,8 +501,14 @@ void AclStage::RunNamed(const NamedTensorView* inputs, std::size_t input_count,
     }
   }
 
-  CheckAcl(aclmdlExecute(model_id_, input_dataset_, output_dataset_),
-           "aclmdlExecute " + record_.name);
+  if (async_execution_) {
+    CheckAcl(aclmdlExecuteAsync(model_id_, input_dataset_, output_dataset_, runtime_->stream()),
+             "aclmdlExecuteAsync " + record_.name);
+    CheckAcl(aclrtSynchronizeStream(runtime_->stream()), "synchronize detection stream");
+  } else {
+    CheckAcl(aclmdlExecute(model_id_, input_dataset_, output_dataset_),
+             "aclmdlExecute " + record_.name);
+  }
 
   for (std::size_t index = 0; index < record_.outputs.size(); ++index) {
     const TensorSpec& spec = record_.outputs[index];
@@ -552,4 +566,4 @@ AclStage& AclModelSet::GetStage(std::string_view name) {
   throw Error("unknown ACL stage: " + std::string(name));
 }
 
-}  // namespace mlvc
+}  // namespace ulbvc

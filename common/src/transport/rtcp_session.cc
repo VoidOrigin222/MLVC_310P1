@@ -1,9 +1,9 @@
-#include "mlvc/transport/rtcp_session.h"
+#include "ulbvc/transport/rtcp_session.h"
 
 #include <algorithm>
 #include <stdexcept>
 #include <cstdlib>
-#ifdef MLVC_HAS_OPENSSL
+#ifdef ULBVC_HAS_OPENSSL
 #include <openssl/hmac.h>
 #endif
 #ifndef _WIN32
@@ -17,10 +17,10 @@
 #include <unistd.h>
 #endif
 
-namespace mlvc::transport {
+namespace ulbvc::transport {
 namespace {
 
-#ifdef MLVC_HAS_OPENSSL
+#ifdef ULBVC_HAS_OPENSSL
 constexpr uint8_t kAuthMagic[] = {0x4d, 0x4c, 0x56, 0x41};
 constexpr std::size_t kAuthTrailerBytes = 4 + 1 + 8 + 16;
 std::vector<uint8_t> AuthenticateRtcp(const std::vector<uint8_t>& packet, uint64_t index,
@@ -76,7 +76,8 @@ constexpr uint8_t kFmtNack = 1;
 constexpr uint8_t kFmtTmmbr = 3;
 constexpr uint8_t kFmtPli = 1;
 constexpr uint8_t kFmtFir = 4;
-constexpr uint32_t kMlvcAppName = 0x4d4c5643u;  // "MLVC"
+// RTCP APP names occupy exactly four octets; ULBV identifies ulbvc control.
+constexpr uint32_t kUlbvcAppName = 0x554c4256u;  // "ULBV"
 
 void PutRtcpLength(std::vector<uint8_t>* bytes, std::size_t packet_offset);
 
@@ -272,30 +273,30 @@ uint32_t DecodeTmmbrBitrate(uint32_t word) {
   return static_cast<uint32_t>(std::min<uint64_t>(value, std::numeric_limits<uint32_t>::max()));
 }
 
-void ValidateControlMessage(const MlvcControlMessage& message) {
-  Require(message.version == 1, "unsupported MLVC RTCP control version");
+void ValidateControlMessage(const UlbvcControlMessage& message) {
+  Require(message.version == 1, "unsupported ULBVC RTCP control version");
   const uint8_t type = static_cast<uint8_t>(message.type);
-  Require(type >= static_cast<uint8_t>(MlvcControlType::kCommand) &&
-              type <= static_cast<uint8_t>(MlvcControlType::kCapabilities),
-          "unknown MLVC RTCP control message type");
-  Require((message.flags & ~kMlvcControlAtomic) == 0,
-          "unknown MLVC RTCP control flags");
-  if (message.type == MlvcControlType::kCommand) {
-    Require((message.flags & kMlvcControlAtomic) != 0,
-            "MLVC COMMAND must set the ATOMIC flag");
+  Require(type >= static_cast<uint8_t>(UlbvcControlType::kCommand) &&
+              type <= static_cast<uint8_t>(UlbvcControlType::kCapabilities),
+          "unknown ULBVC RTCP control message type");
+  Require((message.flags & ~kUlbvcControlAtomic) == 0,
+          "unknown ULBVC RTCP control flags");
+  if (message.type == UlbvcControlType::kCommand) {
+    Require((message.flags & kUlbvcControlAtomic) != 0,
+            "ULBVC COMMAND must set the ATOMIC flag");
     Require(message.transaction_id != 0,
-            "MLVC COMMAND requires a non-zero transaction ID");
+            "ULBVC COMMAND requires a non-zero transaction ID");
   }
 }
 
 std::size_t PaddedTlvBytes(std::size_t length) {
   Require(length <= std::numeric_limits<uint16_t>::max(),
-          "MLVC RTCP TLV is too large");
+          "ULBVC RTCP TLV is too large");
   return (length + 3u) & ~std::size_t{3};
 }
 
 void AppendControlTlvs(std::vector<uint8_t>* packet,
-                       const std::vector<MlvcControlTlv>& tlvs) {
+                       const std::vector<UlbvcControlTlv>& tlvs) {
   for (const auto& tlv : tlvs) {
     const std::size_t padded = PaddedTlvBytes(tlv.value.size());
     Put16(packet, tlv.type);
@@ -306,27 +307,27 @@ void AppendControlTlvs(std::vector<uint8_t>* packet,
 }
 
 void ParseControlTlvs(const std::vector<uint8_t>& packet, std::size_t begin,
-                      std::size_t end, std::vector<MlvcControlTlv>* tlvs) {
+                      std::size_t end, std::vector<UlbvcControlTlv>* tlvs) {
   while (begin < end) {
-    Require(end - begin >= 4, "truncated MLVC RTCP control TLV header");
+    Require(end - begin >= 4, "truncated ULBVC RTCP control TLV header");
     const uint16_t type = Get16(packet, begin);
     const uint16_t length = Get16(packet, begin + 2);
     const std::size_t padded = PaddedTlvBytes(length);
     Require(padded <= end - begin - 4,
-            "MLVC RTCP control TLV exceeds APP payload");
+            "ULBVC RTCP control TLV exceeds APP payload");
     const std::size_t value_begin = begin + 4;
     const std::size_t value_end = value_begin + length;
     for (std::size_t i = value_end; i < value_begin + padded; ++i) {
-      Require(packet[i] == 0, "MLVC RTCP control TLV padding is non-zero");
+      Require(packet[i] == 0, "ULBVC RTCP control TLV padding is non-zero");
     }
-    MlvcControlTlv tlv;
+    UlbvcControlTlv tlv;
     tlv.type = type;
     tlv.value.assign(packet.begin() + static_cast<std::ptrdiff_t>(value_begin),
                      packet.begin() + static_cast<std::ptrdiff_t>(value_end));
     tlvs->push_back(std::move(tlv));
     begin += 4 + padded;
   }
-  Require(begin == end, "MLVC RTCP control TLVs are not word aligned");
+  Require(begin == end, "ULBVC RTCP control TLVs are not word aligned");
 }
 
 void ParseSdes(const std::vector<uint8_t>& packet, const RtcpPacketView& view,
@@ -541,18 +542,18 @@ std::vector<uint8_t> EncodeRtcpTmmbr(const RtcpTmmbr& tmmbr) {
   return packet;
 }
 
-std::vector<uint8_t> EncodeMlvcRtcpApp(uint32_t control_ssrc,
-                                       const MlvcControlMessage& message) {
-  RequireNonZeroSsrc(control_ssrc, "MLVC RTCP APP control SSRC is zero");
+std::vector<uint8_t> EncodeUlbvcRtcpApp(uint32_t control_ssrc,
+                                       const UlbvcControlMessage& message) {
+  RequireNonZeroSsrc(control_ssrc, "ULBVC RTCP APP control SSRC is zero");
   if (message.control_ssrc != 0) {
     Require(message.control_ssrc == control_ssrc,
-            "MLVC RTCP APP control SSRC does not match message metadata");
+            "ULBVC RTCP APP control SSRC does not match message metadata");
   }
   ValidateControlMessage(message);
   std::vector<uint8_t> packet;
   packet.insert(packet.end(), {0x80, kPtApp, 0, 0});
   Put32(&packet, control_ssrc);
-  Put32(&packet, kMlvcAppName);
+  Put32(&packet, kUlbvcAppName);
   packet.push_back(message.version);
   packet.push_back(static_cast<uint8_t>(message.type));
   Put16(&packet, message.flags);
@@ -564,25 +565,25 @@ std::vector<uint8_t> EncodeMlvcRtcpApp(uint32_t control_ssrc,
   return packet;
 }
 
-MlvcControlMessage DecodeMlvcRtcpApp(const std::vector<uint8_t>& packet) {
+UlbvcControlMessage DecodeUlbvcRtcpApp(const std::vector<uint8_t>& packet) {
   Require(!packet.empty() && packet.size() % 4 == 0,
-          "MLVC RTCP APP packet is empty or unaligned");
+          "ULBVC RTCP APP packet is empty or unaligned");
   const RtcpPacketView view = ReadPacket(packet, 0, false);
-  Require(view.end == packet.size(), "MLVC RTCP APP decoder expects one packet");
+  Require(view.end == packet.size(), "ULBVC RTCP APP decoder expects one packet");
   Require(view.type == kPtApp && view.count == 0,
-          "packet is not an MLVC APP subtype zero");
-  Require(view.padding == 0, "MLVC RTCP APP padding is not supported");
+          "packet is not an ULBVC APP subtype zero");
+  Require(view.padding == 0, "ULBVC RTCP APP padding is not supported");
   Require(view.payload_end - view.offset >= 4 + 4 + 16,
-          "truncated MLVC RTCP APP envelope");
+          "truncated ULBVC RTCP APP envelope");
   const std::size_t body = view.offset + 4;
   const uint32_t control_ssrc = Get32(packet, body);
-  RequireNonZeroSsrc(control_ssrc, "MLVC RTCP APP control SSRC is zero");
-  Require(Get32(packet, body + 4) == kMlvcAppName,
-          "RTCP APP name is not MLVC");
+  RequireNonZeroSsrc(control_ssrc, "ULBVC RTCP APP control SSRC is zero");
+  Require(Get32(packet, body + 4) == kUlbvcAppName,
+          "RTCP APP name is not ULBVC");
   const std::size_t envelope = body + 8;
-  MlvcControlMessage message;
+  UlbvcControlMessage message;
   message.version = packet[envelope];
-  message.type = static_cast<MlvcControlType>(packet[envelope + 1]);
+  message.type = static_cast<UlbvcControlType>(packet[envelope + 1]);
   message.flags = Get16(packet, envelope + 2);
   message.transaction_id = Get32(packet, envelope + 4);
   message.media_ssrc = Get32(packet, envelope + 8);
@@ -632,11 +633,11 @@ RtcpCompoundContents DecodeRtcpCompound(const std::vector<uint8_t>& packet) {
       if (view.count == kFmtPli) ParsePli(packet, view, &contents.plis);
       else if (view.count == kFmtFir) ParseFir(packet, view, &contents.firs);
     } else if (view.type == kPtApp) {
-      Require(view.padding == 0, "MLVC RTCP APP padding is not supported");
+      Require(view.padding == 0, "ULBVC RTCP APP padding is not supported");
       const std::vector<uint8_t> app(packet.begin() + static_cast<std::ptrdiff_t>(view.offset),
                                      packet.begin() + static_cast<std::ptrdiff_t>(view.end));
-      if (view.end - view.offset >= 12 && Get32(app, 8) == kMlvcAppName) {
-        contents.mlvc_controls.push_back(DecodeMlvcRtcpApp(app));
+      if (view.end - view.offset >= 12 && Get32(app, 8) == kUlbvcAppName) {
+        contents.ulbvc_controls.push_back(DecodeUlbvcRtcpApp(app));
       }
     }
     offset = view.end;
@@ -682,7 +683,7 @@ class RtcpUdpEndpoint::Impl {
   sockaddr_storage reply_peer{};
   socklen_t reply_peer_length = 0;
   uint16_t local_port = 0;
-#ifdef MLVC_HAS_OPENSSL
+#ifdef ULBVC_HAS_OPENSSL
   std::string auth_key;
   uint64_t tx_index = 0;
   uint64_t rx_highest = 0;
@@ -718,8 +719,8 @@ RtcpUdpEndpoint::RtcpUdpEndpoint(uint16_t local_port, std::string remote_host,
     freeaddrinfo(result);
   }
   impl_->socket = ::socket(AF_INET, SOCK_DGRAM, 0);
-#ifdef MLVC_HAS_OPENSSL
-  if (const char* key = std::getenv("MLVC_RTCP_KEY"); key != nullptr) impl_->auth_key = key;
+#ifdef ULBVC_HAS_OPENSSL
+  if (const char* key = std::getenv("ULBVC_RTCP_KEY"); key != nullptr) impl_->auth_key = key;
 #endif
   if (impl_->socket < 0) throw std::runtime_error("failed to create RTCP socket");
   int receive_buffer = 1024 * 1024;
@@ -754,7 +755,7 @@ void RtcpUdpEndpoint::Send(const std::vector<uint8_t>& compound_packet) {
   if (impl_->remote_length == 0) throw std::runtime_error("RTCP remote endpoint is not configured");
   (void)DecodeRtcpCompound(compound_packet);
   std::vector<uint8_t> wire = compound_packet;
-#ifdef MLVC_HAS_OPENSSL
+#ifdef ULBVC_HAS_OPENSSL
   if (!impl_->auth_key.empty()) wire = AuthenticateRtcp(compound_packet, impl_->tx_index++, impl_->auth_key);
 #endif
   const ssize_t sent = ::sendto(impl_->socket, wire.data(), wire.size(), 0,
@@ -777,7 +778,7 @@ void RtcpUdpEndpoint::SendToLastPeer(const std::vector<uint8_t>& compound_packet
   if (impl_->reply_peer_length == 0) throw std::runtime_error("RTCP reply peer is not accepted");
   (void)DecodeRtcpCompound(compound_packet);
   std::vector<uint8_t> wire = compound_packet;
-#ifdef MLVC_HAS_OPENSSL
+#ifdef ULBVC_HAS_OPENSSL
   if (!impl_->auth_key.empty()) wire = AuthenticateRtcp(compound_packet, impl_->tx_index++, impl_->auth_key);
 #endif
   const ssize_t sent = ::sendto(impl_->socket, wire.data(), wire.size(), 0,
@@ -817,7 +818,7 @@ bool RtcpUdpEndpoint::Receive(std::vector<uint8_t>* compound_packet,
       return false;
     }
   }
-#ifdef MLVC_HAS_OPENSSL
+#ifdef ULBVC_HAS_OPENSSL
   if (!impl_->auth_key.empty() &&
       !VerifyAndStripRtcp(&buffer, impl_->auth_key, &impl_->rx_highest, &impl_->rx_window)) return false;
 #endif
@@ -871,4 +872,4 @@ void PutRtcpLength(std::vector<uint8_t>* bytes, std::size_t packet_offset) {
 
 }  // namespace
 
-}  // namespace mlvc::transport
+}  // namespace ulbvc::transport

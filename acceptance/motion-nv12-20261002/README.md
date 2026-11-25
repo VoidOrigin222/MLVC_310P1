@@ -1,12 +1,12 @@
 # 全分辨率相机原生 NV12 运动输入验收
 
-2026-10-02 实时相机 → 原生 NV12 运动代理 → MLVC → 双机 RTP 3000 帧长测，
+2026-10-02 实时相机 → 原生 NV12 运动代理 → ULBVC → 双机 RTP 3000 帧长测，
 编码 **29.8352 FPS**，接收解码 **29.857 FPS**，输出全部 3000 帧。
 接近本机相机约 29.85 FPS 的实际采集速度，跟上 nominal 30 FPS 的相机负载；
 **不宣称严格持续 30 FPS、零采集缺口或端到端两帧延迟**。采集序号缺口为 1，
 网络 forwarding drop 为 0；旧颜色往返路径为 26.7962 FPS、采集序号缺口 333。
 
-运动代理仍为 1920×1080，主 MLVC 为 1920×1080 画面、1920×1088 模型 padding。
+运动代理仍为 1920×1080，主 ULBVC 为 1920×1080 画面、1920×1088 模型 padding。
 此次优化减少运动输入转换；本交付没有降低运动分辨率，也没有保留降采样功能。
 旧默认 `motion_camera_nv12=false` 保留，全分辨率原生 NV12 由独立配置显式开启。
 
@@ -46,7 +46,7 @@ camera/tensor/driver 前置队列、采集或网络显示。运动预取两帧�
 
 ## 独立容量测试与兼容性
 
-全分辨率原生 NV12 实拍 300 帧的完整 MLVC 文件输出编码为 29.9337 FPS、采集序号缺口 1。
+全分辨率原生 NV12 实拍 300 帧的完整 ULBVC 文件输出编码为 29.9337 FPS、采集序号缺口 1。
 最终纯全分辨率源码预加载 120 帧、运行 900 帧的完整处理吞吐为 **31.0808 FPS**，
 运动阶段平均 28.82 ms、相机 NV12 拷贝阶段平均 1.37133 ms；
 它排除实时采集，只说明处理容量，不代替在线长测。
@@ -66,7 +66,7 @@ FP16 与 owned 输入逐字节一致、外部 owner 生命周期、真实 1080p 
 该验证检查动态离线输入的两板参考/重构状态同步，不把实拍全零平移作为准确性证据。
 
 原生 NV12 即使保持全分辨率，也可能与旧颜色往返得到的代理像素不同，因而可能改变
-MV、量化平移及最终码流；主 MLVC tensor 保持原转换路径，不承诺新 opt-in 代理与
+MV、量化平移及最终码流；主 ULBVC tensor 保持原转换路径，不承诺新 opt-in 代理与
 旧代理逐位一致。旧源码实拍结果见 [原在线验收](../motion-online-20261002/README.md)，
 无节拍重复文件吞吐见 [文件吞吐验收](../motion-throughput-20261002/README.md)。
 
@@ -78,14 +78,14 @@ MV、量化平移及最终码流；主 MLVC tensor 保持原转换路径，不�
 不修改原部署目录或全局依赖。先接收后发送，运行脚本加载 CANN/custom-op 环境：
 
 ```bash
-# mlvc_decoder：先启动 3000 帧接收。
-cd /root/workplace/grifcc/MLVC_310P1
+# ulbvc_decoder：先启动 3000 帧接收。
+cd /root/workplace/grifcc/ULBVC_310P1
 bash scripts/bash_run.sh configs/decoder_camera_motion_rtp.toml
 ```
 
 ```bash
-# mlvc_encoder：实时相机，不预加载、无 RTSP/trace。
-cd /root/workplace/grifcc/MLVC_310P1
+# ulbvc_encoder：实时相机，不预加载、无 RTSP/trace。
+cd /root/workplace/grifcc/ULBVC_310P1
 bash scripts/bash_run_encode.sh configs/camera_motion_rtp_nv12.toml
 ```
 

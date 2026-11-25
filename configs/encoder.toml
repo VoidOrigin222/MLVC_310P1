@@ -1,14 +1,15 @@
-# Live 1080p camera -> motion MLVC -> RTP decoder input.
+# Live 1080p camera -> motion ULBVC -> RTP decoder input.
 mode = "encode"
-manifest = "/root/workplace/grifcc/MLVC_310P1/mlvc1080p/manifest_motion_ascend310p1.json"
+manifest = "models/codec/manifest_motion_ascend310p1.json"
 input_camera_device = "/dev/video0"
 camera_width = 1920
 camera_height = 1080
 camera_fps = 30
 camera_pixel_format = "MJPG"
+camera_jpeg_normalize_padding = true
 camera_preload_frames = 0
 # Original preview uses DVPP H.264 on channel 0; motion proxy uses channel 1.
-camera_rtsp_url = "rtsp://192.168.5.3:8554/camera-original"
+camera_rtsp_url = "rtsp://192.168.5.2:8554/camera-original"
 camera_rtsp_transport = "tcp"
 camera_rtsp_bitrate_bps = 8000000
 camera_rtsp_gop = 96
@@ -36,11 +37,21 @@ output_transport_payload_type = 96
 output_transport_pacing_rate_bps = 2000000
 output_transport_max_burst_bytes = 1240
 
-# Cumulative encoded MLVC RTP counters for the Windows comparison UI.
-# media_unit_bytes is the MLVC codec stream; wire_bytes includes RTP/UDP/IP.
-mlvc_stats_host = "192.168.5.3"
-mlvc_stats_port = 39341
-mlvc_stats_interval_frames = 30
+# Cumulative encoded ULBVC RTP counters for the Windows comparison UI.
+# media_unit_bytes is the ULBVC codec stream; wire_bytes includes RTP/UDP/IP.
+ulbvc_stats_host = "192.168.5.2"
+ulbvc_stats_port = 39341
+ulbvc_stats_interval_frames = 30
+
+# YOLO runs on the same source frame through a separate bounded worker/ACL stream.
+# Keep the 1080P camera/codec source; use the tested 720P detector profile.
+detection_enabled = true
+detection_model = "models/detection/yolo11s/fp16_opset17/720p/yolo11s_720p_fp16_opset17.om"
+detection_labels = "models/detection/yolo11s/fp16_opset17/720p/labels.txt"
+detection_report = "logs/detections.jsonl"
+detection_confidence = 0.25
+detection_nms_iou = 0.45
+detection_queue_capacity = 2
 
 [pipeline]
 stream_workers = 1

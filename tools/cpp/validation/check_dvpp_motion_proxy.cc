@@ -1,5 +1,5 @@
-#include <mlvc/motion/dvpp_translation_estimator.h>
-#include <mlvc/runtime/acl_runtime.h>
+#include <ulbvc/motion/dvpp_translation_estimator.h>
+#include <ulbvc/runtime/acl_runtime.h>
 #include "motion_mv_parity.h"
 
 #include <iostream>
@@ -26,15 +26,15 @@ int main(int argc, char** argv) {
       throw std::runtime_error("usage: check_dvpp_motion_proxy [frames=6] [gop=4] "
                                "[width=640] [height=384] [forced_i=2] [host_upload=0]");
     }
-    mlvc::AclRuntime runtime(0);
-    mlvc::io::DvppH264EncoderConfig config;
+    ulbvc::AclRuntime runtime(0);
+    ulbvc::io::DvppH264EncoderConfig config;
     config.layout = {width, height, width, height};
     config.gop = gop;
     config.bitrate = 8000000;
     DeviceBuffer device;
-    const std::size_t bytes = mlvc::io::Nv12BufferSize(config.layout);
-    mlvc::CheckAcl(aclrtMalloc(&device.value, bytes, ACL_MEM_MALLOC_NORMAL_ONLY), "allocate proxy NV12");
-    auto estimator = std::make_unique<mlvc::motion::DvppTranslationEstimator>(
+    const std::size_t bytes = ulbvc::io::Nv12BufferSize(config.layout);
+    ulbvc::CheckAcl(aclrtMalloc(&device.value, bytes, ACL_MEM_MALLOC_NORMAL_ONLY), "allocate proxy NV12");
+    auto estimator = std::make_unique<ulbvc::motion::DvppTranslationEstimator>(
         runtime.context(), config, true);
     std::vector<uint8_t> base(width * height);
     uint32_t random = 0x12345678;
@@ -65,11 +65,11 @@ int main(int argc, char** argv) {
           nv12[y * width + x] = base[sy * width + sx];
         }
       }
-      mlvc::motion::Translation shift;
+      ulbvc::motion::Translation shift;
       if (host_upload) {
         shift = estimator->EstimateNv12Host(nv12.data(), bytes, frame, frame == forced_i);
       } else {
-        mlvc::CheckAcl(aclrtMemcpy(device.value, bytes, nv12.data(), bytes, ACL_MEMCPY_HOST_TO_DEVICE),
+        ulbvc::CheckAcl(aclrtMemcpy(device.value, bytes, nv12.data(), bytes, ACL_MEMCPY_HOST_TO_DEVICE),
                        "upload synthetic proxy frame");
         shift = estimator->EstimateDevice(device.value, bytes, frame, nullptr, frame == forced_i);
       }
@@ -89,8 +89,8 @@ int main(int argc, char** argv) {
     config.single_reference = true;
     config.zero_copy_input = false;
     config.channel = 1;
-    mlvc::io::DvppH264Encoder proxy(runtime.context(), config);
-    mlvc::validation::MotionMvParity parity(gop);
+    ulbvc::io::DvppH264Encoder proxy(runtime.context(), config);
+    ulbvc::validation::MotionMvParity parity(gop);
     int offset_x = 0, offset_y = 0;
     for (int frame = 0; frame < frames; ++frame) {
       // Repeated positive pan / static / negative pan segments, including

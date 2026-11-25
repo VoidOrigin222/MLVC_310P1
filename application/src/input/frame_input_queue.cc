@@ -1,18 +1,18 @@
-#include <mlvc/application/input/frame_input_queue.h>
+#include <ulbvc/application/input/frame_input_queue.h>
 
 #include <algorithm>
 #include <chrono>
 #include <utility>
 
-#include "mlvc/core/status.h"
-#include "mlvc/framework/profile_range.h"
+#include "ulbvc/core/status.h"
+#include "ulbvc/framework/profile_range.h"
 
-namespace mlvc::app {
-namespace codec = mlvc::codec;
+namespace ulbvc::app {
+namespace codec = ulbvc::codec;
 namespace {
 
-void AddPrepareProfileEvent(mlvc::Profiler* profiler, std::string name, double start_ms,
-                            double duration_ms, std::vector<mlvc::ProfileArgument> args) {
+void AddPrepareProfileEvent(ulbvc::Profiler* profiler, std::string name, double start_ms,
+                            double duration_ms, std::vector<ulbvc::ProfileArgument> args) {
   if (profiler == nullptr) {
     return;
   }
@@ -22,16 +22,16 @@ void AddPrepareProfileEvent(mlvc::Profiler* profiler, std::string name, double s
 
 }  // namespace
 
-FrameInputArena::FrameInputArena(const mlvc::TensorSpec& frame_spec, int slot_count,
+FrameInputArena::FrameInputArena(const ulbvc::TensorSpec& frame_spec, int slot_count,
                                  bool allocate_host_buffers) {
-  mlvc::Check(slot_count > 0, "frame prepare arena requires at least one slot");
+  ulbvc::Check(slot_count > 0, "frame prepare arena requires at least one slot");
   slots_.reserve(static_cast<std::size_t>(slot_count));
   for (int slot = 0; slot < slot_count; ++slot) {
     if (allocate_host_buffers) {
       slots_.push_back(codec::MakeTensorLike(frame_spec));
     } else {
       codec::TensorData tensor;
-      tensor.shape = mlvc::TensorShape(frame_spec.shape);
+      tensor.shape = ulbvc::TensorShape(frame_spec.shape);
       tensor.dtype = frame_spec.dtype;
       slots_.push_back(std::move(tensor));
     }
@@ -41,12 +41,12 @@ FrameInputArena::FrameInputArena(const mlvc::TensorSpec& frame_spec, int slot_co
 AsyncFrameInputQueue::AsyncFrameInputQueue(int frames_to_attempt, int configured_frame_num,
                                            const std::filesystem::path& input_video_path,
                                            const std::filesystem::path& input_frame_dir,
-                                           std::optional<mlvc::io::CameraCaptureOptions> camera_options,
+                                           std::optional<ulbvc::io::CameraCaptureOptions> camera_options,
                                            aclrtContext context,
-                                           const mlvc::TensorSpec& frame_spec, int width,
+                                           const ulbvc::TensorSpec& frame_spec, int width,
                                            int height, FrameBufferPool* arena,
-                                           mlvc::Profiler* profiler,
-                                           mlvc::CodecGraphExecutor* graph_executor,
+                                           ulbvc::Profiler* profiler,
+                                           ulbvc::CodecGraphExecutor* graph_executor,
                                            MotionInputPrepareFunction motion_prepare)
     : frames_to_attempt_(frames_to_attempt),
       configured_frame_num_(configured_frame_num),
@@ -54,7 +54,7 @@ AsyncFrameInputQueue::AsyncFrameInputQueue(int frames_to_attempt, int configured
       input_frame_dir_(input_frame_dir),
       frame_spec_(frame_spec),
       camera_motion_nv12_(camera_options && camera_options->motion_nv12),
-      frame_source_(std::make_unique<mlvc::io::FrameSource>(configured_frame_num, input_video_path,
+      frame_source_(std::make_unique<ulbvc::io::FrameSource>(configured_frame_num, input_video_path,
                                                             input_frame_dir, frame_spec,
                                                             std::move(camera_options), context)),
       width_(width),
@@ -64,7 +64,7 @@ AsyncFrameInputQueue::AsyncFrameInputQueue(int frames_to_attempt, int configured
       graph_executor_(graph_executor),
       motion_prepare_(std::move(motion_prepare)),
       worker_pool_(1) {
-  mlvc::Check(arena_ != nullptr && arena_->capacity() > 0,
+  ulbvc::Check(arena_ != nullptr && arena_->capacity() > 0,
               "async frame prepare queue requires a non-empty arena");
   for (int slot = 0; slot < static_cast<int>(arena_->capacity()); ++slot) {
     free_slots_.push_back(slot);
@@ -209,20 +209,20 @@ void AsyncFrameInputQueue::WorkerMain() {
 bool AsyncFrameInputQueue::PrepareOne(int frame_index, codec::TensorData* frame,
                                       std::vector<uint8_t>* motion_nv12) {
   const auto prepare_begin = std::chrono::steady_clock::now();
-  std::optional<mlvc::ScopedProfileHotPath> profile_prepare_hot_path;
-  std::optional<mlvc::ScopedProfileRange> profile_prepare_frame;
+  std::optional<ulbvc::ScopedProfileHotPath> profile_prepare_hot_path;
+  std::optional<ulbvc::ScopedProfileRange> profile_prepare_frame;
   if (profiler_ != nullptr) {
     profile_prepare_hot_path.emplace();
     profile_prepare_frame.emplace(std::string("prepare.frame.") + std::to_string(frame_index));
   }
   if (frame_source_->has_video_input()) {
-    std::optional<mlvc::ScopedProfileRange> profile_read_frame;
+    std::optional<ulbvc::ScopedProfileRange> profile_read_frame;
     if (profiler_ != nullptr) {
       profile_read_frame.emplace(std::string("prepare.frame.read_video.") +
                                  std::to_string(frame_index));
     }
-    mlvc::ScopedCodecGraphNode graph_node(graph_executor_, profiler_,
-                                          mlvc::CodecGraphNodeType::kVideoIo, "read_frame",
+    ulbvc::ScopedCodecGraphNode graph_node(graph_executor_, profiler_,
+                                          ulbvc::CodecGraphNodeType::kVideoIo, "read_frame",
                                           "AsyncFrameInputQueue::ReadFrameAsTensor", frame_index);
     const auto video_read_begin = std::chrono::steady_clock::now();
     const bool has_frame = frame_source_->ReadFrame(frame_index, frame, motion_nv12);
@@ -236,10 +236,10 @@ bool AsyncFrameInputQueue::PrepareOne(int frame_index, codec::TensorData* frame,
         profiler_, "video.read.frame",
         profiler_ != nullptr ? profiler_->StartMs(video_read_begin) : 0.0,
         profiler_ != nullptr ? profiler_->DurationMs(video_read_begin, video_read_end) : 0.0,
-        {mlvc::Profiler::Arg("frame_index", frame_index), mlvc::Profiler::Arg("width", width_),
-         mlvc::Profiler::Arg("height", height_),
-         mlvc::Profiler::Arg("bytes", static_cast<uint64_t>(frame->ByteSize())),
-         mlvc::Profiler::Arg("prepare_mode", "async_queue")});
+        {ulbvc::Profiler::Arg("frame_index", frame_index), ulbvc::Profiler::Arg("width", width_),
+         ulbvc::Profiler::Arg("height", height_),
+         ulbvc::Profiler::Arg("bytes", static_cast<uint64_t>(frame->ByteSize())),
+         ulbvc::Profiler::Arg("prepare_mode", "async_queue")});
     const auto prepare_end = std::chrono::steady_clock::now();
     {
       std::lock_guard<std::mutex> lock(mutex_);
@@ -251,13 +251,13 @@ bool AsyncFrameInputQueue::PrepareOne(int frame_index, codec::TensorData* frame,
     return true;
   }
   if (input_frame_dir_.empty()) {
-    std::optional<mlvc::ScopedProfileRange> profile_synth_frame;
+    std::optional<ulbvc::ScopedProfileRange> profile_synth_frame;
     if (profiler_ != nullptr) {
       profile_synth_frame.emplace(std::string("prepare.frame.synthetic.") +
                                   std::to_string(frame_index));
     }
-    mlvc::ScopedCodecGraphNode graph_node(graph_executor_, profiler_,
-                                          mlvc::CodecGraphNodeType::kVideoIo, "synthetic_frame",
+    ulbvc::ScopedCodecGraphNode graph_node(graph_executor_, profiler_,
+                                          ulbvc::CodecGraphNodeType::kVideoIo, "synthetic_frame",
                                           "AsyncFrameInputQueue::FillFp16Tensor", frame_index);
     const auto video_synth_begin = std::chrono::steady_clock::now();
     const bool has_frame = frame_source_->ReadFrame(frame_index, frame, motion_nv12);
@@ -271,9 +271,9 @@ bool AsyncFrameInputQueue::PrepareOne(int frame_index, codec::TensorData* frame,
         profiler_, "video.synthetic_frame",
         profiler_ != nullptr ? profiler_->StartMs(video_synth_begin) : 0.0,
         profiler_ != nullptr ? profiler_->DurationMs(video_synth_begin, video_synth_end) : 0.0,
-        {mlvc::Profiler::Arg("frame_index", frame_index),
-          mlvc::Profiler::Arg("bytes", static_cast<uint64_t>(frame->ByteSize())),
-         mlvc::Profiler::Arg("prepare_mode", "async_queue")});
+        {ulbvc::Profiler::Arg("frame_index", frame_index),
+          ulbvc::Profiler::Arg("bytes", static_cast<uint64_t>(frame->ByteSize())),
+         ulbvc::Profiler::Arg("prepare_mode", "async_queue")});
     const auto prepare_end = std::chrono::steady_clock::now();
     {
       std::lock_guard<std::mutex> lock(mutex_);
@@ -285,13 +285,13 @@ bool AsyncFrameInputQueue::PrepareOne(int frame_index, codec::TensorData* frame,
     return true;
   }
 
-  std::optional<mlvc::ScopedProfileRange> profile_read_fp16_frame;
+  std::optional<ulbvc::ScopedProfileRange> profile_read_fp16_frame;
   if (profiler_ != nullptr) {
     profile_read_fp16_frame.emplace(std::string("prepare.frame.read_fp16.") +
                                     std::to_string(frame_index));
   }
-  mlvc::ScopedCodecGraphNode graph_node(graph_executor_, profiler_,
-                                        mlvc::CodecGraphNodeType::kVideoIo, "read_fp16_frame",
+  ulbvc::ScopedCodecGraphNode graph_node(graph_executor_, profiler_,
+                                        ulbvc::CodecGraphNodeType::kVideoIo, "read_fp16_frame",
                                         "AsyncFrameInputQueue::ReadTensorFileInto", frame_index);
   const auto frame_read_begin = std::chrono::steady_clock::now();
   const std::filesystem::path frame_path =
@@ -307,10 +307,10 @@ bool AsyncFrameInputQueue::PrepareOne(int frame_index, codec::TensorData* frame,
       profiler_, "video.read.fp16_frame",
       profiler_ != nullptr ? profiler_->StartMs(frame_read_begin) : 0.0,
       profiler_ != nullptr ? profiler_->DurationMs(frame_read_begin, frame_read_end) : 0.0,
-      {mlvc::Profiler::Arg("frame_index", frame_index),
-       mlvc::Profiler::Arg("path", frame_path.string()),
-       mlvc::Profiler::Arg("bytes", static_cast<uint64_t>(frame->ByteSize())),
-       mlvc::Profiler::Arg("prepare_mode", "async_queue")});
+      {ulbvc::Profiler::Arg("frame_index", frame_index),
+       ulbvc::Profiler::Arg("path", frame_path.string()),
+       ulbvc::Profiler::Arg("bytes", static_cast<uint64_t>(frame->ByteSize())),
+       ulbvc::Profiler::Arg("prepare_mode", "async_queue")});
   const auto prepare_end = std::chrono::steady_clock::now();
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -370,4 +370,4 @@ void AsyncFrameInputQueue::PushReady(ReadySlot ready) {
   consumer_condition_.notify_one();
 }
 
-}  // namespace mlvc::app
+}  // namespace ulbvc::app

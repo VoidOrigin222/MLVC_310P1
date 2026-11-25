@@ -66,7 +66,7 @@ def collect_failures(root: Path) -> list[str]:
 
 
 def run_self_test() -> None:
-    with tempfile.TemporaryDirectory(prefix="mlvc_acl_source_policy_") as temp:
+    with tempfile.TemporaryDirectory(prefix="ulbvc_acl_source_policy_") as temp:
         root = Path(temp)
         tools = root / "tools"
         tools.mkdir(parents=True)

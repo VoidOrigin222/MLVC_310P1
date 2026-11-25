@@ -44,7 +44,7 @@ def assert_true(condition: bool, message: str) -> None:
 
 
 def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="mlvc_acl_conversion_status_") as temp:
+    with tempfile.TemporaryDirectory(prefix="ulbvc_acl_conversion_status_") as temp:
         root = Path(temp)
         source_root = root / "source"
         acl_root = root / "models"

@@ -8,11 +8,11 @@
 #include <string>
 #include <vector>
 
-#include "mlvc/core/buffer.h"
-#include "mlvc/core/status.h"
-#include "mlvc/entropy/entropy_codec.h"
-#include "mlvc/runtime/acl_runtime.h"
-#include "mlvc/runtime/encode_index_acl.h"
+#include "ulbvc/core/buffer.h"
+#include "ulbvc/core/status.h"
+#include "ulbvc/entropy/entropy_codec.h"
+#include "ulbvc/runtime/acl_runtime.h"
+#include "ulbvc/runtime/encode_index_acl.h"
 
 namespace {
 
@@ -95,10 +95,10 @@ float HalfBitsToFloat(uint16_t value) {
 }
 
 uint8_t ScaleIndex(float scale) {
-  const float log_scale_min = std::log(mlvc::kScaleMin);
-  const float log_scale_max = std::log(mlvc::kScaleMax);
-  const float log_scale_step = (log_scale_max - log_scale_min) / (mlvc::kScaleLevel - 1);
-  const float clipped = std::min(std::max(scale, mlvc::kScaleMin), mlvc::kScaleMax);
+  const float log_scale_min = std::log(ulbvc::kScaleMin);
+  const float log_scale_max = std::log(ulbvc::kScaleMax);
+  const float log_scale_step = (log_scale_max - log_scale_min) / (ulbvc::kScaleLevel - 1);
+  const float clipped = std::min(std::max(scale, ulbvc::kScaleMin), ulbvc::kScaleMax);
   return static_cast<uint8_t>((std::log(clipped) - log_scale_min) / log_scale_step);
 }
 
@@ -109,7 +109,7 @@ int32_t SymbolFromFp16(uint16_t bits) {
 
 void CheckAclStatus(aclError status, const char* operation) {
   if (status != ACL_ERROR_NONE) {
-    throw mlvc::Error(std::string(operation) + " failed: ret=" + std::to_string(status));
+    throw ulbvc::Error(std::string(operation) + " failed: ret=" + std::to_string(status));
   }
 }
 
@@ -148,7 +148,7 @@ void MakeReference(std::size_t count, const std::vector<uint16_t>& scales, float
   keep_mask->resize(count);
   for (std::size_t i = 0; i < count; ++i) {
     const float scale = HalfBitsToFloat(scales[i]);
-    const float clipped = std::min(std::max(scale, mlvc::kScaleMin), mlvc::kScaleMax);
+    const float clipped = std::min(std::max(scale, ulbvc::kScaleMin), ulbvc::kScaleMax);
     const bool keep = force_zero_thres < 0.0f || clipped > force_zero_thres;
     const int32_t symbol = symbol_reader(i);
     const int32_t index = static_cast<int32_t>(ScaleIndex(scale));
@@ -165,7 +165,7 @@ void RunCase(const std::string& symbol_dtype, std::size_t count, float force_zer
   std::vector<uint8_t> expected_keep;
 
   std::vector<uint8_t> host_symbols;
-  mlvc::DataType dtype = mlvc::DataType::kInt8;
+  ulbvc::DataType dtype = ulbvc::DataType::kInt8;
   if (symbol_dtype == "int8") {
     const std::vector<int8_t> symbols = MakeInt8Symbols(count);
     host_symbols.resize(symbols.size() * sizeof(int8_t));
@@ -178,18 +178,18 @@ void RunCase(const std::string& symbol_dtype, std::size_t count, float force_zer
     const std::vector<uint16_t> symbols = MakeFp16Symbols(count);
     host_symbols.resize(symbols.size() * sizeof(uint16_t));
     std::memcpy(host_symbols.data(), symbols.data(), host_symbols.size());
-    dtype = mlvc::DataType::kFloat16;
+    dtype = ulbvc::DataType::kFloat16;
     MakeReference(
         count, scales, force_zero_thres, [&](std::size_t i) { return SymbolFromFp16(symbols[i]); },
         &expected_combined, &expected_keep);
   } else {
-    throw mlvc::Error("unsupported symbol dtype: " + symbol_dtype);
+    throw ulbvc::Error("unsupported symbol dtype: " + symbol_dtype);
   }
 
-  mlvc::AclBuffer device_symbols(host_symbols.size());
-  mlvc::AclBuffer device_scales(scales.size() * sizeof(uint16_t));
-  mlvc::AclBuffer device_combined(count * sizeof(int16_t));
-  mlvc::AclBuffer device_keep(count * sizeof(uint8_t));
+  ulbvc::AclBuffer device_symbols(host_symbols.size());
+  ulbvc::AclBuffer device_scales(scales.size() * sizeof(uint16_t));
+  ulbvc::AclBuffer device_combined(count * sizeof(int16_t));
+  ulbvc::AclBuffer device_keep(count * sizeof(uint8_t));
   CheckAclStatus(aclrtMemcpy(device_symbols.data(), device_symbols.bytes(), host_symbols.data(),
                              host_symbols.size(), ACL_MEMCPY_HOST_TO_DEVICE),
                  "aclrtMemcpy symbols H2D");
@@ -197,8 +197,8 @@ void RunCase(const std::string& symbol_dtype, std::size_t count, float force_zer
                              scales.size() * sizeof(uint16_t), ACL_MEMCPY_HOST_TO_DEVICE),
                  "aclrtMemcpy scales H2D");
 
-  const mlvc::EncodeIndexAclResult result = mlvc::BuildIndexEncodeAcl(
-      device_symbols.data(), dtype, device_scales.data(), mlvc::DataType::kFloat16, shape.data(),
+  const ulbvc::EncodeIndexAclResult result = ulbvc::BuildIndexEncodeAcl(
+      device_symbols.data(), dtype, device_scales.data(), ulbvc::DataType::kFloat16, shape.data(),
       shape.size(), count, force_zero_thres, static_cast<int16_t*>(device_combined.data()),
       static_cast<uint8_t*>(device_keep.data()), stream);
 
@@ -231,7 +231,7 @@ void RunCase(const std::string& symbol_dtype, std::size_t count, float force_zer
               << " actual_combined=" << actual_combined[first_mismatch]
               << " expected_keep=" << static_cast<int>(expected_keep[first_mismatch])
               << " actual_keep=" << static_cast<int>(actual_keep[first_mismatch]) << "\n";
-    throw mlvc::Error("ACL encode-index mismatch for " + symbol_dtype);
+    throw ulbvc::Error("ACL encode-index mismatch for " + symbol_dtype);
   }
 
   std::cout << "case=" << symbol_dtype << " elements=" << result.elements
@@ -263,10 +263,10 @@ int main(int argc, char** argv) {
   }
 
   try {
-    mlvc::Check(count > 0, "count must be positive");
-    mlvc::AclRuntime runtime(device);
-    mlvc::Check(mlvc::EncodeIndexAclAvailable(),
-                "MlvcBuildIndexEncode ACLNN custom op is not available");
+    ulbvc::Check(count > 0, "count must be positive");
+    ulbvc::AclRuntime runtime(device);
+    ulbvc::Check(ulbvc::EncodeIndexAclAvailable(),
+                "UlbvcBuildIndexEncode ACLNN custom op is not available");
     if (symbol_dtype == "both") {
       RunCase("int8", count, force_zero_thres, runtime.stream());
       RunCase("fp16", count, force_zero_thres, runtime.stream());

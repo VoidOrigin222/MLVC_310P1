@@ -1,10 +1,10 @@
-#include "mlvc/framework/codec_graph_executor.h"
+#include "ulbvc/framework/codec_graph_executor.h"
 
 #include <utility>
 
-#include "mlvc/core/status.h"
+#include "ulbvc/core/status.h"
 
-namespace mlvc {
+namespace ulbvc {
 
 const char* CodecGraphNodeTypeName(CodecGraphNodeType type) {
   switch (type) {
@@ -163,4 +163,4 @@ ScopedCodecGraphNode::~ScopedCodecGraphNode() {
                         frame_index_);
 }
 
-}  // namespace mlvc
+}  // namespace ulbvc

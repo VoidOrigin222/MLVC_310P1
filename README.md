@@ -1,12 +1,12 @@
-# MLVC 310P1
+# ULBVC 310P1
 
-MLVC 是面向 Ascend 310P1 的编解码部署项目。编码器和解码器共用一套源码，通过同一个 CMake 工程构建为两个可执行文件。
+ULBVC 是面向 Ascend 310P1 的编解码部署项目。编码器和解码器共用一套源码，通过同一个 CMake 工程构建为两个可执行文件。
 
 ## 目录结构
 
 ```text
 common/       公共运行时、传输层和流水线框架
-mlvc/         MLVC 编解码、熵编码、I/O 和 ACL 运行时
+ulbvc/        ULBVC 编解码、熵编码、I/O 和 ACL 运行时
 application/  应用流水线和命令行配置
 apps/         encode_main.cc 和 decode_main.cc
 configs/      编码器和解码器 TOML 配置
@@ -21,11 +21,11 @@ bash scripts/bash_build.sh          # 构建解码端
 bash scripts/bash_build_encode.sh  # 构建编码端
 ```
 
-脚本默认使用 `/usr/local/Ascend/cann-9.1.0` 和 `/opt/opencv/lib64/cmake/opencv4`；可分别通过 `MLVC_CANN_HOME`、`OpenCV_DIR`、`MLVC_BUILD_DIR` 和 `BUILD_JOBS` 覆盖。构建需要目标机已安装 CANN、OpenCV 和 DVPP。
+脚本默认使用 `/usr/local/Ascend/cann-9.1.0` 和 `/opt/opencv/lib64/cmake/opencv4`；可分别通过 `ULBVC_CANN_HOME`、`OpenCV_DIR`、`ULBVC_BUILD_DIR` 和 `BUILD_JOBS` 覆盖。构建需要目标机已安装 CANN、OpenCV 和 DVPP。
 
 项目已将官方 rANS 实现和 toml++ 头文件集成在仓库的 `third_party/`
 目录中，CMake 会自动使用仓库内版本，不再依赖源码目录之外的
-`mlvc-main/` 或外部 `third_party/` 目录。OpenCV、Ascend CANN 和 DVPP
+`ulbvc-main/` 或外部 `third_party/` 目录。OpenCV、Ascend CANN 和 DVPP
 属于设备系统依赖，仍需在 Ascend 设备环境中安装。
 
 ## 运行
@@ -40,16 +40,16 @@ bash scripts/bash_run.sh [configs/decoder.toml]
 
 可选平移 warp 的模型边界、GOP/reset 语义、x264 与运动指令重放配置见
 [平移 warp 说明](docs/translation_warp.md)，部署示例为
-[`configs/encoder_motion.toml`](configs/encoder_motion.toml) 和
-[`configs/decoder_motion.toml`](configs/decoder_motion.toml)。
+[`configs/encoder.toml`](configs/encoder.toml) 和
+[`configs/decoder.toml`](configs/decoder.toml)。
 
-运行脚本会加载 CANN 环境。解码端 `bash_run.sh` 还会自动加载仓库 `output/custom_opp` 下存在的隔离算子包。仓库中的配置是示例；运行前请修改输入帧目录、模型 manifest、设备地址、端口和输出方式。可通过 `MLVC_VECTOR_OPAPI_LIB=/path/to/libcust_opapi.so` 显式覆盖算子库；需要非系统默认 FFmpeg 时，设置 `MLVC_FFMPEG_BIN=/path/to/ffmpeg/bin`。
+运行脚本会加载 CANN 环境。解码端 `bash_run.sh` 还会自动加载仓库 `output/custom_opp` 下存在的隔离算子包。仓库中的配置是示例；运行前请修改输入帧目录、模型 manifest、设备地址、端口和输出方式。可通过 `ULBVC_VECTOR_OPAPI_LIB=/path/to/libcust_opapi.so` 显式覆盖算子库；需要非系统默认 FFmpeg 时，设置 `ULBVC_FFMPEG_BIN=/path/to/ffmpeg/bin`。
 
 ## 三路视频 UI
 
 Windows 本地三路视频控制台位于 [`tools/ui/`](tools/ui/README.md)，通过
 MediaMTX WebRTC 播放原图、H.264 和语义压缩，支持固定 QP 对照、显示延时补偿与带宽曲线。
-运行方式及依赖见该目录的说明；板端配套使用 `motion` 分支的 `e32a134` 或更新版本。
+运行方式及依赖见该目录的说明；板端与 UI 必须使用同一套 ulbvc 命名的版本。
 
 ## 测试
 
@@ -65,4 +65,10 @@ ctest --test-dir build --output-on-failure
 
 ## 模型资产
 
+YOLO11s FP16 ONNX/OM、1080P/720P 检测预处理、RTP 帧同步与叠框显示见
+[检测说明](docs/yolo_detection.md)。
+
 仓库不包含设备构建目录、生成文件、本地日志和模型二进制文件。模型资产应通过 manifest 和外部部署目录提供，具体部署方式见 [P1_DEPLOYMENT.md](P1_DEPLOYMENT.md)。
+
+统一命名后的构建、模型资产和部署配套要求见
+[ulbvc 命名与部署](docs/ulbvc_naming.md)。

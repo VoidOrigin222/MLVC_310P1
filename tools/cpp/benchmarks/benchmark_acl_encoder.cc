@@ -1,15 +1,15 @@
-#include <mlvc/application/input/frame_input_queue.h>
-#include <mlvc/codec/mlvc_entropy.h>
-#include <mlvc/codec/mlvc_rate_control.h>
-#include <mlvc/codec/tensor_utils.h>
-#include <mlvc/core/status.h>
-#include <mlvc/entropy/entropy_codec.h>
-#include <mlvc/entropy/mlvc_official_entropy.h>
-#include <mlvc/entropy/sidecar.h>
-#include <mlvc/framework/entropy_worker.h>
-#include <mlvc/io/mlvc_bitstream.h>
-#include <mlvc/io/video_io.h>
-#include <mlvc/runtime/stage_runtime.h>
+#include <ulbvc/application/input/frame_input_queue.h>
+#include <ulbvc/codec/ulbvc_entropy.h>
+#include <ulbvc/codec/ulbvc_rate_control.h>
+#include <ulbvc/codec/tensor_utils.h>
+#include <ulbvc/core/status.h>
+#include <ulbvc/entropy/entropy_codec.h>
+#include <ulbvc/entropy/ulbvc_official_entropy.h>
+#include <ulbvc/entropy/sidecar.h>
+#include <ulbvc/framework/entropy_worker.h>
+#include <ulbvc/io/ulbvc_bitstream.h>
+#include <ulbvc/io/video_io.h>
+#include <ulbvc/runtime/stage_runtime.h>
 
 #include <algorithm>
 #include <array>
@@ -32,14 +32,14 @@
 
 namespace {
 
-constexpr std::string_view kDefaultManifest = "../mlvc1080p/manifest.json";
+constexpr std::string_view kDefaultManifest = "../ulbvc1080p/manifest.json";
 constexpr int kDefaultQIndex = 21;
 constexpr int kDefaultGop = 32;
 constexpr int kDefaultResetInterval = 16;
 constexpr int kDefaultLtrStartIdx = 8;
 constexpr int kDefaultLtrPeriod = 64;
 constexpr int kDefaultLtrQpShift = 8;
-constexpr std::array<int, 8> kMlvcQIndexShift = {8, 0, 4, 0, 4, 0, 4, 0};
+constexpr std::array<int, 8> kUlbvcQIndexShift = {8, 0, 4, 0, 4, 0, 4, 0};
 
 void PrintUsage(const char* argv0) {
   std::cerr << "usage: " << argv0
@@ -53,40 +53,40 @@ void PrintUsage(const char* argv0) {
                " --output-bitstream <stream.bin>\n";
 }
 
-const mlvc::TensorSpec& FindTensorSpec(const mlvc::ModelRecord& record, std::string_view name) {
-  for (const mlvc::TensorSpec& spec : record.inputs) {
+const ulbvc::TensorSpec& FindTensorSpec(const ulbvc::ModelRecord& record, std::string_view name) {
+  for (const ulbvc::TensorSpec& spec : record.inputs) {
     if (spec.name == name) {
       return spec;
     }
   }
-  for (const mlvc::TensorSpec& spec : record.outputs) {
+  for (const ulbvc::TensorSpec& spec : record.outputs) {
     if (spec.name == name) {
       return spec;
     }
   }
-  throw mlvc::Error("missing tensor spec: " + record.name + "." + std::string(name));
+  throw ulbvc::Error("missing tensor spec: " + record.name + "." + std::string(name));
 }
 
-mlvc::codec::TensorData MakeInt32Tensor(const mlvc::TensorSpec& spec, int32_t value) {
-  mlvc::codec::TensorData tensor = mlvc::codec::MakeTensorLike(spec);
-  mlvc::Check(spec.dtype == mlvc::DataType::kInt32, "q-index tensor must be int32");
-  mlvc::Check(spec.shape.size() == 1 && spec.shape[0] == 1, "q-index tensor must be shape [1]");
+ulbvc::codec::TensorData MakeInt32Tensor(const ulbvc::TensorSpec& spec, int32_t value) {
+  ulbvc::codec::TensorData tensor = ulbvc::codec::MakeTensorLike(spec);
+  ulbvc::Check(spec.dtype == ulbvc::DataType::kInt32, "q-index tensor must be int32");
+  ulbvc::Check(spec.shape.size() == 1 && spec.shape[0] == 1, "q-index tensor must be shape [1]");
   std::memcpy(tensor.bytes.data(), &value, sizeof(value));
   return tensor;
 }
 
-void SetInt32TensorValue(mlvc::codec::TensorData* tensor, int32_t value) {
+void SetInt32TensorValue(ulbvc::codec::TensorData* tensor, int32_t value) {
   std::memcpy(tensor->bytes.data(), &value, sizeof(value));
 }
 
-void ResetTensor(mlvc::codec::TensorData* tensor) {
+void ResetTensor(ulbvc::codec::TensorData* tensor) {
   std::fill(tensor->bytes.begin(), tensor->bytes.end(), 0);
 }
 
-void DumpFeatureStats(const mlvc::codec::TensorData& tensor,
+void DumpFeatureStats(const ulbvc::codec::TensorData& tensor,
                       const std::filesystem::path& output_path) {
-  mlvc::Check(tensor.dtype == mlvc::DataType::kFloat16, "feature dump requires an FP16 tensor");
-  mlvc::codec::WriteTensorFile(output_path, tensor);
+  ulbvc::Check(tensor.dtype == ulbvc::DataType::kFloat16, "feature dump requires an FP16 tensor");
+  ulbvc::codec::WriteTensorFile(output_path, tensor);
 
   const auto* bits = reinterpret_cast<const uint16_t*>(tensor.bytes.data());
   const std::size_t elements = tensor.bytes.size() / sizeof(uint16_t);
@@ -99,7 +99,7 @@ void DumpFeatureStats(const mlvc::codec::TensorData& tensor,
   std::size_t inf_count = 0;
   std::size_t zero_count = 0;
   for (std::size_t i = 0; i < elements; ++i) {
-    const float value = mlvc::codec::HalfBitsToFloat(bits[i]);
+    const float value = ulbvc::codec::HalfBitsToFloat(bits[i]);
     if (std::isnan(value)) {
       ++nan_count;
       continue;
@@ -239,42 +239,42 @@ int main(int argc, char** argv) {
     PrintUsage(argv[0]);
     return 2;
   }
-  mlvc::Check(ltr_start_idx >= 0, "ltr_start_idx must be non-negative");
-  mlvc::Check(ltr_period >= 0, "ltr_period must be non-negative");
-  mlvc::Check(input_path.empty() || input_frame_dir.empty(),
+  ulbvc::Check(ltr_start_idx >= 0, "ltr_start_idx must be non-negative");
+  ulbvc::Check(ltr_period >= 0, "ltr_period must be non-negative");
+  ulbvc::Check(input_path.empty() || input_frame_dir.empty(),
               "--video and --input-frame-dir are mutually exclusive");
-  mlvc::Check(!entropy_pipeline || target_bitrate_bps <= 0.0,
+  ulbvc::Check(!entropy_pipeline || target_bitrate_bps <= 0.0,
               "--entropy-pipeline currently requires --target-bitrate-bps 0");
 
   try {
-    mlvc::StageRuntime runtime(device);
-    mlvc::ModelManifest manifest = mlvc::ModelManifest::Load(manifest_path);
+    ulbvc::StageRuntime runtime(device);
+    ulbvc::ModelManifest manifest = ulbvc::ModelManifest::Load(manifest_path);
     const std::filesystem::path model_directory = manifest.directory();
-    mlvc::Check(manifest.HasModel("MLVCEncoder") && manifest.HasModel("MLVCDecoder"),
-                "e1d1 manifest must contain MLVCEncoder and MLVCDecoder");
-    mlvc::StageModelSet models(&runtime, std::move(manifest));
-    mlvc::StageModel& encoder = models.GetStage(std::string("MLVCEncoder"));
+    ulbvc::Check(manifest.HasModel("ULBVCEncoder") && manifest.HasModel("ULBVCDecoder"),
+                "e1d1 manifest must contain ULBVCEncoder and ULBVCDecoder");
+    ulbvc::StageModelSet models(&runtime, std::move(manifest));
+    ulbvc::StageModel& encoder = models.GetStage(std::string("ULBVCEncoder"));
 
-    const mlvc::TensorSpec& frame_spec = FindTensorSpec(encoder.record(), "x");
-    const mlvc::TensorSpec& ref_feature_spec = FindTensorSpec(encoder.record(), "ref_feature");
-    const mlvc::TensorSpec& q_index_spec = FindTensorSpec(encoder.record(), "q_index_shifted");
-    const mlvc::TensorSpec& encoder_feature_spec = FindTensorSpec(encoder.record(), "feature");
-    const mlvc::TensorSpec& z_raw_spec = FindTensorSpec(encoder.record(), "z_raw");
-    const mlvc::TensorSpec& y_raw_0_spec = FindTensorSpec(encoder.record(), "y_raw_0");
-    const mlvc::TensorSpec& y_raw_1_spec = FindTensorSpec(encoder.record(), "y_raw_1");
+    const ulbvc::TensorSpec& frame_spec = FindTensorSpec(encoder.record(), "x");
+    const ulbvc::TensorSpec& ref_feature_spec = FindTensorSpec(encoder.record(), "ref_feature");
+    const ulbvc::TensorSpec& q_index_spec = FindTensorSpec(encoder.record(), "q_index_shifted");
+    const ulbvc::TensorSpec& encoder_feature_spec = FindTensorSpec(encoder.record(), "feature");
+    const ulbvc::TensorSpec& z_raw_spec = FindTensorSpec(encoder.record(), "z_raw");
+    const ulbvc::TensorSpec& y_raw_0_spec = FindTensorSpec(encoder.record(), "y_raw_0");
+    const ulbvc::TensorSpec& y_raw_1_spec = FindTensorSpec(encoder.record(), "y_raw_1");
 
-    mlvc::Check(encoder.record().inputs.size() == 3, "MLVCEncoder input count mismatch");
-    mlvc::Check(encoder.record().outputs.size() == 4, "MLVCEncoder output count mismatch");
+    ulbvc::Check(encoder.record().inputs.size() == 3, "ULBVCEncoder input count mismatch");
+    ulbvc::Check(encoder.record().outputs.size() == 4, "ULBVCEncoder output count mismatch");
 
-    std::optional<mlvc::io::VideoFrameReader> video_reader;
-    std::optional<mlvc::io::VideoInfo> video_info;
+    std::optional<ulbvc::io::VideoFrameReader> video_reader;
+    std::optional<ulbvc::io::VideoInfo> video_info;
     int source_width = static_cast<int>(frame_spec.shape[3]);
     int source_height = static_cast<int>(frame_spec.shape[2]);
     double source_fps = fallback_fps;
     if (!input_path.empty()) {
       video_reader.emplace(input_path);
       video_info = video_reader->info();
-      mlvc::Check(video_info->width <= static_cast<int>(frame_spec.shape[3]) &&
+      ulbvc::Check(video_info->width <= static_cast<int>(frame_spec.shape[3]) &&
                       video_info->height <= static_cast<int>(frame_spec.shape[2]),
                   "input video exceeds model frame tensor shape");
       source_width = video_info->width;
@@ -312,8 +312,8 @@ int main(int argc, char** argv) {
     const int z_height = static_cast<int>(z_raw_spec.shape[2]);
     const int z_width = static_cast<int>(z_raw_spec.shape[3]);
     const int z_channel = static_cast<int>(z_raw_spec.shape[1]);
-    mlvc::MlvcOfficialEntropyEncoder official_entropy(models.manifest());
-    mlvc::codec::MlvcRateControlOptions rate_control_options;
+    ulbvc::UlbvcOfficialEntropyEncoder official_entropy(models.manifest());
+    ulbvc::codec::UlbvcRateControlOptions rate_control_options;
     rate_control_options.width = source_width;
     rate_control_options.height = source_height;
     rate_control_options.fps = source_fps;
@@ -321,21 +321,21 @@ int main(int argc, char** argv) {
     rate_control_options.default_q_index = q_index;
     rate_control_options.min_q_index = 0;
     rate_control_options.max_q_index = 63;
-    mlvc::codec::MlvcRateController rate_control(rate_control_options);
+    ulbvc::codec::UlbvcRateController rate_control(rate_control_options);
 
-    mlvc::CodecGraphExecutor graph_executor(2);
-    mlvc::app::FrameInputArena frame_prepare_arena(frame_spec, 3);
-    mlvc::app::AsyncFrameInputQueue prepare_queue(
+    ulbvc::CodecGraphExecutor graph_executor(2);
+    ulbvc::app::FrameInputArena frame_prepare_arena(frame_spec, 3);
+    ulbvc::app::AsyncFrameInputQueue prepare_queue(
         frames_to_attempt, frames, input_path, input_frame_dir, std::nullopt, nullptr, frame_spec, source_width,
         source_height, &frame_prepare_arena, nullptr, &graph_executor);
 
-    mlvc::codec::TensorData ref_feature = mlvc::codec::MakeTensorLike(ref_feature_spec);
-    mlvc::codec::TensorData ltr_feature = mlvc::codec::MakeTensorLike(ref_feature_spec);
-    mlvc::codec::TensorData q_index_tensor = MakeInt32Tensor(q_index_spec, q_index);
-    mlvc::codec::TensorData encoder_feature = mlvc::codec::MakeTensorLike(encoder_feature_spec);
-    mlvc::codec::TensorData z_raw = mlvc::codec::MakeTensorLike(z_raw_spec);
-    mlvc::codec::TensorData y_raw_0 = mlvc::codec::MakeTensorLike(y_raw_0_spec);
-    mlvc::codec::TensorData y_raw_1 = mlvc::codec::MakeTensorLike(y_raw_1_spec);
+    ulbvc::codec::TensorData ref_feature = ulbvc::codec::MakeTensorLike(ref_feature_spec);
+    ulbvc::codec::TensorData ltr_feature = ulbvc::codec::MakeTensorLike(ref_feature_spec);
+    ulbvc::codec::TensorData q_index_tensor = MakeInt32Tensor(q_index_spec, q_index);
+    ulbvc::codec::TensorData encoder_feature = ulbvc::codec::MakeTensorLike(encoder_feature_spec);
+    ulbvc::codec::TensorData z_raw = ulbvc::codec::MakeTensorLike(z_raw_spec);
+    ulbvc::codec::TensorData y_raw_0 = ulbvc::codec::MakeTensorLike(y_raw_0_spec);
+    ulbvc::codec::TensorData y_raw_1 = ulbvc::codec::MakeTensorLike(y_raw_1_spec);
     std::vector<int8_t> z_symbol_buffer;
     std::vector<int8_t> y_symbols_0;
     std::vector<int8_t> y_symbols_1;
@@ -354,15 +354,15 @@ int main(int argc, char** argv) {
     int p_frames = 0;
     int ltr_frames = 0;
 
-    mlvc::io::OfficialMlvcBitstreamWriter bitstream_writer(output_bitstream_path);
-    mlvc::EntropyWorker entropy_worker;
+    ulbvc::io::OfficialUlbvcBitstreamWriter bitstream_writer(output_bitstream_path);
+    ulbvc::EntropyWorker entropy_worker;
     std::deque<std::future<void>> pending_entropy_jobs;
     constexpr std::size_t kMaxPendingEntropyJobs = 2;
 
-    auto encode_and_write = [&](int frame_index, mlvc::codec::MlvcFrameType frame_type,
-                                int frame_q_index, const mlvc::codec::TensorData& job_z_raw,
-                                const mlvc::codec::TensorData& job_y_raw_0,
-                                const mlvc::codec::TensorData& job_y_raw_1, bool measure) {
+    auto encode_and_write = [&](int frame_index, ulbvc::codec::UlbvcFrameType frame_type,
+                                int frame_q_index, const ulbvc::codec::TensorData& job_z_raw,
+                                const ulbvc::codec::TensorData& job_y_raw_0,
+                                const ulbvc::codec::TensorData& job_y_raw_1, bool measure) {
       std::vector<int8_t> job_z_symbol_buffer;
       std::vector<int8_t> job_y_symbols_0;
       std::vector<int8_t> job_y_symbols_1;
@@ -370,12 +370,12 @@ int main(int argc, char** argv) {
       std::vector<uint8_t> job_scales_1;
       std::vector<uint8_t> job_payload;
       const auto entropy_begin = std::chrono::steady_clock::now();
-      mlvc::codec::TensorToInt8Symbols(job_z_raw, &job_z_symbol_buffer);
-      mlvc::codec::BuildMlvcScaleIndexesFromZRaw(job_z_raw, y_channels, y_height, y_width,
-                                                 mlvc::codec::kMlvcChannelRepeat, &job_scales_0,
+      ulbvc::codec::TensorToInt8Symbols(job_z_raw, &job_z_symbol_buffer);
+      ulbvc::codec::BuildUlbvcScaleIndexesFromZRaw(job_z_raw, y_channels, y_height, y_width,
+                                                 ulbvc::codec::kUlbvcChannelRepeat, &job_scales_0,
                                                  &job_scales_1);
-      mlvc::codec::TensorToInt8Symbols(job_y_raw_0, &job_y_symbols_0);
-      mlvc::codec::TensorToInt8Symbols(job_y_raw_1, &job_y_symbols_1);
+      ulbvc::codec::TensorToInt8Symbols(job_y_raw_0, &job_y_symbols_0);
+      ulbvc::codec::TensorToInt8Symbols(job_y_raw_1, &job_y_symbols_1);
       official_entropy.Encode(job_z_symbol_buffer, job_y_symbols_0, job_y_symbols_1, job_scales_0,
                               job_scales_1, frame_q_index, z_channel, z_height, z_width,
                               &job_payload);
@@ -395,7 +395,7 @@ int main(int argc, char** argv) {
       if (!entropy_pipeline) {
         const auto rate_control_update_begin = std::chrono::steady_clock::now();
         rate_control.Update((frame_index + 1) / source_fps, frame_type, frame_q_index,
-                            job_payload.size(), mlvc::io::kOfficialMlvcFrameOverheadBytes);
+                            job_payload.size(), ulbvc::io::kOfficialUlbvcFrameOverheadBytes);
         const auto rate_control_update_end = std::chrono::steady_clock::now();
         if (measure) {
           rate_control_ms += std::chrono::duration<double, std::milli>(rate_control_update_end -
@@ -412,18 +412,18 @@ int main(int argc, char** argv) {
       }
     };
 
-    auto run_frame = [&](int frame_index, const mlvc::codec::TensorData& current_frame,
+    auto run_frame = [&](int frame_index, const ulbvc::codec::TensorData& current_frame,
                          bool measure) {
-      const int cycle_index = mlvc::codec::MlvcResetCycleIndex(frame_index, reset_interval);
-      const mlvc::codec::MlvcFrameType frame_type = mlvc::codec::MlvcFrameTypeForFrame(
+      const int cycle_index = ulbvc::codec::UlbvcResetCycleIndex(frame_index, reset_interval);
+      const ulbvc::codec::UlbvcFrameType frame_type = ulbvc::codec::UlbvcFrameTypeForFrame(
           frame_index, gop, reset_interval, ltr_start_idx, ltr_period);
       const bool save_ltr_feature =
-          mlvc::codec::ShouldSaveLtrFeatures(cycle_index, ltr_start_idx, ltr_period);
-      if (frame_type == mlvc::codec::MlvcFrameType::kIFrame) {
+          ulbvc::codec::ShouldSaveLtrFeatures(cycle_index, ltr_start_idx, ltr_period);
+      if (frame_type == ulbvc::codec::UlbvcFrameType::kIFrame) {
         ResetTensor(&ref_feature);
-      } else if (frame_type == mlvc::codec::MlvcFrameType::kLtrRecovery) {
-        mlvc::Check(has_ltr_feature, "LTR frame requested before LTR feature is initialized");
-        mlvc::codec::CloneTensorInto(ltr_feature, &ref_feature);
+      } else if (frame_type == ulbvc::codec::UlbvcFrameType::kLtrRecovery) {
+        ulbvc::Check(has_ltr_feature, "LTR frame requested before LTR feature is initialized");
+        ulbvc::codec::CloneTensorInto(ltr_feature, &ref_feature);
       }
 
       int frame_q_index = q_index;
@@ -431,11 +431,11 @@ int main(int argc, char** argv) {
       if (rate_control.enabled()) {
         frame_q_index = rate_control.SolveQIndex((frame_index + 1) / source_fps, frame_type);
       }
-      if (frame_type == mlvc::codec::MlvcFrameType::kLtrRecovery) {
+      if (frame_type == ulbvc::codec::UlbvcFrameType::kLtrRecovery) {
         frame_q_index += ltr_qp_shift;
       }
       frame_q_index = std::clamp(frame_q_index, 0, 63);
-      const int q_index_shifted = frame_q_index + kMlvcQIndexShift[frame_index % 8];
+      const int q_index_shifted = frame_q_index + kUlbvcQIndexShift[frame_index % 8];
       SetInt32TensorValue(&q_index_tensor, q_index_shifted);
       const auto rate_control_end = std::chrono::steady_clock::now();
       if (measure) {
@@ -444,16 +444,16 @@ int main(int argc, char** argv) {
                 .count();
       }
 
-      const std::array<mlvc::NamedTensorView, 3> encoder_inputs = {
-          mlvc::NamedTensorView{"x", current_frame.View()},
-          mlvc::NamedTensorView{"ref_feature", ref_feature.View()},
-          mlvc::NamedTensorView{"q_index_shifted", q_index_tensor.View()},
+      const std::array<ulbvc::NamedTensorView, 3> encoder_inputs = {
+          ulbvc::NamedTensorView{"x", current_frame.View()},
+          ulbvc::NamedTensorView{"ref_feature", ref_feature.View()},
+          ulbvc::NamedTensorView{"q_index_shifted", q_index_tensor.View()},
       };
-      const std::array<mlvc::NamedTensorView, 4> encoder_output_views = {
-          mlvc::NamedTensorView{"feature", encoder_feature.View()},
-          mlvc::NamedTensorView{"z_raw", z_raw.View()},
-          mlvc::NamedTensorView{"y_raw_0", y_raw_0.View()},
-          mlvc::NamedTensorView{"y_raw_1", y_raw_1.View()},
+      const std::array<ulbvc::NamedTensorView, 4> encoder_output_views = {
+          ulbvc::NamedTensorView{"feature", encoder_feature.View()},
+          ulbvc::NamedTensorView{"z_raw", z_raw.View()},
+          ulbvc::NamedTensorView{"y_raw_0", y_raw_0.View()},
+          ulbvc::NamedTensorView{"y_raw_1", y_raw_1.View()},
       };
 
       const auto encoder_begin = std::chrono::steady_clock::now();
@@ -461,7 +461,7 @@ int main(int argc, char** argv) {
                        encoder_output_views.size());
       const auto encoder_end = std::chrono::steady_clock::now();
       if (frame_index == 0) {
-        const char* feature_dump_path = std::getenv("MLVC_DUMP_FEATURE0");
+        const char* feature_dump_path = std::getenv("ULBVC_DUMP_FEATURE0");
         if (feature_dump_path != nullptr && feature_dump_path[0] != '\0') {
           DumpFeatureStats(encoder_feature, feature_dump_path);
         }
@@ -472,20 +472,20 @@ int main(int argc, char** argv) {
       }
 
       const auto copy_begin = std::chrono::steady_clock::now();
-      mlvc::codec::CloneTensorInto(encoder_feature, &ref_feature);
+      ulbvc::codec::CloneTensorInto(encoder_feature, &ref_feature);
       const auto copy_end = std::chrono::steady_clock::now();
       if (measure) {
         feature_copy_ms += std::chrono::duration<double, std::milli>(copy_end - copy_begin).count();
       }
       if (save_ltr_feature) {
-        mlvc::codec::CloneTensorInto(ref_feature, &ltr_feature);
+        ulbvc::codec::CloneTensorInto(ref_feature, &ltr_feature);
         has_ltr_feature = true;
       }
 
       if (entropy_pipeline) {
-        mlvc::codec::TensorData job_z_raw = mlvc::codec::CloneTensor(z_raw);
-        mlvc::codec::TensorData job_y_raw_0 = mlvc::codec::CloneTensor(y_raw_0);
-        mlvc::codec::TensorData job_y_raw_1 = mlvc::codec::CloneTensor(y_raw_1);
+        ulbvc::codec::TensorData job_z_raw = ulbvc::codec::CloneTensor(z_raw);
+        ulbvc::codec::TensorData job_y_raw_0 = ulbvc::codec::CloneTensor(y_raw_0);
+        ulbvc::codec::TensorData job_y_raw_1 = ulbvc::codec::CloneTensor(y_raw_1);
         pending_entropy_jobs.push_back(entropy_worker.SubmitVoid(
             [&, frame_index, frame_type, frame_q_index, measure, job_z_raw = std::move(job_z_raw),
              job_y_raw_0 = std::move(job_y_raw_0), job_y_raw_1 = std::move(job_y_raw_1)]() {
@@ -499,9 +499,9 @@ int main(int argc, char** argv) {
       } else {
         encode_and_write(frame_index, frame_type, frame_q_index, z_raw, y_raw_0, y_raw_1, measure);
       }
-      if (frame_type == mlvc::codec::MlvcFrameType::kIFrame) {
+      if (frame_type == ulbvc::codec::UlbvcFrameType::kIFrame) {
         ++i_frames;
-      } else if (frame_type == mlvc::codec::MlvcFrameType::kLtrRecovery) {
+      } else if (frame_type == ulbvc::codec::UlbvcFrameType::kLtrRecovery) {
         ++ltr_frames;
       } else {
         ++p_frames;
@@ -509,12 +509,12 @@ int main(int argc, char** argv) {
     };
 
     for (int i = 0; i < warmup; ++i) {
-      mlvc::app::InputFrame prepared_frame = prepare_queue.Pop();
+      ulbvc::app::InputFrame prepared_frame = prepare_queue.Pop();
       if (prepared_frame.eof) {
-        throw mlvc::Error("input ended before warmup frames completed");
+        throw ulbvc::Error("input ended before warmup frames completed");
       }
-      mlvc::Check(prepared_frame.frame != nullptr, "prepared frame slot is empty");
-      mlvc::Check(prepared_frame.frame_index == i,
+      ulbvc::Check(prepared_frame.frame != nullptr, "prepared frame slot is empty");
+      ulbvc::Check(prepared_frame.frame_index == i,
                   "async frame prepare queue returned out-of-order frame");
       run_frame(i, *prepared_frame.frame, false);
       prepare_queue.Release(&prepared_frame);
@@ -523,16 +523,16 @@ int main(int argc, char** argv) {
 
     const auto begin = std::chrono::steady_clock::now();
     while (measured_frames < 0 || processed < measured_frames) {
-      mlvc::app::InputFrame prepared_frame = prepare_queue.Pop();
+      ulbvc::app::InputFrame prepared_frame = prepare_queue.Pop();
       if (prepared_frame.eof) {
         if (measured_frames >= 0) {
-          throw mlvc::Error("input ended before requested frame count");
+          throw ulbvc::Error("input ended before requested frame count");
         }
         break;
       }
       const int frame_index = warmup + processed;
-      mlvc::Check(prepared_frame.frame != nullptr, "prepared frame slot is empty");
-      mlvc::Check(prepared_frame.frame_index == frame_index,
+      ulbvc::Check(prepared_frame.frame != nullptr, "prepared frame slot is empty");
+      ulbvc::Check(prepared_frame.frame_index == frame_index,
                   "async frame prepare queue returned out-of-order frame");
       run_frame(frame_index, *prepared_frame.frame, true);
       prepare_queue.Release(&prepared_frame);
@@ -540,7 +540,7 @@ int main(int argc, char** argv) {
     }
     drain_entropy_jobs();
     const auto end = std::chrono::steady_clock::now();
-    const mlvc::app::AsyncFrameInputQueue::Stats prepare_stats = prepare_queue.stats();
+    const ulbvc::app::AsyncFrameInputQueue::Stats prepare_stats = prepare_queue.stats();
     bitstream_writer.Close();
     const uint64_t bitstream_bytes = std::filesystem::exists(output_bitstream_path)
                                          ? std::filesystem::file_size(output_bitstream_path)
@@ -548,7 +548,7 @@ int main(int argc, char** argv) {
 
     const double total_ms = std::chrono::duration<double, std::milli>(end - begin).count();
     const double fps = processed > 0 ? (1000.0 * static_cast<double>(processed) / total_ms) : 0.0;
-    std::cout << "stage=MLVCEncoder\n";
+    std::cout << "stage=ULBVCEncoder\n";
     std::cout << "pipeline=" << (entropy_pipeline ? "input+npu-rans" : "input-only") << "\n";
     std::cout << "entropy_pipeline=" << (entropy_pipeline ? 1 : 0) << "\n";
     std::cout << "entropy_pipeline_max_pending=" << kMaxPendingEntropyJobs << "\n";

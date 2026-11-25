@@ -2,7 +2,7 @@
 
 Encoder board only. `/dev/video0` was verified as MJPG 1920×1080/30 by V4L2.
 The deployed isolated AIPP build at
-`/root/workplace/MLVC_c/camera_1080p_aipp/build/mlvc_encode` completed:
+`/root/workplace/ULBVC_c/camera_1080p_aipp/build/ulbvc_encode` completed:
 
 - Native live V4L2 input: 180 frames, 20 warmup, `encode_fps=29.7905`,
   `encode=ok`, RTP sent to the configured encoder target.
@@ -14,7 +14,7 @@ The deployed isolated AIPP build at
 
 The preload happens before timed processing. `encode_fps` counts completed
 encoded frames over wall time, including DVPP JPEG decode, input preparation,
-MLVC, entropy coding, and RTP send. It does not claim more than 30 distinct
+ULBVC, entropy coding, and RTP send. It does not claim more than 30 distinct
 live 1080p frames per second from the sensor. AIPP was selected because it
 was faster in all three measured independent runs. CPU and AIPP use different
 preprocessing numerics; the AIPP OM is not bit-identical to the original model.

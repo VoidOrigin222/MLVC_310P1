@@ -1,4 +1,4 @@
-#include "mlvc/transport/udp_pacer.h"
+#include "ulbvc/transport/udp_pacer.h"
 
 #include <algorithm>
 #include <cmath>
@@ -6,7 +6,7 @@
 #include <limits>
 #include <stdexcept>
 
-namespace mlvc::transport {
+namespace ulbvc::transport {
 
 UdpPacer::UdpPacer(uint64_t rate_bps, std::size_t max_burst_bytes)
     : rate_bps_(rate_bps),
@@ -64,4 +64,4 @@ void UdpPacer::UpdateRate(uint64_t new_rate_bps) {
   last_update_ = std::chrono::steady_clock::now();
 }
 
-}  // namespace mlvc::transport
+}  // namespace ulbvc::transport

@@ -38,7 +38,7 @@ def make_source_manifest(source_root: Path, resolution: str) -> None:
     manifest = {
         "created_at": "2026-05-16T00:00:00Z",
         "dtype": "fp16",
-        "sidecar": {"file": "sidecars.mlvcsc", "bytes": 1, "sha256": sha256_bytes(b"s")},
+        "sidecar": {"file": "sidecars.ulbvcsc", "bytes": 1, "sha256": sha256_bytes(b"s")},
         "models": [
             {
                 "name": "stage_a",
@@ -53,14 +53,14 @@ def make_source_manifest(source_root: Path, resolution: str) -> None:
         ],
     }
     root = source_root / resolution
-    write_file(root / "sidecars.mlvcsc", b"s")
+    write_file(root / "sidecars.ulbvcsc", b"s")
     write_file(root / "stage_a.sim.onnx", b"o")
     write_json(root / "manifest.json", manifest)
 
 
 def make_acl_package(models_root: Path, resolution: str) -> None:
     root = models_root / f"{resolution}_acl"
-    sidecar = write_file(root / "sidecars.mlvcsc", b"s")
+    sidecar = write_file(root / "sidecars.ulbvcsc", b"s")
     original = write_file(root / "onnx_original" / "stage_a.sim.onnx", b"o")
     write_file(root / "onnx_optimized" / "stage_a.sim.onnx", b"p")
     write_file(root / "om_atc" / "stage_a.sim.om", b"a")
@@ -73,7 +73,7 @@ def make_acl_package(models_root: Path, resolution: str) -> None:
         "runtime": "acl",
         "soc_version": "Ascend310P3",
         "dtype": "fp16",
-        "sidecar": {"file": "sidecars.mlvcsc", **sidecar},
+        "sidecar": {"file": "sidecars.ulbvcsc", **sidecar},
         "models": [
             {
                 "name": "stage_a",
@@ -184,7 +184,7 @@ def assert_not_ready(report: dict[str, Any], message: str) -> None:
 
 
 def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="mlvc_acl_goal_readiness_") as temp:
+    with tempfile.TemporaryDirectory(prefix="ulbvc_acl_goal_readiness_") as temp:
         root = Path(temp)
         source_root = root / "source"
         models_root = root / "models"

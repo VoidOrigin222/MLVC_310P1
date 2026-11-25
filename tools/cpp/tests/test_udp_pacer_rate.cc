@@ -1,4 +1,4 @@
-#include "mlvc/transport/udp_pacer.h"
+#include "ulbvc/transport/udp_pacer.h"
 
 #include <chrono>
 #include <cstdint>
@@ -8,7 +8,7 @@
 
 int main() {
   try {
-    using mlvc::transport::UdpPacer;
+    using ulbvc::transport::UdpPacer;
     UdpPacer pacer(80'000, 1'240);
     std::chrono::microseconds total{0};
     for (int index = 0; index < 21; ++index) {

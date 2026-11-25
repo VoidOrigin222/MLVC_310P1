@@ -1,13 +1,13 @@
-#include "mlvc/framework/profiler.h"
+#include "ulbvc/framework/profiler.h"
 
 #include <fstream>
 #include <iomanip>
 #include <sstream>
 #include <utility>
 
-#include "mlvc/core/status.h"
+#include "ulbvc/core/status.h"
 
-namespace mlvc {
+namespace ulbvc {
 namespace {
 
 std::string EscapeJson(const std::string& value) {
@@ -73,6 +73,8 @@ int ThreadIdFor(const std::string& thread) {
   if (thread == "pipeline") {
     return 8;
   }
+  if (thread == "detection") return 9;
+  if (thread == "detection_prepare") return 10;
   return 0;
 }
 
@@ -174,6 +176,8 @@ void Profiler::WriteChromeTrace(const std::filesystem::path& path) const {
   write_metadata("allocation", 6);
   write_metadata("sync", 7);
   write_metadata("pipeline", 8);
+  write_metadata("detection", 9);
+  write_metadata("detection_prepare", 10);
   output << std::fixed << std::setprecision(3);
   for (const ProfileEvent& event : events) {
     output << ",\n    {\"ph\":\"" << (event.counter ? "C" : "X")
@@ -280,4 +284,4 @@ ScopedCpuTimer::~ScopedCpuTimer() {
   profiler_->AddDurationNow(name_, begin_, std::chrono::steady_clock::now());
 }
 
-}  // namespace mlvc
+}  // namespace ulbvc

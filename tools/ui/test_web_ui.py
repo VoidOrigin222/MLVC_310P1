@@ -15,7 +15,7 @@ with patch('socket.socket', side_effect=OSError('No UDP listener during tests'))
 
 class StreamStatusTests(unittest.TestCase):
     def setUp(self):
-        with patch.object(ui.Controller, '_ensure_mlvc_stats_socket'):
+        with patch.object(ui.Controller, '_ensure_ulbvc_stats_socket'):
             self.controller = ui.Controller()
         self.controller.cfg['mode'] = 'same_bandwidth'
         self.addCleanup(self.controller.close)
@@ -28,7 +28,7 @@ class StreamStatusTests(unittest.TestCase):
     def test_only_ready_paths_are_published(self):
         result = self.status([{'name': 'camera-original', 'ready': False}, {'name': 'ulbvc', 'ready': True}], 100)
         self.assertFalse(result['feeds']['original'])
-        self.assertTrue(result['feeds']['mlvc'])
+        self.assertTrue(result['feeds']['ulbvc'])
         self.assertEqual(result['paths'], ['ulbvc'])
 
     def test_h264_needs_two_samples_and_uses_decimal_kbps(self):
@@ -63,14 +63,14 @@ class StreamStatusTests(unittest.TestCase):
         self.assertEqual(metric['kbs'], 1920 * 1080 * 30 * 3 / 1024)
 
     def test_bitrate_target_uses_codec_bytes_not_wire_or_pacing_budget(self):
-        self.controller._mlvc_media_samples = deque([(100, 0), (112, 180000)])
-        self.controller._mlvc_wire_samples = deque([(100, 0), (112, 225000)])
-        self.controller._mlvc_stats_latest = {'received_at': 112}
-        self.controller.cfg['mlvc_kbps'] = 2000
+        self.controller._ulbvc_media_samples = deque([(100, 0), (112, 180000)])
+        self.controller._ulbvc_wire_samples = deque([(100, 0), (112, 225000)])
+        self.controller._ulbvc_stats_latest = {'received_at': 112}
+        self.controller.cfg['ulbvc_kbps'] = 2000
         self.assertAlmostEqual(self.controller._bitrate_target(112), 120)
         self.assertIsNone(self.controller._bitrate_target(125))
 
-    def test_no_fallback_encoder_without_mlvc_statistics(self):
+    def test_no_fallback_encoder_without_ulbvc_statistics(self):
         self.controller._h264_requested = True
         with patch.object(self.controller, '_launch_h264') as launch:
             self.controller._sync_bitrate(112, True)
@@ -78,8 +78,8 @@ class StreamStatusTests(unittest.TestCase):
         self.assertEqual(self.controller._h264_match_state, 'waiting')
 
     def test_short_coalesced_statistics_cannot_set_bitrate(self):
-        self.controller._mlvc_media_samples = deque([(100, 0), (100.001, 180000)])
-        self.controller._mlvc_stats_latest = {'received_at': 100.001}
+        self.controller._ulbvc_media_samples = deque([(100, 0), (100.001, 180000)])
+        self.controller._ulbvc_stats_latest = {'received_at': 100.001}
         self.assertIsNone(self.controller._bitrate_target(100.001))
 
     def test_initial_encoder_follows_measured_bitrate_below_old_floor(self):
@@ -89,7 +89,7 @@ class StreamStatusTests(unittest.TestCase):
             self.controller._sync_bitrate(112, True)
         launch.assert_called_once_with(70)
 
-    def test_running_comparison_keeps_its_budget_despite_mlvc_variation(self):
+    def test_running_comparison_keeps_its_budget_despite_ulbvc_variation(self):
         self.controller._h264_requested = True
         self.controller.h264_encoder = Mock()
         self.controller._h264_target_kbps = 100
@@ -153,15 +153,15 @@ class StreamStatusTests(unittest.TestCase):
             process.terminate.assert_not_called()
         self.controller.h264_encoder = None
 
-    def test_quality_starts_without_mlvc_samples_and_keeps_qp_during_motion(self):
+    def test_quality_starts_without_ulbvc_samples_and_keeps_qp_during_motion(self):
         self.controller.cfg.update(mode='same_quality', h264_qp=37)
         self.controller._h264_requested = True
-        self.controller._mlvc_stats_latest = None
+        self.controller._ulbvc_stats_latest = None
         with patch.object(self.controller, '_launch_h264') as launch:
             self.controller._sync_bitrate(112, True)
             launch.assert_called_once_with(qp=37)
             self.controller.h264_encoder = Mock()
-            self.controller._mlvc_media_samples = deque([(100, 0), (112, 2000000)])
+            self.controller._ulbvc_media_samples = deque([(100, 0), (112, 2000000)])
             self.controller._sync_bitrate(120, True)
             launch.assert_called_once_with(qp=37)
 
@@ -192,12 +192,12 @@ class PersistentConfigTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.path = Path(temporary.name).resolve() / 'ui_config.json'
-        stats = patch.object(ui.Controller, '_ensure_mlvc_stats_socket')
+        stats = patch.object(ui.Controller, '_ensure_ulbvc_stats_socket')
         stats.start()
         self.addCleanup(stats.stop)
 
     def controller(self):
-        with patch.object(ui.Controller, '_ensure_mlvc_stats_socket'):
+        with patch.object(ui.Controller, '_ensure_ulbvc_stats_socket'):
             controller = ui.Controller(config_path=self.path)
         self.addCleanup(controller.close)
         return controller
@@ -205,10 +205,10 @@ class PersistentConfigTests(unittest.TestCase):
     def test_missing_file_created_and_settings_survive_restart(self):
         first = self.controller()
         self.assertEqual(json.loads(self.path.read_text())['ffmpeg'], 'auto')
-        first.configure({'mlvc': 'rtsp://192.168.10.20:8554/ulbvc?token=example',
-                         'h264_qp': 37, 'transport': 'udp', 'mlvc_stats_port': 40341})
+        first.configure({'ulbvc': 'rtsp://192.168.10.20:8554/ulbvc?token=example',
+                         'h264_qp': 37, 'transport': 'udp', 'ulbvc_stats_port': 40341})
         saved = json.loads(self.path.read_text())
-        self.assertEqual(saved['semantic'], first.cfg['mlvc'])
+        self.assertEqual(saved['semantic'], first.cfg['ulbvc'])
         self.assertEqual(set(saved), set(ui.CONFIG_FIELDS))
         second = self.controller()
         for key in ui.CONFIG_FIELDS.values():
@@ -219,7 +219,7 @@ class PersistentConfigTests(unittest.TestCase):
         self.path.write_text(content, encoding='utf-8')
         controller = self.controller()
         self.assertEqual(controller.cfg['h264_qp'], 37)
-        self.assertEqual(controller.cfg['mlvc'], 'rtsp://127.0.0.1:8554/ulbvc')
+        self.assertEqual(controller.cfg['ulbvc'], 'rtsp://127.0.0.1:8554/ulbvc')
         self.assertEqual(self.path.read_text(encoding='utf-8'), content)
 
     def test_invalid_files_are_preserved(self):

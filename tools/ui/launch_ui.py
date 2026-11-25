@@ -20,7 +20,7 @@ def existing_ui(port: int) -> bool:
         with urlopen(f"http://127.0.0.1:{port}/api/config", timeout=1) as response:
             config = json.load(response)
         return isinstance(config, dict) and all(
-            key in config for key in ("original", "h264", "mlvc", "webrtc", "h264_qp")
+            key in config for key in ("original", "h264", "ulbvc", "webrtc", "h264_qp")
         )
     except (OSError, ValueError, URLError):
         return False
@@ -28,7 +28,7 @@ def existing_ui(port: int) -> bool:
 
 def self_test(report: Path) -> int:
     """Exercise the frozen resources, FFmpeg/libx264, HTTP API and shutdown."""
-    os.environ["MLVC_UI_STATS_PORT"] = "0"
+    os.environ["ULBVC_UI_STATS_PORT"] = "0"
     result = {"passed": False}
     server = None
     thread = None
@@ -78,7 +78,7 @@ def main() -> int:
     parser.add_argument("--auto-close", type=float, default=0, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.config:
-        os.environ["MLVC_UI_CONFIG"] = str(args.config.expanduser().resolve())
+        os.environ["ULBVC_UI_CONFIG"] = str(args.config.expanduser().resolve())
     if args.self_test:
         return self_test(args.self_test)
     if args.port and existing_ui(args.port):

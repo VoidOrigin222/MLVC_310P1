@@ -10,12 +10,12 @@ The geometry overhead is **2 bytes/P frame** and must be included in rate calcul
 
 | Backend | Input and proxy policy | Intended use |
 | --- | --- | --- |
-| `replay` | Python motion JSON converted to frame-indexed CSV | Reproduce a previously validated experiment and compare the MLVC path independently of proxy encoding |
-| `libx264` | Host FP16 YUV444 converted through the existing MLVC 8-bit NV12 conversion; medium, CRF18, B=0, refs=1, fixed GOP, scene-cut disabled, zerolatency | Synchronous file/camera operation and CPU reference for the live pipeline |
+| `replay` | Python motion JSON converted to frame-indexed CSV | Reproduce a previously validated experiment and compare the ULBVC path independently of proxy encoding |
+| `libx264` | Host FP16 YUV444 converted through the existing ULBVC 8-bit NV12 conversion; medium, CRF18, B=0, refs=1, fixed GOP, scene-cut disabled, zerolatency | Synchronous file/camera operation and CPU reference for the live pipeline |
 | `dvpp` | Host FP16 converted to NV12 and uploaded, or an existing device NV12 surface; persistent MPI H.264 VENC, Normal P, VBR 8 Mbps by default | Hardware proxy encoding, followed by software H.264 decoding to export motion vectors |
 | `export_motion_translation` tool | Original video pixels and bit depth; medium, CRF18, B=0, refs=1, fixed GOP, scene-cut disabled, default x264 lookahead | Offline comparison with the original Python proxy command |
 
-The original Python script is `/root/workspace/mlvc/video/run_sample_inference.py` on
+The original Python script is `/root/workspace/ulbvc/video/run_sample_inference.py` on
 `dcvc_lqy`. It transcodes the original video with FFmpeg `libx264`, `medium`, CRF18, `-bf 0`,
 `-refs 1`, `-g 96`, `-keyint_min 96`, `-sc_threshold 0`. It does not request zerolatency or
 an 8-bit pixel format. The source `614lab.mp4` is HEVC **YUV420P10LE**, 1920x1080.
@@ -25,7 +25,7 @@ stable source revision `b35605ace3` (libx264 ABI 165, all bit depths enabled).
 The live FP16/NV12 proxy and the offline source-video proxy have different input pixels and
 latency settings. DVPP VBR also makes different coding decisions from libx264 CRF18. Their
 motion vectors are not claimed to match the original Python vectors exactly. Validate each
-backend with its own motion trace and the resulting MLVC reconstruction/bitrate. When exact
+backend with its own motion trace and the resulting ULBVC reconstruction/bitrate. When exact
 replay of the Python experiment is required, use the saved Python motion commands.
 
 ## Why the DVPP proxy keeps its channel alive
@@ -73,7 +73,7 @@ VDEC pass would not supply the required motion-vector metadata, so the estimator
 
 ## Isolated FFmpeg build
 
-Both boards use `/root/workplace/grifcc/deps/ffmpeg`; the existing MLVC directories and
+Both boards use `/root/workplace/grifcc/deps/ffmpeg`; the existing ULBVC directories and
 system libraries are not replaced. Source packages are under
 `/root/workplace/grifcc/deps/src`. Build x264 first:
 

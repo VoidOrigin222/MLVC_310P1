@@ -1,15 +1,15 @@
 # 平移 warp 部署
 
-新功能由编码配置 `translation_warp = true` 开启，默认关闭。关闭时沿用原 MLVC
+新功能由编码配置 `translation_warp = true` 开启，默认关闭。关闭时沿用原 ULBVC
 参考更新、码流和模型流程。解码器从码流识别新模式。开发与运行目录为两台设备上的
-`/root/workplace/grifcc/MLVC_310P1`；Git 分支为 `motion`，提交身份只配置在本仓库。
+`/root/workplace/grifcc/ULBVC_310P1`；Git 分支为 `motion`，提交身份只配置在本仓库。
 
 ## 算法与模型边界
 
 运动估计采用 H.264 代理视频的过去参考运动向量，以块面积加权分别求水平、垂直中位数。
 向量符号转换为参考帧到当前帧的方向，除以特征步长 8，半格向零取整。平移使用整数切片复制，
 未覆盖边界保留原位置。每个 P 帧携带两个有符号字节，GOP 首帧为零。几何字节计入码率控制和
-`geometry_bytes`、`codec_total_bytes`，文件总大小还包含 MLVC-ES 封装。
+`geometry_bytes`、`codec_total_bytes`，文件总大小还包含 ULBVC-ES 封装。
 
 已审计的 1080p FP16 主图将 96 通道参考按 `[0:48]` 特征、`[48:96]` memory 分开。
 特征 adaptor 是逐位置 1×1 仿射变换，memory 直接进入解码器。对整个 96 通道参考作同一位置
@@ -18,7 +18,7 @@
 SHA256 和参考尺寸，其他模型需重新审计；当前模式不支持 AIPP 模型。
 
 为对齐原 Python 实验，新模式在 0、96、192… 使用 0.5 常量参考帧；在 32、64、128…
-使用上一重构帧。额外模型 `MLVCReferenceFromFrame` 从帧运行 `shift_input`、
+使用上一重构帧。额外模型 `ULBVCReferenceFromFrame` 从帧运行 `shift_input`、
 pixel-unshuffle 和 `feature_adaptor_i`，输出完整 96 通道，保留 memory；它不运行
 `feature_adaptor_p`，后者仍在主图内部。编码端仅在这些非 GOP reset 前一帧额外运行
 解码器保存重构帧。P32 仍依赖 P31，因此码流保留短参考依赖；它不成为独立随机访问帧。
@@ -36,7 +36,7 @@ pixel-unshuffle 和 `feature_adaptor_i`，输出完整 96 通道，保留 memory
 `configs/encoder_motion_rtp_prefetch2.toml`，分别配合 `configs/decoder_motion.toml` 和
 `configs/decoder_motion_rtp.toml`。根据设备上的输入帧目录和输出路径调整。
 实时相机使用 [camera_motion_rtp_nv12.toml](../configs/camera_motion_rtp_nv12.toml)：
-1920×1080 运动代理直接复用相机 NV12，主 MLVC 保持 1088 padding；不依靠降低运动分辨率。
+1920×1080 运动代理直接复用相机 NV12，主 ULBVC 保持 1088 padding；不依靠降低运动分辨率。
 接收端配套 [decoder_camera_motion_rtp.toml](../configs/decoder_camera_motion_rtp.toml)，
 默认处理 3000 帧，先接收后发送。
 原生 NV12 与可选降采样的行为和测量边界见
@@ -44,7 +44,7 @@ pixel-unshuffle 和 `feature_adaptor_i`，输出完整 96 通道，保留 memory
 [原生 NV12 验收](../acceptance/motion-nv12-20261002/README.md)。
 原 `configs/encoder_motion.toml` 保留在线 libx264 medium/1 串行入口及 CSV 重放示例。
 模型 manifest 必须同时包含两个主 OM 和新增参考帧 adaptor OM。
-配置要求 GOP 96、reset 32、LTR 关闭。支持 MLVC-ES 文件和 RTP，旧 UDP 消息不携带位移。
+配置要求 GOP 96、reset 32、LTR 关闭。支持 ULBVC-ES 文件和 RTP，旧 UDP 消息不携带位移。
 当前模式拒绝改变 GOP 或强制 I 帧的控制命令，随机访问请求等待自然 GOP。
 
 在线估计默认 `motion_backend = "libx264"`，CRF18、medium、GOP96、无 B 帧、单参考，并关闭 lookahead
@@ -60,7 +60,7 @@ pixel-unshuffle 和 `feature_adaptor_i`，输出完整 96 通道，保留 memory
 DVPP 双机 RTP 已完成 100 帧收发，全部 feature 和 reset 重构 trace 一致，
 具体统计和性能限制以该记录为准。
 
-仅在新模式下设置环境变量 `MLVC_WARP_TRACE_DIR` 可开启同步诊断。编码和解码进程各使用
+仅在新模式下设置环境变量 `ULBVC_WARP_TRACE_DIR` 可开启同步诊断。编码和解码进程各使用
 独立目录，每帧写 `frame_N.feature.fp16`；非 GOP reset 前一帧另写
 `frame_N.reset_frame.fp16`。比较两端对应文件即可验证全部 96 通道及 reset 重构同步。
 默认不产生这些文件。
@@ -76,46 +76,46 @@ CSV 指令优先于默认 libx264 设置，CSV 与显式 DVPP 设置同时出现
 
 以下命令使用已部署的新仓库、私有依赖和 `fixture100`，配置默认处理前 100 帧。
 板端 OpenCV 构建不含 FFmpeg，因此本次入口使用预生成的 FP16 帧目录。
-`format = "none"` 会执行完整 MLVC 解码并更新参考，但不输出可播放视频。
+`format = "none"` 会执行完整 ULBVC 解码并更新参考，但不输出可播放视频。
 运行脚本负责加载 CANN 环境，解码脚本同时加载 custom-op 环境。
 运行前在对应板的终端进入新仓库并创建输出目录：
 
 ```bash
-cd /root/workplace/grifcc/MLVC_310P1
+cd /root/workplace/grifcc/ULBVC_310P1
 mkdir -p output
 ```
 
 文件链路先在编码板运行在线 libx264，然后将码流拷贝到解码板同一相对路径：
 
 ```bash
-# mlvc_encoder
+# ulbvc_encoder
 bash scripts/bash_run_encode.sh configs/encoder_motion.toml
 ```
 
 ```powershell
 # 本机终端：通过 SSH 别名转存码流，目标为新部署目录。
-scp -3 mlvc_encoder:/root/workplace/grifcc/MLVC_310P1/output/motion.mlvc mlvc_decoder:/root/workplace/grifcc/MLVC_310P1/output/motion.mlvc
+scp -3 ulbvc_encoder:/root/workplace/grifcc/ULBVC_310P1/output/motion.ulbvc ulbvc_decoder:/root/workplace/grifcc/ULBVC_310P1/output/motion.ulbvc
 ```
 
 ```bash
-# mlvc_decoder
+# ulbvc_decoder
 bash scripts/bash_run.sh configs/decoder_motion.toml
 ```
 
-DVPP 文件链路使用已准备的独立配置，输出为 `output/motion_dvpp.mlvc`：
+DVPP 文件链路使用已准备的独立配置，输出为 `output/motion_dvpp.ulbvc`：
 
 ```bash
-# mlvc_encoder
+# ulbvc_encoder
 bash scripts/bash_run_encode.sh configs/encoder_motion_dvpp.toml
 ```
 
 ```powershell
-# 本机终端：拷贝为解码配置使用的 motion.mlvc。
-scp -3 mlvc_encoder:/root/workplace/grifcc/MLVC_310P1/output/motion_dvpp.mlvc mlvc_decoder:/root/workplace/grifcc/MLVC_310P1/output/motion.mlvc
+# 本机终端：拷贝为解码配置使用的 motion.ulbvc。
+scp -3 ulbvc_encoder:/root/workplace/grifcc/ULBVC_310P1/output/motion_dvpp.ulbvc ulbvc_decoder:/root/workplace/grifcc/ULBVC_310P1/output/motion.ulbvc
 ```
 
 ```bash
-# mlvc_decoder
+# ulbvc_decoder
 bash scripts/bash_run.sh configs/decoder_motion.toml
 ```
 
@@ -129,16 +129,16 @@ RTP 配置为 [encoder_motion_rtp.toml](../configs/encoder_motion_rtp.toml) 和
 先在解码板启动接收，再在编码板启动发送：
 
 ```bash
-# mlvc_decoder，保持该进程运行
+# ulbvc_decoder，保持该进程运行
 bash scripts/bash_run.sh configs/decoder_motion_rtp.toml
 ```
 
 ```bash
-# mlvc_encoder
+# ulbvc_encoder
 bash scripts/bash_run_encode.sh configs/encoder_motion_rtp.toml
 ```
 
-需要同步诊断时，在两板各自运行命令前设置不同的 `MLVC_WARP_TRACE_DIR`。
+需要同步诊断时，在两板各自运行命令前设置不同的 `ULBVC_WARP_TRACE_DIR`。
 目录应为空或全新，例如分别使用 `output/rtp_encoder_trace` 和
 `output/rtp_decoder_trace`；不得将不同运行的 trace 混合比较。
 本配置已用于 100 帧 DVPP 双机 RTP 验收，结果及资产索引见验收记录。
@@ -152,7 +152,7 @@ bash scripts/bash_run_encode.sh configs/encoder_motion_rtp.toml
 为满足允许延迟 1～2 帧的运行约束，新增实验配置
 `configs/encoder_motion_dvpp_prefetch2.toml`（文件）和
 `configs/encoder_motion_rtp_prefetch2.toml`（RTP）。它们使用
-`motion_prefetch_frames = 2`，单线程按帧序预先计算运动，与主 MLVC 编码重叠。
+`motion_prefetch_frames = 2`，单线程按帧序预先计算运动，与主 ULBVC 编码重叠。
 该选项的默认值为 0，保留原串行路径；可选值为 0、1、2。
 运动代理的帧间参考状态不能由多个 worker 并发更新。
 帧槽覆盖输入准备、运动队列和正在编码的帧，预取 2 时总共最多持有 3 帧。
@@ -161,8 +161,8 @@ EOF 会排空已接受的帧；运动、输入或消费错误会取消输入等�
 不能仅凭帧槽数量认定已满足两帧时间的端到端延迟。
 
 在线预取采用三个阶段：输入线程准备每槽独立的 NV12 缓存，单运动线程按序进行代理
-编码和软件 MV 提取，MLVC 消费线程按序编码。NV12 缓存与源 tensor 共用帧槽 lease，
-完成 MLVC 编码后才复用；camera 的 external owner 也保留至该时刻。
+编码和软件 MV 提取，ULBVC 消费线程按序编码。NV12 缓存与源 tensor 共用帧槽 lease，
+完成 ULBVC 编码后才复用；camera 的 external owner 也保留至该时刻。
 DVPP 代理将缓存直接 H2D 上传到编码器自有的 DVPP 输入池，省去中间 device-to-device
 拷贝。原 `EncodeDevice` 的 device 输入、ready event 和 opt-in zero-copy 行为保留。
 FP16 转换路径的 `ready_at` 在源 tensor 读完、NV12 转换开始前记录，转换时间仍计入时延。
@@ -183,7 +183,7 @@ FP16 转换路径的 `ready_at` 在源 tensor 读完、NV12 转换开始前记�
 
 `motion_skip_loop_filter` 默认为 `false`。设为 `true` 时，仅跳过运动提取用软件 H.264
 解码器的环路滤波；该解码器的像素输出会被丢弃，运动向量继续从公开 side data 提取。
-它不跳过 MLVC 解码、参考更新或输出重构的处理。此开关适用于在线 libx264/DVPP warp，
+它不跳过 ULBVC 解码、参考更新或输出重构的处理。此开关适用于在线 libx264/DVPP warp，
 与关闭 warp 或 CSV 重放组合会报错。两份 DVPP 预取示例已开启此选项；
 旧配置和默认行为保持不变。
 运动提取器会拒绝引用策略不支持的语法，以及 **FFmpeg 报告的解码错误或损坏帧**。

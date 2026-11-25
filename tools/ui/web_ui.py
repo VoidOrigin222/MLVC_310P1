@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Browser video wall for the MLVC comparison pipeline.
+"""Browser video wall for the ULBVC comparison pipeline.
 
 The page uses MediaMTX WebRTC/WHEP for all three videos.  RTSP is kept on
 MediaMTX and is never sent to the browser.  The local H.264 comparison feed is
@@ -46,17 +46,17 @@ def default_ffmpeg() -> str:
 CONFIG_FIELDS = {
     "original": "original",
     "h264": "h264",
-    "semantic": "mlvc",
+    "semantic": "ulbvc",
     "webrtc": "webrtc",
     "transport": "transport",
     "h264_qp": "h264_qp",
     "ffmpeg": "ffmpeg",
-    "stats_port": "mlvc_stats_port",
+    "stats_port": "ulbvc_stats_port",
 }
 
 
 def default_config_path() -> Path:
-    override = os.environ.get("MLVC_UI_CONFIG")
+    override = os.environ.get("ULBVC_UI_CONFIG")
     if override:
         return Path(override).expanduser().resolve()
     directory = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else UI_ROOT
@@ -70,16 +70,16 @@ class Controller:
         self.cfg = {
             "original": "rtsp://127.0.0.1:8554/camera-original",
             "h264": "rtsp://127.0.0.1:8554/camera-h264",
-            "mlvc": "rtsp://127.0.0.1:8554/ulbvc",
+            "ulbvc": "rtsp://127.0.0.1:8554/ulbvc",
             "webrtc": "http://127.0.0.1:8889",
             "transport": "tcp",
             "ffmpeg": "auto",
             "h264_kbps": 8000,
             "h264_qp": 40,
-            "mlvc_kbps": 2000,
+            "ulbvc_kbps": 2000,
             "h264_bpp": 0.129,
-            "mlvc_bpp": 0.032,
-            "mlvc_stats_port": 39341,
+            "ulbvc_bpp": 0.032,
+            "ulbvc_stats_port": 39341,
             "mode": "same_quality",
             "fps": 30,
         }
@@ -89,15 +89,15 @@ class Controller:
         self.ffmpeg_log = None
         self.last_error = ""
         self._h264_samples: deque[tuple[float, int]] = deque()
-        self._mlvc_stats_socket: socket.socket | None = None
-        self._mlvc_stats_bound_port: int | None = None
-        self._mlvc_stats_error = ""
-        self._mlvc_stats_latest: dict[str, float | int] | None = None
-        self._mlvc_media_samples: deque[tuple[float, int]] = deque()
-        self._mlvc_wire_samples: deque[tuple[float, int]] = deque()
-        self._mlvc_fps = float(self.cfg.get("fps", 30))
-        self._mlvc_metrics_ready = False
-        self._mlvc_metrics = {"kbps": 0.0, "bpp": 0.0, "kbs": 0.0, "ratio": 0.0}
+        self._ulbvc_stats_socket: socket.socket | None = None
+        self._ulbvc_stats_bound_port: int | None = None
+        self._ulbvc_stats_error = ""
+        self._ulbvc_stats_latest: dict[str, float | int] | None = None
+        self._ulbvc_media_samples: deque[tuple[float, int]] = deque()
+        self._ulbvc_wire_samples: deque[tuple[float, int]] = deque()
+        self._ulbvc_fps = float(self.cfg.get("fps", 30))
+        self._ulbvc_metrics_ready = False
+        self._ulbvc_metrics = {"kbps": 0.0, "bpp": 0.0, "kbs": 0.0, "ratio": 0.0}
         self._h264_requested = False
         self._h264_rate_kbps: int | None = None
         self._h264_target_kbps: float | None = None
@@ -106,7 +106,7 @@ class Controller:
         self._h264_qp: int | None = None
         self._control_stop = threading.Event()
         self._control_thread: threading.Thread | None = None
-        self._ensure_mlvc_stats_socket()
+        self._ensure_ulbvc_stats_socket()
 
     def _load_config(self) -> None:
         path = self.config_path
@@ -181,36 +181,36 @@ class Controller:
             return 0.0
         return (latest_value - base_value) / elapsed
 
-    def _refresh_mlvc_metrics(self, now: float | None = None) -> None:
+    def _refresh_ulbvc_metrics(self, now: float | None = None) -> None:
         now = time.monotonic() if now is None else now
-        media_bytes_per_second = self._window_rate(self._mlvc_media_samples, now)
-        wire_bytes_per_second = self._window_rate(self._mlvc_wire_samples, now)
+        media_bytes_per_second = self._window_rate(self._ulbvc_media_samples, now)
+        wire_bytes_per_second = self._window_rate(self._ulbvc_wire_samples, now)
         if media_bytes_per_second <= 0.0 and wire_bytes_per_second <= 0.0:
-            latest = self._mlvc_stats_latest
+            latest = self._ulbvc_stats_latest
             if latest is not None and now - float(latest["received_at"]) > METRIC_WINDOW_SECONDS:
-                self._mlvc_metrics = {"kbps": 0.0, "bpp": 0.0, "kbs": 0.0, "ratio": 0.0}
-                self._mlvc_metrics_ready = False
+                self._ulbvc_metrics = {"kbps": 0.0, "bpp": 0.0, "kbs": 0.0, "ratio": 0.0}
+                self._ulbvc_metrics_ready = False
             return
-        pixels = 1920.0 * 1080.0 * max(1.0, self._mlvc_fps)
+        pixels = 1920.0 * 1080.0 * max(1.0, self._ulbvc_fps)
         media_kbps = media_bytes_per_second * 8.0 / 1000.0
         bpp = media_kbps * 1000.0 / pixels if pixels else 0.0
-        self._mlvc_metrics = {
+        self._ulbvc_metrics = {
             "kbps": media_kbps,
             "bpp": bpp,
             "kbs": wire_bytes_per_second / 1024.0,
             "ratio": 24.0 / bpp if bpp else 0.0,
         }
-        self._mlvc_metrics_ready = True
+        self._ulbvc_metrics_ready = True
 
-    def _ensure_mlvc_stats_socket(self) -> None:
-        port = int(os.environ.get("MLVC_UI_STATS_PORT", self.cfg.get("mlvc_stats_port", 39341)) or 0)
-        if self._mlvc_stats_socket is not None and self._mlvc_stats_bound_port == port:
+    def _ensure_ulbvc_stats_socket(self) -> None:
+        port = int(os.environ.get("ULBVC_UI_STATS_PORT", self.cfg.get("ulbvc_stats_port", 39341)) or 0)
+        if self._ulbvc_stats_socket is not None and self._ulbvc_stats_bound_port == port:
             return
-        if self._mlvc_stats_socket is not None:
-            self._mlvc_stats_socket.close()
-            self._mlvc_stats_socket = None
-            self._mlvc_stats_bound_port = None
-        self._mlvc_stats_error = ""
+        if self._ulbvc_stats_socket is not None:
+            self._ulbvc_stats_socket.close()
+            self._ulbvc_stats_socket = None
+            self._ulbvc_stats_bound_port = None
+        self._ulbvc_stats_error = ""
         if port <= 0:
             return
         try:
@@ -218,18 +218,18 @@ class Controller:
             stats_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             stats_socket.bind(("0.0.0.0", port))
             stats_socket.setblocking(False)
-            self._mlvc_stats_socket = stats_socket
-            self._mlvc_stats_bound_port = port
+            self._ulbvc_stats_socket = stats_socket
+            self._ulbvc_stats_bound_port = port
         except OSError as exc:
-            self._mlvc_stats_error = str(exc)
+            self._ulbvc_stats_error = str(exc)
             try:
                 stats_socket.close()
             except UnboundLocalError:
                 pass
 
-    def _drain_mlvc_stats(self) -> None:
-        self._ensure_mlvc_stats_socket()
-        stats_socket = self._mlvc_stats_socket
+    def _drain_ulbvc_stats(self) -> None:
+        self._ensure_ulbvc_stats_socket()
+        stats_socket = self._ulbvc_stats_socket
         if stats_socket is None:
             return
         while True:
@@ -241,7 +241,7 @@ class Controller:
                 return
             try:
                 payload = json.loads(raw.decode("utf-8"))
-                if payload.get("kind") != "mlvc_rtp_stats":
+                if payload.get("kind") != "ulbvc_rtp_stats":
                     continue
                 media_bytes = int(payload["media_unit_bytes"])
                 wire_bytes = int(payload.get("wire_bytes", media_bytes))
@@ -249,21 +249,21 @@ class Controller:
                 now = time.monotonic()
             except (ValueError, TypeError, KeyError, json.JSONDecodeError, UnicodeDecodeError):
                 continue
-            media_reset = self._record_counter_sample(self._mlvc_media_samples, now, media_bytes)
-            wire_reset = self._record_counter_sample(self._mlvc_wire_samples, now, wire_bytes)
+            media_reset = self._record_counter_sample(self._ulbvc_media_samples, now, media_bytes)
+            wire_reset = self._record_counter_sample(self._ulbvc_wire_samples, now, wire_bytes)
             if media_reset or wire_reset:
                 # Encoder restart: establish a new sliding-window base.
-                self._mlvc_metrics = {"kbps": 0.0, "bpp": 0.0, "kbs": 0.0, "ratio": 0.0}
-                self._mlvc_metrics_ready = False
-            self._mlvc_fps = stream_fps
-            self._mlvc_stats_latest = {
+                self._ulbvc_metrics = {"kbps": 0.0, "bpp": 0.0, "kbs": 0.0, "ratio": 0.0}
+                self._ulbvc_metrics_ready = False
+            self._ulbvc_fps = stream_fps
+            self._ulbvc_stats_latest = {
                 "frames": int(payload.get("frames", -1)),
                 "media_unit_bytes": media_bytes,
                 "wire_bytes": wire_bytes,
                 "fps": stream_fps,
                 "received_at": now,
             }
-            self._refresh_mlvc_metrics(now)
+            self._refresh_ulbvc_metrics(now)
 
     def stop(self) -> None:
         with self.lock:
@@ -291,10 +291,10 @@ class Controller:
         self.stop()
         if self._control_thread is not None:
             self._control_thread.join(timeout=2)
-        if self._mlvc_stats_socket is not None:
-            self._mlvc_stats_socket.close()
-            self._mlvc_stats_socket = None
-            self._mlvc_stats_bound_port = None
+        if self._ulbvc_stats_socket is not None:
+            self._ulbvc_stats_socket.close()
+            self._ulbvc_stats_socket = None
+            self._ulbvc_stats_bound_port = None
 
     def start(self, cfg: dict) -> None:
         with self.lock:
@@ -310,7 +310,7 @@ class Controller:
         if isinstance(qp, bool) or not isinstance(qp, int) or not 0 <= qp <= 51:
             raise ValueError("H.264 QP must be an integer from 0 to 51")
         for key, schemes in (("original", ("rtsp",)), ("h264", ("rtsp",)),
-                             ("mlvc", ("rtsp",)), ("webrtc", ("http", "https"))):
+                             ("ulbvc", ("rtsp",)), ("webrtc", ("http", "https"))):
             value = updated[key]
             if not isinstance(value, str):
                 raise ValueError("视频源和服务地址必须为字符串")
@@ -325,7 +325,7 @@ class Controller:
             updated[key] = value
         if updated["transport"] not in ("tcp", "udp"):
             raise ValueError("RTSP 传输必须为 tcp 或 udp")
-        port = updated["mlvc_stats_port"]
+        port = updated["ulbvc_stats_port"]
         if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
             raise ValueError("统计端口必须为 1–65535 的整数")
         if not isinstance(updated["ffmpeg"], str) or not updated["ffmpeg"].strip():
@@ -339,7 +339,7 @@ class Controller:
             if self.config_path is not None and any(updated[key] != self.cfg[key] for key in CONFIG_FIELDS.values()):
                 self._write_config(updated)
             self.cfg.update(updated)
-            self._ensure_mlvc_stats_socket()
+            self._ensure_ulbvc_stats_socket()
 
     def _start_locked(self, cfg: dict) -> None:
         self.configure(cfg)
@@ -372,12 +372,12 @@ class Controller:
                     self.last_error = str(exc)
 
     def _bitrate_target(self, now: float) -> float | None:
-        latest = self._mlvc_stats_latest
-        samples = self._mlvc_media_samples
+        latest = self._ulbvc_stats_latest
+        samples = self._ulbvc_media_samples
         if (latest is None or now - float(latest["received_at"]) > METRIC_WINDOW_SECONDS
                 or len(samples) < 2 or samples[-1][0] - samples[0][0] < METRIC_WINDOW_SECONDS):
             return None
-        # Use actual MLVC codec bytes; the RTP pacing ceiling is not a bitrate.
+        # Use actual ULBVC codec bytes; the RTP pacing ceiling is not a bitrate.
         # The comparison allows normal variation and H.264 packet overhead.
         target = self._window_rate(samples, now) * 8.0 / 1000.0
         return target if math.isfinite(target) and target > 0.0 else None
@@ -388,7 +388,7 @@ class Controller:
         if self.cfg["mode"] == "same_quality":
             self._sync_quality(now, source_ready)
             return
-        # A comparison run keeps its startup budget. Fluctuating MLVC GOP
+        # A comparison run keeps its startup budget. Fluctuating ULBVC GOP
         # sizes must not continually restart the H.264 preview.
         if self.h264_encoder is not None:
             self._h264_match_state = "running"
@@ -466,8 +466,8 @@ class Controller:
 
     def _status_locked(self) -> dict:
         now = time.monotonic()
-        self._drain_mlvc_stats()
-        self._refresh_mlvc_metrics(now)
+        self._drain_ulbvc_stats()
+        self._refresh_ulbvc_metrics(now)
         fps = max(1.0, float(self.cfg.get("fps", 30)))
         pixels = 1920.0 * 1080.0 * fps
         original_kbs = pixels * 3.0 / 1024.0
@@ -476,11 +476,11 @@ class Controller:
             kbps = max(0.0, float(self.cfg.get(key + "_kbps", 0)))
             bpp = kbps * 1000.0 / pixels if pixels else 0.0
             metrics[key] = {"kbps": kbps, "bpp": bpp, "kbs": kbps / 8.0, "ratio": 24.0 / bpp if bpp else 0.0, "window_seconds": METRIC_WINDOW_SECONDS}
-        latest_stats = self._mlvc_stats_latest
+        latest_stats = self._ulbvc_stats_latest
         stats_age = None if latest_stats is None else max(0.0, now - float(latest_stats["received_at"]))
-        mlvc_actual = self._mlvc_metrics_ready and stats_age is not None and stats_age <= METRIC_WINDOW_SECONDS * 2.0
-        metrics["mlvc"] = dict(self._mlvc_metrics)
-        metrics["mlvc"]["window_seconds"] = METRIC_WINDOW_SECONDS
+        ulbvc_actual = self._ulbvc_metrics_ready and stats_age is not None and stats_age <= METRIC_WINDOW_SECONDS * 2.0
+        metrics["ulbvc"] = dict(self._ulbvc_metrics)
+        metrics["ulbvc"]["window_seconds"] = METRIC_WINDOW_SECONDS
         process = self.h264_encoder
         if process is not None and process.poll() is not None:
             self.last_error = "H.264 FFmpeg 已退出，请检查原图 RTSP 路径和 MediaMTX。"
@@ -533,14 +533,14 @@ class Controller:
             h264_actual = False
             metrics["h264"].update(kbps=0.0, bpp=0.0, kbs=0.0, ratio=0.0)
         return {
-            "feeds": {"original": published(self.cfg["original"]), "h264": published(self.cfg["h264"]), "mlvc": published(self.cfg["mlvc"])},
+            "feeds": {"original": published(self.cfg["original"]), "h264": published(self.cfg["h264"]), "ulbvc": published(self.cfg["ulbvc"])},
             "metrics": metrics,
             "error": self.last_error,
-            "mlvc_actual": mlvc_actual,
+            "ulbvc_actual": ulbvc_actual,
             "h264_actual": h264_actual,
-            "mlvc_stats_age": stats_age,
-            "mlvc_stats_source": "encoder RTP media units",
-            "mlvc_stats_error": self._mlvc_stats_error,
+            "ulbvc_stats_age": stats_age,
+            "ulbvc_stats_source": "encoder RTP media units",
+            "ulbvc_stats_error": self._ulbvc_stats_error,
             "media_server": paths is not None,
             "paths": visible_paths,
             "metric_window_seconds": METRIC_WINDOW_SECONDS,
@@ -619,7 +619,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     server = ThreadingHTTPServer(("127.0.0.1", 8765), Handler)
-    print("MLVC WebRTC UI: http://127.0.0.1:8765")
+    print("ULBVC WebRTC UI: http://127.0.0.1:8765")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

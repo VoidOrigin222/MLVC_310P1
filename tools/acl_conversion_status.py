@@ -254,7 +254,7 @@ def print_human(report: dict[str, Any]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source-root", type=Path, default=Path("/root/workspace/cgc/mlvc_cpp/models"))
+    parser.add_argument("--source-root", type=Path, default=Path("/root/workspace/cgc/ulbvc_cpp/models"))
     parser.add_argument("--acl-root", type=Path, default=Path("models"))
     parser.add_argument("--resolution", action="append", choices=("720p", "1080p"))
     parser.add_argument("--stale-seconds", type=int, default=900)

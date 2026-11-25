@@ -1,5 +1,5 @@
-#include <mlvc/codec/translation_warp.h>
-#include <mlvc/core/status.h>
+#include <ulbvc/codec/translation_warp.h>
+#include <ulbvc/core/status.h>
 
 #include <climits>
 #include <cstring>
@@ -11,11 +11,11 @@
 
 namespace {
 
-std::vector<uint8_t> PixelOracle(const mlvc::codec::TensorData& source, int kx, int ky) {
+std::vector<uint8_t> PixelOracle(const ulbvc::codec::TensorData& source, int kx, int ky) {
   const auto& dims = source.shape.dims();
   const int64_t height = dims[dims.size() - 2];
   const int64_t width = dims.back();
-  const std::size_t element_size = mlvc::ElementSize(source.dtype);
+  const std::size_t element_size = ulbvc::ElementSize(source.dtype);
   const std::size_t plane_elements = static_cast<std::size_t>(width * height);
   auto expected = source.bytes;
   for (std::size_t plane = 0; plane < source.Elements() / plane_elements; ++plane) {
@@ -35,10 +35,10 @@ std::vector<uint8_t> PixelOracle(const mlvc::codec::TensorData& source, int kx, 
 }
 
 void CheckDirectCopiesAndAliases() {
-  using mlvc::Check;
-  using mlvc::codec::ShiftTensorPreserveBoundary;
-  using mlvc::codec::ShiftTensorPreserveBoundaryInto;
-  auto source = mlvc::codec::MakeTensor({2, 4, 5}, mlvc::DataType::kFloat16);
+  using ulbvc::Check;
+  using ulbvc::codec::ShiftTensorPreserveBoundary;
+  using ulbvc::codec::ShiftTensorPreserveBoundaryInto;
+  auto source = ulbvc::codec::MakeTensor({2, 4, 5}, ulbvc::DataType::kFloat16);
   const uint16_t patterns[] = {0x0000, 0x8000, 0x7c00, 0xfc00, 0x7e01, 0x7c01, 0xfc01,
                              0xffff, 0x0001, 0x03ff, 0x0400, 0x3555, 0xb555};
   for (std::size_t index = 0; index < source.Elements(); ++index) {
@@ -46,7 +46,7 @@ void CheckDirectCopiesAndAliases() {
     std::memcpy(source.bytes.data() + index * 2, &bits, sizeof(bits));
   }
   const auto original = source.bytes;
-  mlvc::codec::TensorData scratch;
+  ulbvc::codec::TensorData scratch;
   ShiftTensorPreserveBoundaryInto(source, 0, 0, &scratch);
   auto* scratch_pointer = scratch.bytes.data();
   const auto scratch_capacity = scratch.bytes.capacity();
@@ -79,10 +79,10 @@ void CheckDirectCopiesAndAliases() {
   // Source is a subview of output's owned bytes, and the result changes shape
   // and shrinks output. Validate the snapshot before metadata/storage changes.
   auto partial = source;
-  auto subsource = mlvc::codec::MakeTensor({2, 2, 3}, mlvc::DataType::kFloat16);
+  auto subsource = ulbvc::codec::MakeTensor({2, 2, 3}, ulbvc::DataType::kFloat16);
   std::memcpy(subsource.bytes.data(), partial.bytes.data() + 8, subsource.bytes.size());
-  const auto subview = mlvc::TensorView::Borrowed(partial.bytes.data() + 8, &subsource.shape,
-                                                subsource.dtype, mlvc::MemoryLocation::kCpu);
+  const auto subview = ulbvc::TensorView::Borrowed(partial.bytes.data() + 8, &subsource.shape,
+                                                subsource.dtype, ulbvc::MemoryLocation::kCpu);
   const auto partial_expected = PixelOracle(subsource, -2, 1);
   ShiftTensorPreserveBoundaryInto(subview, -2, 1, &partial);
   Check(partial.bytes == partial_expected && partial.shape.dims() == subsource.shape.dims(),
@@ -92,13 +92,13 @@ void CheckDirectCopiesAndAliases() {
   // alive through detachment and destination allocation/copy, then release.
   auto owner = std::make_shared<std::vector<uint8_t>>(source.bytes);
   const std::weak_ptr<std::vector<uint8_t>> lifetime = owner;
-  mlvc::codec::TensorData external_output;
+  ulbvc::codec::TensorData external_output;
   external_output.shape = source.shape;
   external_output.dtype = source.dtype;
   external_output.external_data = owner->data();
   external_output.external_bytes = owner->size();
   external_output.external_owner = owner;
-  external_output.external_location = mlvc::MemoryLocation::kCpu;
+  external_output.external_location = ulbvc::MemoryLocation::kCpu;
   owner.reset();
   const auto external_view = external_output.View();
   ShiftTensorPreserveBoundaryInto(external_view, 1, -1, &external_output);
@@ -108,7 +108,7 @@ void CheckDirectCopiesAndAliases() {
 
   // One-pixel spatial dimensions still permit movement along the other axis.
   for (const auto& shape : {std::vector<int64_t>{3, 1, 5}, std::vector<int64_t>{3, 5, 1}}) {
-    auto thin = mlvc::codec::MakeTensor(shape, mlvc::DataType::kUInt8);
+    auto thin = ulbvc::codec::MakeTensor(shape, ulbvc::DataType::kUInt8);
     for (std::size_t i = 0; i < thin.bytes.size(); ++i) thin.bytes[i] = static_cast<uint8_t>(i);
     const int kx = shape.back() == 1 ? 0 : -4;
     const int ky = shape.back() == 1 ? 4 : 0;
@@ -120,11 +120,11 @@ void CheckDirectCopiesAndAliases() {
 }  // namespace
 
 int main() {
-  using mlvc::Check;
-  using mlvc::codec::MakeTensor;
-  using mlvc::codec::ShiftTensorPreserveBoundary;
+  using ulbvc::Check;
+  using ulbvc::codec::MakeTensor;
+  using ulbvc::codec::ShiftTensorPreserveBoundary;
   CheckDirectCopiesAndAliases();
-  auto source = MakeTensor({2, 3, 4, 5}, mlvc::DataType::kInt32);
+  auto source = MakeTensor({2, 3, 4, 5}, ulbvc::DataType::kInt32);
   for (int i = 0; i < 120; ++i) std::memcpy(source.bytes.data() + i * 4, &i, 4);
   const auto original = source.bytes;
   for (int ky = -3; ky <= 3; ++ky) {
@@ -145,60 +145,60 @@ int main() {
       Check(source.bytes == original, "warp modified source storage");
     }
   }
-  auto memory = MakeTensor({2, 1, 4, 5}, mlvc::DataType::kInt32);
+  auto memory = MakeTensor({2, 1, 4, 5}, ulbvc::DataType::kInt32);
   memory.bytes.assign(memory.bytes.size(), 0x5a);
-  const auto pair = mlvc::codec::ShiftFeatureAndMemory(source, memory, 2, -1);
+  const auto pair = ulbvc::codec::ShiftFeatureAndMemory(source, memory, 2, -1);
   Check(pair.first.bytes == ShiftTensorPreserveBoundary(source, 2, -1).bytes &&
             pair.second.bytes == memory.bytes,
         "feature and memory did not share the same shift");
   for (int kx : {5, -5, INT_MIN, INT_MAX}) {
     bool rejected = false;
     try { (void)ShiftTensorPreserveBoundary(source, kx, 0); }
-    catch (const mlvc::Error&) { rejected = true; }
+    catch (const ulbvc::Error&) { rejected = true; }
     Check(rejected, "out-of-grid translation was accepted");
   }
   source.bytes.pop_back();
   bool rejected = false;
   try { (void)ShiftTensorPreserveBoundary(source, 0, 0); }
-  catch (const mlvc::Error&) { rejected = true; }
+  catch (const ulbvc::Error&) { rejected = true; }
   Check(rejected, "truncated tensor storage was accepted");
   rejected = false;
-  try { mlvc::codec::ShiftTensorPreserveBoundaryInto(memory, 0, 0, nullptr); }
-  catch (const mlvc::Error&) { rejected = true; }
+  try { ulbvc::codec::ShiftTensorPreserveBoundaryInto(memory, 0, 0, nullptr); }
+  catch (const ulbvc::Error&) { rejected = true; }
   Check(rejected, "null warp output was accepted");
-  const auto temp = std::filesystem::temp_directory_path() / "mlvc_warp_policy_check.json";
+  const auto temp = std::filesystem::temp_directory_path() / "ulbvc_warp_policy_check.json";
   {
     std::ofstream file(temp);
     Check(file.good(), "cannot write warp policy test manifest");
     file << R"({"runtime":"acl","soc_version":"Ascend310P1","dtype":"fp16",
       "sidecar":{"file":"sidecar","bytes":1,"sha256":"00"},"models":[
-      {"name":"MLVCEncoder","file":"encoder.om","backend":"acl","bytes":1,
+      {"name":"ULBVCEncoder","file":"encoder.om","backend":"acl","bytes":1,
        "sha256":"e43b78e55ff2d4cda220623e63aeab4c40e823025203c0ed4baca9146e5daa4d",
        "inputs":[{"name":"ref_feature","dtype":"float16","shape":[1,96,136,240]}],"outputs":[]},
-      {"name":"MLVCDecoder","file":"decoder.om","backend":"acl","bytes":1,
+      {"name":"ULBVCDecoder","file":"decoder.om","backend":"acl","bytes":1,
        "sha256":"040ba537a07864e53f1b54e288dae293fee91e1265151ae6d6c5c1141627045b",
        "inputs":[{"name":"ref_feature","dtype":"float16","shape":[1,96,136,240]}],"outputs":[]},
-      {"name":"MLVCReferenceFromFrame","file":"reset.om","backend":"acl","bytes":1,
+      {"name":"ULBVCReferenceFromFrame","file":"reset.om","backend":"acl","bytes":1,
        "sha256":"91f68c4cf52286ff20f2ca1b80d453fa70d275925d9c80680b56c90874ab962f",
        "inputs":[{"name":"ref_frame","dtype":"float16","shape":[1,3,1088,1920]}],
        "outputs":[{"name":"ref_feature","dtype":"float16","shape":[1,96,136,240]}]}]})";
   }
-  auto manifest = mlvc::ModelManifest::Load(temp);
+  auto manifest = ulbvc::ModelManifest::Load(temp);
   std::filesystem::remove(temp);
-  mlvc::codec::RequireTranslationWarpModels(manifest);
+  ulbvc::codec::RequireTranslationWarpModels(manifest);
   for (int model = 0; model < 3; ++model) {
     const auto sha = manifest.models()[model].sha256;
     manifest.models()[model].sha256 = std::string(64, '0');
     rejected = false;
-    try { mlvc::codec::RequireTranslationWarpModels(manifest); }
-    catch (const mlvc::Error&) { rejected = true; }
+    try { ulbvc::codec::RequireTranslationWarpModels(manifest); }
+    catch (const ulbvc::Error&) { rejected = true; }
     Check(rejected, "warp accepted a model outside the audited fingerprint set");
     manifest.models()[model].sha256 = sha;
   }
   manifest.models()[0].inputs[0].shape[1] = 48;
   rejected = false;
-  try { mlvc::codec::RequireTranslationWarpModels(manifest); }
-  catch (const mlvc::Error&) { rejected = true; }
+  try { ulbvc::codec::RequireTranslationWarpModels(manifest); }
+  catch (const ulbvc::Error&) { rejected = true; }
   Check(rejected, "warp accepted reference shape inconsistent with the audited graph");
   std::cout << "translation warp direct copies, reuse, aliases, FP16 bytes and bounds passed\n";
 }

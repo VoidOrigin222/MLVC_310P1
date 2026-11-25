@@ -10,8 +10,8 @@
 #include <string>
 #include <vector>
 
-#include "mlvc/core/status.h"
-#include "mlvc/transport/udp_message_transport.h"
+#include "ulbvc/core/status.h"
+#include "ulbvc/transport/udp_message_transport.h"
 
 namespace {
 
@@ -38,7 +38,7 @@ void PutU32(std::vector<uint8_t>* packet, std::size_t offset, uint32_t value) {
 std::vector<uint8_t> MakePacket(uint16_t packet_index, uint16_t total_packets,
                                 uint32_t total_size, std::size_t payload_size, uint8_t value,
                                 uint8_t reserved = 0) {
-  mlvc::Check(payload_size <= kPayloadBytes, "test payload is too large");
+  ulbvc::Check(payload_size <= kPayloadBytes, "test payload is too large");
   std::vector<uint8_t> packet(kHeaderBytes + payload_size + kTailBytes, 0);
   packet[0] = kMagic0;
   packet[1] = kMagic1;
@@ -76,7 +76,7 @@ void SendPacket(int socket, uint16_t port, const std::vector<uint8_t>& packet) {
 
 void ExpectReceiverReject(uint16_t port, const std::vector<std::vector<uint8_t>>& packets,
                           const char* description) {
-  mlvc::transport::UdpMessageReceiver receiver(port, "UDP fragment validation test");
+  ulbvc::transport::UdpMessageReceiver receiver(port, "UDP fragment validation test");
   const int sender = MakeSocket();
   try {
     for (const auto& packet : packets) SendPacket(sender, port, packet);
@@ -87,7 +87,7 @@ void ExpectReceiverReject(uint16_t port, const std::vector<std::vector<uint8_t>>
       rejected = true;
     }
     ::close(sender);
-    mlvc::Check(rejected, std::string("malformed UDP message was accepted: ") + description);
+    ulbvc::Check(rejected, std::string("malformed UDP message was accepted: ") + description);
   } catch (...) {
     ::close(sender);
     throw;

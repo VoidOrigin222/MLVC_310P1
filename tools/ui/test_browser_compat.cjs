@@ -10,7 +10,7 @@ const pipelineSource = source.slice(source.indexOf('async function pipeline('),s
 const config = {
   original:'rtsp://127.0.0.1:8554/camera-original',
   h264:'rtsp://127.0.0.1:8554/camera-h264',
-  mlvc:'rtsp://127.0.0.1:8554/ulbvc', webrtc:'http://127.0.0.1:8889',
+  ulbvc:'rtsp://127.0.0.1:8554/ulbvc', webrtc:'http://127.0.0.1:8889',
 };
 
 // Model the legacy RTSP pathname behavior shown in the customer's server log.
@@ -22,7 +22,7 @@ function fixture(URLConstructor=URL) {
   let timerId=0;
   const sandbox={
     URL:URLConstructor, AbortController, config:{...config}, failure:null,
-    channels:[{key:'original',name:'原图'},{key:'h264',name:'H.264'},{key:'mlvc',name:'语义压缩'}],
+    channels:[{key:'original',name:'原图'},{key:'h264',name:'H.264'},{key:'ulbvc',name:'语义压缩'}],
     players:{}, setState:(key,state)=>{states[key]=state;}, notice:message=>notices.push(message),
     fillSettings(){}, refresh:async()=>{}, iceReady:async()=>{}, $:()=>({disabled:false}),
     setTimeout:(callback,ms)=>{timers.set(++timerId,{callback,ms});return timerId;},
@@ -82,7 +82,7 @@ function fixture(URLConstructor=URL) {
   const rejected=fixture();
   await rejected.run('loadSettings();');
   rejected.sandbox.failure='whep';
-  rejected.run('statusSnapshot={feeds:{original:true,h264:true,mlvc:true}};');
+  rejected.run('statusSnapshot={feeds:{original:true,h264:true,ulbvc:true}};');
   await rejected.run('reconnect()');
   assert.equal(rejected.notices.length,3);
   assert.ok(rejected.notices.every(message=>message.includes('WHEP 400：invalid path name')),'server rejection must remain visible in the UI');
@@ -104,7 +104,7 @@ function fixture(URLConstructor=URL) {
   await startRetry.run("pipeline('start')");
   assert.equal(startRetry.requests.filter(r=>r.url.endsWith('/whep')).length,3,'starting H.264 after config recovery must connect every feed');
 
-  const invalid=fixture();invalid.sandbox.config.mlvc='rtsp://127.0.0.1:8554';
+  const invalid=fixture();invalid.sandbox.config.ulbvc='rtsp://127.0.0.1:8554';
   await invalid.run('initialize()');
   assert.equal(invalid.run('configLoaded'),false);
   assert.match(invalid.notices[0],/语义压缩 RTSP 配置无效/);

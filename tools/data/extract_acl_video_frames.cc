@@ -1,7 +1,7 @@
-#include <mlvc/codec/tensor_data.h>
-#include <mlvc/core/status.h>
-#include <mlvc/io/video_io.h>
-#include <mlvc/runtime/model_manifest.h>
+#include <ulbvc/codec/tensor_data.h>
+#include <ulbvc/core/status.h>
+#include <ulbvc/io/video_io.h>
+#include <ulbvc/runtime/model_manifest.h>
 
 #include <chrono>
 #include <filesystem>
@@ -12,20 +12,20 @@
 
 namespace {
 
-constexpr std::string_view kDefaultManifest = "../mlvc1080p/manifest.json";
+constexpr std::string_view kDefaultManifest = "../ulbvc1080p/manifest.json";
 
-const mlvc::TensorSpec& FindTensorSpec(const mlvc::ModelRecord& record, std::string_view name) {
-  for (const mlvc::TensorSpec& spec : record.inputs) {
+const ulbvc::TensorSpec& FindTensorSpec(const ulbvc::ModelRecord& record, std::string_view name) {
+  for (const ulbvc::TensorSpec& spec : record.inputs) {
     if (spec.name == name) {
       return spec;
     }
   }
-  for (const mlvc::TensorSpec& spec : record.outputs) {
+  for (const ulbvc::TensorSpec& spec : record.outputs) {
     if (spec.name == name) {
       return spec;
     }
   }
-  throw mlvc::Error("missing tensor spec: " + record.name + "." + std::string(name));
+  throw ulbvc::Error("missing tensor spec: " + record.name + "." + std::string(name));
 }
 
 void PrintUsage(const char* argv0) {
@@ -67,16 +67,16 @@ int main(int argc, char** argv) {
   }
 
   try {
-    mlvc::ModelManifest manifest = mlvc::ModelManifest::Load(manifest_path);
-    const mlvc::TensorSpec& frame_spec = FindTensorSpec(manifest.GetModel("MLVCEncoder"), "x");
-    mlvc::io::VideoFrameReader video_reader(input_video_path);
-    const mlvc::io::VideoInfo& video_info = video_reader.info();
-    mlvc::Check(video_info.width <= static_cast<int>(frame_spec.shape[3]) &&
+    ulbvc::ModelManifest manifest = ulbvc::ModelManifest::Load(manifest_path);
+    const ulbvc::TensorSpec& frame_spec = FindTensorSpec(manifest.GetModel("ULBVCEncoder"), "x");
+    ulbvc::io::VideoFrameReader video_reader(input_video_path);
+    const ulbvc::io::VideoInfo& video_info = video_reader.info();
+    ulbvc::Check(video_info.width <= static_cast<int>(frame_spec.shape[3]) &&
                     video_info.height <= static_cast<int>(frame_spec.shape[2]),
                 "input video exceeds model frame tensor shape");
     std::filesystem::create_directories(output_frame_dir);
 
-    mlvc::codec::TensorData frame = mlvc::codec::MakeTensorLike(frame_spec);
+    ulbvc::codec::TensorData frame = ulbvc::codec::MakeTensorLike(frame_spec);
     int frame_index = 0;
     const auto begin = std::chrono::steady_clock::now();
     while (limit < 0 || frame_index < limit) {
@@ -85,7 +85,7 @@ int main(int argc, char** argv) {
       }
       const std::filesystem::path frame_path =
           output_frame_dir / ("frame_" + std::to_string(frame_index) + ".fp16");
-      mlvc::codec::WriteTensorFile(frame_path, frame);
+      ulbvc::codec::WriteTensorFile(frame_path, frame);
       ++frame_index;
     }
     const auto end = std::chrono::steady_clock::now();
@@ -94,7 +94,7 @@ int main(int argc, char** argv) {
         frame_index > 0 ? (1000.0 * static_cast<double>(frame_index) / total_ms) : 0.0;
     {
       std::ofstream info(output_frame_dir / "source_info.txt");
-      mlvc::Check(info.good(), "failed to open source info output");
+      ulbvc::Check(info.good(), "failed to open source info output");
       info << "width=" << video_info.width << "\n";
       info << "height=" << video_info.height << "\n";
       info << "fps=" << video_info.fps << "\n";

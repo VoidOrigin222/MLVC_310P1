@@ -1,11 +1,11 @@
-#include <mlvc/application/pipeline/ordered_future_window.h>
-#include <mlvc/application/stream/mlvc_entropy_decode.h>
-#include <mlvc/core/status.h>
-#include <mlvc/entropy/mlvc_official_entropy.h>
-#include <mlvc/framework/entropy_worker.h>
-#include <mlvc/framework/profiler.h>
-#include <mlvc/io/mlvc_bitstream.h>
-#include <mlvc/runtime/model_manifest.h>
+#include <ulbvc/application/pipeline/ordered_future_window.h>
+#include <ulbvc/application/stream/ulbvc_entropy_decode.h>
+#include <ulbvc/core/status.h>
+#include <ulbvc/entropy/ulbvc_official_entropy.h>
+#include <ulbvc/framework/entropy_worker.h>
+#include <ulbvc/framework/profiler.h>
+#include <ulbvc/io/ulbvc_bitstream.h>
+#include <ulbvc/runtime/model_manifest.h>
 
 #include <chrono>
 #include <cstddef>
@@ -23,32 +23,32 @@ namespace {
 
 struct Packet {
   int frame_index = -1;
-  mlvc::codec::MlvcFrameType frame_type = mlvc::codec::MlvcFrameType::kPFrame;
+  ulbvc::codec::UlbvcFrameType frame_type = ulbvc::codec::UlbvcFrameType::kPFrame;
   int q_index = 0;
   std::vector<uint8_t> payload;
 };
 
-void CheckTensorEqual(const mlvc::codec::TensorData& expected,
-                      const mlvc::codec::TensorData& actual, const std::string& name,
+void CheckTensorEqual(const ulbvc::codec::TensorData& expected,
+                      const ulbvc::codec::TensorData& actual, const std::string& name,
                       int frame_index) {
   const std::string prefix = "frame " + std::to_string(frame_index) + " " + name;
-  mlvc::Check(expected.shape.dims() == actual.shape.dims(), prefix + " shape mismatch");
-  mlvc::Check(expected.dtype == actual.dtype, prefix + " dtype mismatch");
-  mlvc::Check(expected.bytes == actual.bytes, prefix + " byte mismatch");
+  ulbvc::Check(expected.shape.dims() == actual.shape.dims(), prefix + " shape mismatch");
+  ulbvc::Check(expected.dtype == actual.dtype, prefix + " dtype mismatch");
+  ulbvc::Check(expected.bytes == actual.bytes, prefix + " byte mismatch");
 }
 
-void CheckFrameEqual(const mlvc::codec::DecodedEntropyFrame& expected,
-                     const mlvc::codec::DecodedEntropyFrame& actual) {
-  mlvc::Check(expected.frame_index == actual.frame_index, "entropy frame index mismatch");
-  mlvc::Check(expected.frame_type == actual.frame_type, "entropy frame type mismatch");
-  mlvc::Check(expected.q_index == actual.q_index, "entropy q_index mismatch");
+void CheckFrameEqual(const ulbvc::codec::DecodedEntropyFrame& expected,
+                     const ulbvc::codec::DecodedEntropyFrame& actual) {
+  ulbvc::Check(expected.frame_index == actual.frame_index, "entropy frame index mismatch");
+  ulbvc::Check(expected.frame_type == actual.frame_type, "entropy frame type mismatch");
+  ulbvc::Check(expected.q_index == actual.q_index, "entropy q_index mismatch");
   CheckTensorEqual(expected.z_raw, actual.z_raw, "z_raw", expected.frame_index);
   CheckTensorEqual(expected.y_raw_0, actual.y_raw_0, "y_raw_0", expected.frame_index);
   CheckTensorEqual(expected.y_raw_1, actual.y_raw_1, "y_raw_1", expected.frame_index);
 }
 
 std::vector<Packet> ReadPackets(const std::filesystem::path& bitstream_path, int frame_limit) {
-  mlvc::io::MlvcBitstreamReader reader(bitstream_path);
+  ulbvc::io::UlbvcBitstreamReader reader(bitstream_path);
   std::vector<Packet> packets;
   while (frame_limit <= 0 || static_cast<int>(packets.size()) < frame_limit) {
     Packet packet;
@@ -58,31 +58,31 @@ std::vector<Packet> ReadPackets(const std::filesystem::path& bitstream_path, int
     }
     packets.push_back(std::move(packet));
   }
-  mlvc::Check(!packets.empty(), "entropy equivalence test received no bitstream frames");
+  ulbvc::Check(!packets.empty(), "entropy equivalence test received no bitstream frames");
   return packets;
 }
 
-mlvc::codec::DecodedEntropyFrame DecodePacket(mlvc::MlvcOfficialEntropyDecoder* decoder,
-                                              const mlvc::ModelRecord& decoder_record,
-                                              const Packet& packet, mlvc::Profiler* profiler) {
-  return mlvc::codec::DecodeMlvcEntropyFrame(decoder, decoder_record, packet.frame_index,
+ulbvc::codec::DecodedEntropyFrame DecodePacket(ulbvc::UlbvcOfficialEntropyDecoder* decoder,
+                                              const ulbvc::ModelRecord& decoder_record,
+                                              const Packet& packet, ulbvc::Profiler* profiler) {
+  return ulbvc::codec::DecodeUlbvcEntropyFrame(decoder, decoder_record, packet.frame_index,
                                              packet.frame_type, packet.q_index, packet.payload,
                                              profiler);
 }
 
-void CheckParallelEquivalence(const mlvc::ModelManifest& manifest,
-                              const mlvc::ModelRecord& decoder_record,
+void CheckParallelEquivalence(const ulbvc::ModelManifest& manifest,
+                              const ulbvc::ModelRecord& decoder_record,
                               const std::vector<Packet>& packets) {
-  mlvc::MlvcOfficialEntropyDecoder sequential_decoder(manifest);
-  std::vector<std::unique_ptr<mlvc::MlvcOfficialEntropyDecoder>> parallel_decoders;
+  ulbvc::UlbvcOfficialEntropyDecoder sequential_decoder(manifest);
+  std::vector<std::unique_ptr<ulbvc::UlbvcOfficialEntropyDecoder>> parallel_decoders;
   parallel_decoders.emplace_back(
-      std::make_unique<mlvc::MlvcOfficialEntropyDecoder>(manifest));
+      std::make_unique<ulbvc::UlbvcOfficialEntropyDecoder>(manifest));
   parallel_decoders.emplace_back(
-      std::make_unique<mlvc::MlvcOfficialEntropyDecoder>(manifest));
-  mlvc::EntropyWorker worker(2);
-  mlvc::Profiler profiler;
-  mlvc::app::OrderedFutureWindow<mlvc::codec::DecodedEntropyFrame> window(2);
-  std::deque<mlvc::codec::DecodedEntropyFrame> expected;
+      std::make_unique<ulbvc::UlbvcOfficialEntropyDecoder>(manifest));
+  ulbvc::EntropyWorker worker(2);
+  ulbvc::Profiler profiler;
+  ulbvc::app::OrderedFutureWindow<ulbvc::codec::DecodedEntropyFrame> window(2);
+  std::deque<ulbvc::codec::DecodedEntropyFrame> expected;
 
   for (const Packet& packet : packets) {
     expected.push_back(DecodePacket(&sequential_decoder, decoder_record, packet, &profiler));
@@ -91,7 +91,7 @@ void CheckParallelEquivalence(const mlvc::ModelManifest& manifest,
       expected.pop_front();
     }
     window.SubmitNext([&, packet](std::size_t slot) {
-      return worker.SubmitValue<mlvc::codec::DecodedEntropyFrame>([&, slot, packet] {
+      return worker.SubmitValue<ulbvc::codec::DecodedEntropyFrame>([&, slot, packet] {
         return DecodePacket(parallel_decoders.at(slot).get(), decoder_record, packet, &profiler);
       });
     });
@@ -100,17 +100,17 @@ void CheckParallelEquivalence(const mlvc::ModelManifest& manifest,
     CheckFrameEqual(expected.front(), window.PopFront());
     expected.pop_front();
   }
-  mlvc::Check(expected.empty(), "parallel entropy results were not fully compared");
+  ulbvc::Check(expected.empty(), "parallel entropy results were not fully compared");
 }
 
-void CheckDetailedProfileEvents(const mlvc::ModelManifest& manifest,
-                                const mlvc::ModelRecord& decoder_record, const Packet& packet) {
-  mlvc::MlvcOfficialEntropyDecoder decoder(manifest);
-  mlvc::Profiler profiler;
+void CheckDetailedProfileEvents(const ulbvc::ModelManifest& manifest,
+                                const ulbvc::ModelRecord& decoder_record, const Packet& packet) {
+  ulbvc::UlbvcOfficialEntropyDecoder decoder(manifest);
+  ulbvc::Profiler profiler;
   (void)DecodePacket(&decoder, decoder_record, packet, &profiler);
 
   std::set<std::string> names;
-  for (const mlvc::ProfileEvent& event : profiler.events()) {
+  for (const ulbvc::ProfileEvent& event : profiler.events()) {
     names.insert(event.name);
   }
   const std::vector<std::string> required = {
@@ -123,15 +123,15 @@ void CheckDetailedProfileEvents(const mlvc::ModelManifest& manifest,
       "entropy.y1.int8_to_fp16",
   };
   for (const std::string& name : required) {
-    mlvc::Check(names.count(name) == 1, "missing entropy profile event: " + name);
+    ulbvc::Check(names.count(name) == 1, "missing entropy profile event: " + name);
   }
 }
 
-double MeasureSequential(const mlvc::ModelManifest& manifest,
-                         const mlvc::ModelRecord& decoder_record,
+double MeasureSequential(const ulbvc::ModelManifest& manifest,
+                         const ulbvc::ModelRecord& decoder_record,
                          const std::vector<Packet>& packets) {
-  mlvc::MlvcOfficialEntropyDecoder decoder(manifest);
-  mlvc::Profiler profiler;
+  ulbvc::UlbvcOfficialEntropyDecoder decoder(manifest);
+  ulbvc::Profiler profiler;
   const auto begin = std::chrono::steady_clock::now();
   for (const Packet& packet : packets) {
     (void)DecodePacket(&decoder, decoder_record, packet, &profiler);
@@ -139,22 +139,22 @@ double MeasureSequential(const mlvc::ModelManifest& manifest,
   return std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
 }
 
-double MeasureParallel(const mlvc::ModelManifest& manifest,
-                       const mlvc::ModelRecord& decoder_record,
+double MeasureParallel(const ulbvc::ModelManifest& manifest,
+                       const ulbvc::ModelRecord& decoder_record,
                        const std::vector<Packet>& packets) {
-  std::vector<std::unique_ptr<mlvc::MlvcOfficialEntropyDecoder>> decoders;
-  decoders.emplace_back(std::make_unique<mlvc::MlvcOfficialEntropyDecoder>(manifest));
-  decoders.emplace_back(std::make_unique<mlvc::MlvcOfficialEntropyDecoder>(manifest));
-  mlvc::EntropyWorker worker(2);
-  mlvc::Profiler profiler;
-  mlvc::app::OrderedFutureWindow<mlvc::codec::DecodedEntropyFrame> window(2);
+  std::vector<std::unique_ptr<ulbvc::UlbvcOfficialEntropyDecoder>> decoders;
+  decoders.emplace_back(std::make_unique<ulbvc::UlbvcOfficialEntropyDecoder>(manifest));
+  decoders.emplace_back(std::make_unique<ulbvc::UlbvcOfficialEntropyDecoder>(manifest));
+  ulbvc::EntropyWorker worker(2);
+  ulbvc::Profiler profiler;
+  ulbvc::app::OrderedFutureWindow<ulbvc::codec::DecodedEntropyFrame> window(2);
   const auto begin = std::chrono::steady_clock::now();
   for (const Packet& packet : packets) {
     if (window.full()) {
       (void)window.PopFront();
     }
     window.SubmitNext([&, packet](std::size_t slot) {
-      return worker.SubmitValue<mlvc::codec::DecodedEntropyFrame>([&, slot, packet] {
+      return worker.SubmitValue<ulbvc::codec::DecodedEntropyFrame>([&, slot, packet] {
         return DecodePacket(decoders.at(slot).get(), decoder_record, packet, &profiler);
       });
     });
@@ -169,12 +169,12 @@ double MeasureParallel(const mlvc::ModelManifest& manifest,
 
 int main(int argc, char** argv) {
   try {
-    mlvc::Check(argc == 3 || argc == 4,
+    ulbvc::Check(argc == 3 || argc == 4,
                 "usage: test_entropy_decode_equivalence <manifest> <bitstream> [frames]");
     const int frame_limit = argc == 4 ? std::stoi(argv[3]) : 32;
-    mlvc::Check(frame_limit > 0, "entropy equivalence frame count must be positive");
-    const mlvc::ModelManifest manifest = mlvc::ModelManifest::Load(argv[1]);
-    const mlvc::ModelRecord& decoder_record = manifest.GetModel("MLVCDecoder");
+    ulbvc::Check(frame_limit > 0, "entropy equivalence frame count must be positive");
+    const ulbvc::ModelManifest manifest = ulbvc::ModelManifest::Load(argv[1]);
+    const ulbvc::ModelRecord& decoder_record = manifest.GetModel("ULBVCDecoder");
     const std::vector<Packet> packets = ReadPackets(argv[2], frame_limit);
 
     CheckDetailedProfileEvents(manifest, decoder_record, packets.front());

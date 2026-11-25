@@ -1,6 +1,6 @@
-# RTP MLVC receiver -> DVPP H.264 RTSP publisher.
+# RTP ULBVC receiver -> DVPP H.264 RTSP publisher.
 mode = "decode"
-manifest = "/root/workplace/grifcc/MLVC_310P1/mlvc1080p/manifest_motion_ascend310p1.json"
+manifest = "models/codec/manifest_motion_ascend310p1.json"
 format = "none"
 device = 0
 frame_num = -1
@@ -12,10 +12,10 @@ input_transport_port = 39340
 input_transport_payload_type = 96
 
 output_transport_mode = "rtsp"
-output_transport_rtsp_url = "rtsp://192.168.5.3:8554/mlvc"
+output_transport_rtsp_url = "rtsp://192.168.5.2:8554/ulbvc"
 output_transport_rtsp_encoder = "dvpp"
 output_transport_rtsp_preset = "ultrafast"
-output_transport_rtsp_transport = "udp"
+output_transport_rtsp_transport = "tcp"
 output_transport_rtsp_crf = 0
 output_transport_queue_capacity = 3
 
@@ -23,5 +23,5 @@ output_transport_queue_capacity = 3
 stream_workers = 1
 queue_capacity = 3
 frame_buffer_slots = 3
-entropy_workers = 1
+entropy_workers = 4
 graph_packet_capacity = 2

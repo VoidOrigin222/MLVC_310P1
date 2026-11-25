@@ -5,9 +5,9 @@
 
 ## 部署范围
 
-编码端 `mlvc_encoder`、解码端 `mlvc_decoder` 均使用
-`/root/workplace/grifcc/MLVC_310P1`，新增依赖位于 `/root/workplace/grifcc/deps`。
-未覆盖原 `/root/workplace/MLVC_c`、`/root/workplace/MLVC_decode` 部署及系统库。
+编码端 `ulbvc_encoder`、解码端 `ulbvc_decoder` 均使用
+`/root/workplace/grifcc/ULBVC_310P1`，新增依赖位于 `/root/workplace/grifcc/deps`。
+未覆盖原 `/root/workplace/ULBVC_c`、`/root/workplace/ULBVC_decode` 部署及系统库。
 Git 提交身份仅在新仓库配置为 `Grifcc <grifcc@foxmail.com>`。
 
 `translation_warp` 默认关闭。开启后使用 GOP 96、feature reset 32、禁用 LTR；
@@ -62,11 +62,11 @@ DVPP 路径使用持续的 **VENC 硬件 H.264 编码**，随后由软件 H.264 
 并解析 SPS/PPS/slice 校验上一帧参考策略。没有实现或声称 VDEC 硬解运动向量导出。
 软件提取和输入转换仍有开销；本结果不构成完整硬件编解码或长期实时性能验收。
 forced IDR probe 验证的是硬件代理通道的重置和过去参考运动向量：P1/P3/P5 的向量数量
-分别为 926、963、947。它没有改变新 MLVC 模式拒绝动态强制 I 帧的配置约束。
+分别为 926、963、947。它没有改变新 ULBVC 模式拒绝动态强制 I 帧的配置约束。
 
 ## 参考模型校验
 
-额外 `MLVCReferenceFromFrame` 输出形状为 `[1,96,136,240]`，
+额外 `ULBVCReferenceFromFrame` 输出形状为 `[1,96,136,240]`，
 包含 48 通道 feature 和 48 通道真实 memory，保留原 Python `feature_adaptor_i` 行为。
 输出不运行 `feature_adaptor_p`；主编解码模型继续执行该 adaptor。
 原 checkpoint 的 p-adaptor FP16 权重、偏置与两个主 ONNX initializer 严格一致。
@@ -97,7 +97,7 @@ oracle 来自原 checkpoint 的真实 Python 路径。板端日志位于两板
 | ReferenceFromFrame 310P1 OM（334172 字节） | `91f68c4cf52286ff20f2ca1b80d453fa70d275925d9c80680b56c90874ab962f` |
 | 独立 motion manifest | `83e51edf7d9c9f0392b741436c5266319a2b179e3a0b5e9eaa26282e984eaeb0` |
 
-manifest 文件为 `mlvc1080p/manifest_motion_ascend310p1.json`，保留原主模型及 sidecar，
+manifest 文件为 `ulbvc1080p/manifest_motion_ascend310p1.json`，保留原主模型及 sidecar，
 另加参考帧 adaptor 的形状、字节数和哈希；原 manifest 不覆盖。
 
 ## 板端验收资产索引
@@ -112,8 +112,8 @@ manifest 文件为 `mlvc1080p/manifest_motion_ascend310p1.json`，保留原主�
 | DVPP 无 trace 编码日志 | `/root/workplace/grifcc/dvpp-final-encode.log`（编码板） |
 | DVPP 无 trace 解码日志 | `/root/workplace/grifcc/dvpp-final-decode.log`（解码板） |
 | DVPP forced IDR probe 日志 | `/root/workplace/grifcc/dvpp-forced-idr.log`（编码板） |
-| DVPP 最终编码文件 | `/root/workplace/grifcc/MLVC_310P1/output/motion_dvpp.mlvc`（编码板） |
-| DVPP 最终解码输入文件 | `/root/workplace/grifcc/MLVC_310P1/output/motion.mlvc`（解码板） |
+| DVPP 最终编码文件 | `/root/workplace/grifcc/ULBVC_310P1/output/motion_dvpp.ulbvc`（编码板） |
+| DVPP 最终解码输入文件 | `/root/workplace/grifcc/ULBVC_310P1/output/motion.ulbvc`（解码板） |
 | 两板 trace 目录 | `/root/workplace/grifcc/trace-dvpp-rtp100` |
 | 两板 `sha256sum *.fp16` 清单 | `/root/workplace/grifcc/trace-dvpp-rtp100.sha256` |
 | 实际编码配置 | `/root/workplace/grifcc/configs/encoder-motion-rtp.toml` |

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scan MLVC ONNX model packages for PostSigmoidChunkAdd rewrite points."""
+"""Scan ULBVC ONNX model packages for PostSigmoidChunkAdd rewrite points."""
 
 from __future__ import annotations
 

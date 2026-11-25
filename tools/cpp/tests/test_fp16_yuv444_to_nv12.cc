@@ -1,6 +1,6 @@
-#include <mlvc/codec/tensor_data.h>
-#include <mlvc/codec/tensor_utils.h>
-#include <mlvc/io/fp16_yuv444_to_nv12.h>
+#include <ulbvc/codec/tensor_data.h>
+#include <ulbvc/codec/tensor_utils.h>
+#include <ulbvc/io/fp16_yuv444_to_nv12.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -14,16 +14,16 @@
 
 namespace {
 
-using mlvc::codec::TensorData;
-using mlvc::io::Nv12Layout;
+using ulbvc::codec::TensorData;
+using ulbvc::io::Nv12Layout;
 
 TensorData MakeFrame(int padded_width, int padded_height, float y, float u, float v) {
-  TensorData frame = mlvc::codec::MakeFp16Tensor({1, 3, padded_height, padded_width}, 0.0F);
+  TensorData frame = ulbvc::codec::MakeFp16Tensor({1, 3, padded_height, padded_width}, 0.0F);
   auto* data = reinterpret_cast<uint16_t*>(frame.bytes.data());
   const std::size_t plane = static_cast<std::size_t>(padded_width * padded_height);
-  const uint16_t y_half = static_cast<uint16_t>(mlvc::codec::FloatToHalfBits(y));
-  const uint16_t u_half = static_cast<uint16_t>(mlvc::codec::FloatToHalfBits(u));
-  const uint16_t v_half = static_cast<uint16_t>(mlvc::codec::FloatToHalfBits(v));
+  const uint16_t y_half = static_cast<uint16_t>(ulbvc::codec::FloatToHalfBits(y));
+  const uint16_t u_half = static_cast<uint16_t>(ulbvc::codec::FloatToHalfBits(u));
+  const uint16_t v_half = static_cast<uint16_t>(ulbvc::codec::FloatToHalfBits(v));
   std::fill(data, data + plane, y_half);
   std::fill(data + plane, data + 2 * plane, u_half);
   std::fill(data + 2 * plane, data + 3 * plane, v_half);
@@ -44,10 +44,10 @@ void ExpectBytes(const std::vector<uint8_t>& actual, const std::vector<uint8_t>&
 void TestConstantBlackAndWhite() {
   const Nv12Layout layout{4, 2, 4, 2};
   std::vector<uint8_t> output;
-  mlvc::io::ConvertFp16Yuv444ToNv12Scalar(MakeFrame(4, 2, 0.0F, 0.5F, 0.5F), layout, &output);
+  ulbvc::io::ConvertFp16Yuv444ToNv12Scalar(MakeFrame(4, 2, 0.0F, 0.5F, 0.5F), layout, &output);
   ExpectBytes(output, {0, 0, 0, 0, 0, 0, 0, 0, 128, 128, 128, 128}, "black");
 
-  mlvc::io::ConvertFp16Yuv444ToNv12Scalar(MakeFrame(4, 2, 1.0F, 0.5F, 0.5F), layout, &output);
+  ulbvc::io::ConvertFp16Yuv444ToNv12Scalar(MakeFrame(4, 2, 1.0F, 0.5F, 0.5F), layout, &output);
   ExpectBytes(output, {255, 255, 255, 255, 255, 255, 255, 255, 128, 128, 128, 128}, "white");
 }
 
@@ -57,11 +57,11 @@ void TestChromaAveragesTwoByTwo() {
   const std::size_t plane = 4;
   const float samples[4] = {0.0F, 0.5F, 0.5F, 1.0F};
   for (std::size_t i = 0; i < 4; ++i) {
-    data[plane + i] = static_cast<uint16_t>(mlvc::codec::FloatToHalfBits(samples[i]));
-    data[2 * plane + i] = static_cast<uint16_t>(mlvc::codec::FloatToHalfBits(1.0F - samples[i]));
+    data[plane + i] = static_cast<uint16_t>(ulbvc::codec::FloatToHalfBits(samples[i]));
+    data[2 * plane + i] = static_cast<uint16_t>(ulbvc::codec::FloatToHalfBits(1.0F - samples[i]));
   }
   std::vector<uint8_t> output;
-  mlvc::io::ConvertFp16Yuv444ToNv12Scalar(frame, {2, 2, 2, 2}, &output);
+  ulbvc::io::ConvertFp16Yuv444ToNv12Scalar(frame, {2, 2, 2, 2}, &output);
   ExpectBytes(output, {64, 64, 64, 64, 128, 128}, "chroma average");
 }
 
@@ -70,11 +70,11 @@ void TestVisibleCropAndStridePadding() {
   auto* data = reinterpret_cast<uint16_t*>(frame.bytes.data());
   for (int y = 0; y < 2; ++y) {
     for (int x = 0; x < 4; ++x) {
-      data[y * 6 + x] = static_cast<uint16_t>(mlvc::codec::FloatToHalfBits(1.0F));
+      data[y * 6 + x] = static_cast<uint16_t>(ulbvc::codec::FloatToHalfBits(1.0F));
     }
   }
   std::vector<uint8_t> output;
-  mlvc::io::ConvertFp16Yuv444ToNv12Scalar(frame, {4, 2, 8, 4}, &output);
+  ulbvc::io::ConvertFp16Yuv444ToNv12Scalar(frame, {4, 2, 8, 4}, &output);
   Expect(output.size() == 48, "strided NV12 size");
   for (int y = 0; y < 2; ++y) {
     for (int x = 0; x < 4; ++x) Expect(output[y * 8 + x] == 255, "visible Y");
@@ -95,7 +95,7 @@ void TestRejectsOddVisibleDimensions() {
   bool rejected = false;
   try {
     std::vector<uint8_t> output;
-    mlvc::io::ConvertFp16Yuv444ToNv12Scalar(MakeFrame(4, 2, 0.0F, 0.5F, 0.5F), {3, 2, 4, 2},
+    ulbvc::io::ConvertFp16Yuv444ToNv12Scalar(MakeFrame(4, 2, 0.0F, 0.5F, 0.5F), {3, 2, 4, 2},
                                             &output);
   } catch (const std::exception&) {
     rejected = true;
@@ -105,20 +105,20 @@ void TestRejectsOddVisibleDimensions() {
 
 void TestOptimizedMatchesScalar() {
 #if defined(__aarch64__)
-  Expect(mlvc::io::Fp16Yuv444ToNv12UsesNeon(), "AArch64 build must use the NEON converter");
+  Expect(ulbvc::io::Fp16Yuv444ToNv12UsesNeon(), "AArch64 build must use the NEON converter");
 #endif
   TensorData frame = MakeFrame(32, 20, 0.0F, 0.0F, 0.0F);
   auto* data = reinterpret_cast<uint16_t*>(frame.bytes.data());
   std::mt19937 random(12345);
   std::uniform_real_distribution<float> values(-0.25F, 1.25F);
   for (std::size_t i = 0; i < frame.Elements(); ++i) {
-    data[i] = static_cast<uint16_t>(mlvc::codec::FloatToHalfBits(values(random)));
+    data[i] = static_cast<uint16_t>(ulbvc::codec::FloatToHalfBits(values(random)));
   }
   const Nv12Layout layout{32, 18, 48, 20};
   std::vector<uint8_t> scalar;
   std::vector<uint8_t> optimized;
-  mlvc::io::ConvertFp16Yuv444ToNv12Scalar(frame, layout, &scalar);
-  mlvc::io::ConvertFp16Yuv444ToNv12(frame, layout, &optimized);
+  ulbvc::io::ConvertFp16Yuv444ToNv12Scalar(frame, layout, &scalar);
+  ulbvc::io::ConvertFp16Yuv444ToNv12(frame, layout, &optimized);
   ExpectBytes(optimized, scalar, "optimized versus scalar");
 }
 
@@ -127,12 +127,12 @@ void TestInt8ToFp16Conversion() {
   for (int value = -128; value <= 127; ++value) {
     symbols[static_cast<std::size_t>(value + 128)] = static_cast<int8_t>(value);
   }
-  mlvc::codec::TensorData tensor;
-  mlvc::codec::FloatToFp16TensorFromInt8(symbols, mlvc::TensorShape({1, 1, 1, 256}), &tensor);
+  ulbvc::codec::TensorData tensor;
+  ulbvc::codec::FloatToFp16TensorFromInt8(symbols, ulbvc::TensorShape({1, 1, 1, 256}), &tensor);
   const auto* actual = reinterpret_cast<const uint16_t*>(tensor.bytes.data());
   for (int value = -128; value <= 127; ++value) {
     const uint16_t expected = static_cast<uint16_t>(
-        mlvc::codec::FloatToHalfBits(static_cast<float>(value)));
+        ulbvc::codec::FloatToHalfBits(static_cast<float>(value)));
     Expect(actual[value + 128] == expected, "exact int8 to fp16 conversion");
   }
 }

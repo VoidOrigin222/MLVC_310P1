@@ -135,7 +135,7 @@ def run(args):
         verification.append({"case": case, "python_split_then_p_exact": True,
                              "onnx_pre_p": metrics, "onnx_then_p": chained_metrics,
                              "memory_abs_max": float(raw_memory.abs().max())})
-    report = {"stage": "MLVCReferenceFromFrame", "onnx": str(args.output.resolve()),
+    report = {"stage": "ULBVCReferenceFromFrame", "onnx": str(args.output.resolve()),
               "onnx_sha256": sha256(args.output), "checkpoint": str(args.checkpoint.resolve()),
               "checkpoint_sha256": sha256(args.checkpoint), "model_config": MODEL_CONFIG,
               "input": {"name": "ref_frame", "shape": list(shape), "dtype": "float16", "range": [0, 1]},

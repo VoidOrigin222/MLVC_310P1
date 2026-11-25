@@ -1,8 +1,8 @@
-#include "mlvc/framework/async_plan.h"
+#include "ulbvc/framework/async_plan.h"
 
-#include "mlvc/core/status.h"
+#include "ulbvc/core/status.h"
 
-namespace mlvc {
+namespace ulbvc {
 
 AsyncFramePlan::AsyncFramePlan(std::size_t pinned_bytes_per_slot, int slots) {
   Check(slots > 0, "async plan requires at least one pinned slot");
@@ -29,4 +29,4 @@ void AsyncFramePlan::RecordCopy(const std::string& name, std::size_t bytes, doub
 
 void AsyncFramePlan::ClearCopyRecords() { copy_records_.clear(); }
 
-}  // namespace mlvc
+}  // namespace ulbvc

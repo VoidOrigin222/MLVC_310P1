@@ -1,4 +1,4 @@
-#include <mlvc/application/cli/runtime_environment.h>
+#include <ulbvc/application/cli/runtime_environment.h>
 #include <unistd.h>
 
 #include <cstdlib>
@@ -8,10 +8,10 @@
 #include <system_error>
 #include <vector>
 
-namespace mlvc {
+namespace ulbvc {
 namespace {
 
-constexpr char kRuntimeEnvBootstrapped[] = "MLVC_CODEC_RUNTIME_ENV_BOOTSTRAPPED";
+constexpr char kRuntimeEnvBootstrapped[] = "ULBVC_CODEC_RUNTIME_ENV_BOOTSTRAPPED";
 
 void AppendIfDirectory(const std::filesystem::path& path,
                        std::vector<std::filesystem::path>* paths) {
@@ -49,11 +49,11 @@ std::string BuildLibraryPath(const std::vector<std::filesystem::path>& paths) {
 }
 
 void SetPriorOpapiLibraryIfPresent(const std::filesystem::path& repo_root) {
-  constexpr char kPriorOpapiEnv[] = "MLVC_PRIOR_OPAPI_LIB";
+  constexpr char kPriorOpapiEnv[] = "ULBVC_PRIOR_OPAPI_LIB";
   if (std::getenv(kPriorOpapiEnv) != nullptr) {
     return;
   }
-  const std::filesystem::path library = repo_root / "output" / "custom_opp" / "mlvc_prior_ops" /
+  const std::filesystem::path library = repo_root / "output" / "custom_opp" / "ulbvc_prior_ops" /
                                         "vendors" / "ulbvc" / "op_api" / "lib" / "libcust_opapi.so";
   std::error_code error;
   if (std::filesystem::is_regular_file(library, error)) {
@@ -80,7 +80,7 @@ void PrepareAscendRuntimeEnvironment(char** argv) {
   AppendIfDirectory(repo_root / "output" / "custom_opp" / "wsiluchunkadd" / "vendors" / "ulbvc" /
                         "op_api" / "lib",
                     &library_dirs);
-  AppendIfDirectory(repo_root / "output" / "custom_opp" / "mlvc_prior_ops" / "vendors" / "ulbvc" /
+  AppendIfDirectory(repo_root / "output" / "custom_opp" / "ulbvc_prior_ops" / "vendors" / "ulbvc" /
                         "op_api" / "lib",
                     &library_dirs);
   SetPriorOpapiLibraryIfPresent(repo_root);
@@ -95,4 +95,4 @@ void PrepareAscendRuntimeEnvironment(char** argv) {
   std::cerr << "warning: failed to restart with ACL runtime library path; continuing\n";
 }
 
-}  // namespace mlvc
+}  // namespace ulbvc

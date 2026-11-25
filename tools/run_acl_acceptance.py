@@ -29,7 +29,7 @@ def source_manifest_for(source_root: Path, resolution: str) -> Path:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path("."))
-    parser.add_argument("--source-root", type=Path, default=Path("/root/workspace/cgc/mlvc_cpp/models"))
+    parser.add_argument("--source-root", type=Path, default=Path("/root/workspace/cgc/ulbvc_cpp/models"))
     parser.add_argument("--models-root", type=Path, default=Path("models"))
     parser.add_argument("--acceptance-root", type=Path, default=Path("reports/acl_acceptance"))
     parser.add_argument("--build-dir", type=Path, default=Path("build"))

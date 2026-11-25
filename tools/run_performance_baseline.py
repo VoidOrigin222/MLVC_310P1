@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run short MLVC encode/decode baselines and write curated reports."""
+"""Run short ULBVC encode/decode baselines and write curated reports."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ RESOLUTIONS = {
         "input": "test_video/60s.mp4",
     },
     "1080p": {
-        "manifest": "../mlvc1080p/manifest.json",
+        "manifest": "../ulbvc1080p/manifest.json",
         "input": "test_video/60s_1080p.mp4",
     },
 }
@@ -172,8 +172,8 @@ def run_baselines(args: argparse.Namespace) -> dict[str, Any]:
     config_root = report_root / "run_configs"
     log_root = report_root / "logs"
     build_dir = root / args.build_dir
-    encode_binary = build_dir / "mlvc_encode"
-    decode_binary = build_dir / "mlvc_decode"
+    encode_binary = build_dir / "ulbvc_encode"
+    decode_binary = build_dir / "ulbvc_decode"
     if not encode_binary.exists() or not decode_binary.exists():
         raise SystemExit(f"missing build binaries under {build_dir}")
 

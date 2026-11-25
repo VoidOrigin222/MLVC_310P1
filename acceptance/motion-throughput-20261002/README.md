@@ -2,7 +2,7 @@
 
 验收日期：2026-10-02。本记录补充后续性能优化；
 [原 100 帧功能验收](../translation-warp-20261002/README.md) 保留为历史证据。
-开发、依赖和运行均位于两板 `/root/workplace/grifcc` 下的新部署，原 MLVC 部署未覆盖。
+开发、依赖和运行均位于两板 `/root/workplace/grifcc` 下的新部署，原 ULBVC 部署未覆盖。
 部署版本通过新仓库内 `git rev-parse HEAD` 读取，最终提交 SHA 另行交付。
 
 ## 已确认结论与适用范围
@@ -22,7 +22,7 @@
 
 两帧预取表示在当前编码帧之外最多持有两帧，不表示输出总延迟只有两帧。
 `ready_at` 在源 tensor 读完、NV12 转换前记录；ready-to-output 包含转换、运动、
-MLVC 编码、熵任务和文件写入或 RTP 入队调用，终点不是接收或显示。
+ULBVC 编码、熵任务和文件写入或 RTP 入队调用，终点不是接收或显示。
 300 帧推荐组合的文件输出平均值为 126.896 ms、最大值为 174.464 ms，
 超过 30 FPS 下的两帧时间约 66.7 ms，因此本轮没有证明“总延迟不超过两帧”。
 
@@ -38,14 +38,14 @@ MLVC 编码、熵任务和文件写入或 RTP 入队调用，终点不是接收�
 | DVPP | 2 | **30.3582** | 94.1647 | 126.896 | 174.464 | 2 |
 | libx264 ultrafast / 8 threads | 2 | 27.2604 | — | 138.885 | 191.766 | 2 |
 
-DVPP 三种预取设置的 MLVC 文件 SHA256 完全一致：
+DVPP 三种预取设置的 ULBVC 文件 SHA256 完全一致：
 `4f2605b39802b2322919ad9868c7ba0d0539e51caddd84000d9c8b22287ffda1`。
 它与优化前 DVPP 串行 300 帧结果也完全一致；优化前该次串行吞吐为 16.338 FPS。
 此证据证明该 sample 的最终码流保持一致，不扩展为其他输入的通用一致性结论。
 
 在线 libx264 默认 medium/1 的 100 帧文件仍与原结果逐位一致，SHA256 为
 `a917a3efbd5b31b02d9c714ca80146a7e93ec2d83a636aa36000512689907aeb`。
-其他 preset/线程数可能改变运动向量和 MLVC 码流，不能继承这个结论。
+其他 preset/线程数可能改变运动向量和 ULBVC 码流，不能继承这个结论。
 先前 8 线程参考测量约为 medium 12.20、veryfast 16.84、superfast 17.93 FPS，
 本轮未选用；正式后端对比以表中重测的 ultrafast/8 为准。
 
@@ -86,7 +86,7 @@ RTP 入口为 [encoder_motion_rtp_prefetch2.toml](../../configs/encoder_motion_r
 
 ```bash
 # 编码板，在新部署目录运行。
-cd /root/workplace/grifcc/MLVC_310P1
+cd /root/workplace/grifcc/ULBVC_310P1
 mkdir -p output
 bash scripts/bash_run_encode.sh configs/encoder_motion_dvpp_prefetch2.toml
 ```
@@ -94,12 +94,12 @@ bash scripts/bash_run_encode.sh configs/encoder_motion_dvpp_prefetch2.toml
 文件编码完成后，在本机终端转存到解码配置的输入路径：
 
 ```powershell
-scp -3 mlvc_encoder:/root/workplace/grifcc/MLVC_310P1/output/motion_dvpp_prefetch2.mlvc mlvc_decoder:/root/workplace/grifcc/MLVC_310P1/output/motion.mlvc
+scp -3 ulbvc_encoder:/root/workplace/grifcc/ULBVC_310P1/output/motion_dvpp_prefetch2.ulbvc ulbvc_decoder:/root/workplace/grifcc/ULBVC_310P1/output/motion.ulbvc
 ```
 
 ```bash
 # 解码板
-cd /root/workplace/grifcc/MLVC_310P1
+cd /root/workplace/grifcc/ULBVC_310P1
 bash scripts/bash_run.sh configs/decoder_motion.toml
 ```
 
@@ -107,24 +107,24 @@ RTP 先启动解码板接收，再启动编码板；地址 `192.168.5.11`、端�
 
 ```bash
 # 解码板
-cd /root/workplace/grifcc/MLVC_310P1
+cd /root/workplace/grifcc/ULBVC_310P1
 bash scripts/bash_run.sh configs/decoder_motion_rtp.toml
 ```
 
 ```bash
 # 编码板
-cd /root/workplace/grifcc/MLVC_310P1
+cd /root/workplace/grifcc/ULBVC_310P1
 bash scripts/bash_run_encode.sh configs/encoder_motion_rtp_prefetch2.toml
 ```
 
 完整文件传输、解码和诊断操作见 [部署说明](../../docs/translation_warp.md)。
-输入准备、运动代理和 MLVC 编码分别执行；NV12 缓存与源 tensor 共用 slot lease，
+输入准备、运动代理和 ULBVC 编码分别执行；NV12 缓存与源 tensor 共用 slot lease，
 三帧槽限制当前帧加两帧未来帧。DVPP 直接 H2D 到编码器自有池，省去中间 D2D。
 固定 QP 且开启预取时按帧序提前发送已 ready 的熵任务，保留未 ready 和窗口满时的
 兜底回收；有码率控制及默认串行模式保持旧时序。
 
 DVPP 仅代理 H.264 编码由 VENC 硬件完成，MV 仍由软件解码器导出，不声称 VDEC 硬解。
-skip 仅作用于运动软件解码器的环路滤波，其像素输出会丢弃，不跳过 MLVC 重构。
+skip 仅作用于运动软件解码器的环路滤波，其像素输出会丢弃，不跳过 ULBVC 重构。
 该路径处理本机受限代理码流，不扩大支持外部任意 H.264；拒绝 FFmpeg 报告的解码
 错误或损坏帧，不保证检测任意损坏、截断或错误掩盖。
 
@@ -205,8 +205,8 @@ RTP enqueue 时延不包含后续网络传输、接收和显示，不能当作�
 
 | 程序 | SHA256 |
 | --- | --- |
-| 编码板 `build/mlvc_encode` | `7986728cebe5dc5db262e06677e07f41e19b6c869607c1d0d91a1219550b16d6` |
-| 解码板 `build/mlvc_decode` | `cc859df4b5d6583bba69f515b209f28b9cd358ce150effeee40554dfd48840b8` |
+| 编码板 `build/ulbvc_encode` | `7986728cebe5dc5db262e06677e07f41e19b6c869607c1d0d91a1219550b16d6` |
+| 解码板 `build/ulbvc_decode` | `cc859df4b5d6583bba69f515b209f28b9cd358ce150effeee40554dfd48840b8` |
 
 本记录内的测试、回归、MV 对照、文件和双机 RTP 验收已完成。
 主流程提交、推送后另行交付最终 SHA，并核对两板新仓库 HEAD 一致。

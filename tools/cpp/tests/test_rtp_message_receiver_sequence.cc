@@ -7,24 +7,24 @@
 #include <stdexcept>
 #include <vector>
 
-#include "mlvc/transport/rtp_message_receiver.h"
-#include "mlvc/transport/mlvc_media_unit.h"
-#include "mlvc/transport/rtp_mlvc.h"
+#include "ulbvc/transport/rtp_message_receiver.h"
+#include "ulbvc/transport/ulbvc_media_unit.h"
+#include "ulbvc/transport/rtp_ulbvc.h"
 
-using mlvc::transport::kEfuRandomAccess;
-using mlvc::transport::kEfuResetReference;
-using mlvc::transport::kMlvcHeaderMaxBytes;
-using mlvc::transport::kRtpMlvcEnd;
-using mlvc::transport::kRtpMlvcStart;
-using mlvc::transport::MlvcEfu;
-using mlvc::transport::MlvcScu;
-using mlvc::transport::ParseEfu;
-using mlvc::transport::EncodeRtpMlvcFragment;
-using mlvc::transport::RtpMessageReceiver;
-using mlvc::transport::RtpMlvcFragment;
-using mlvc::transport::RtpUnitType;
-using mlvc::transport::SerializeEfu;
-using mlvc::transport::SerializeScu;
+using ulbvc::transport::kEfuRandomAccess;
+using ulbvc::transport::kEfuResetReference;
+using ulbvc::transport::kUlbvcHeaderMaxBytes;
+using ulbvc::transport::kRtpUlbvcEnd;
+using ulbvc::transport::kRtpUlbvcStart;
+using ulbvc::transport::UlbvcEfu;
+using ulbvc::transport::UlbvcScu;
+using ulbvc::transport::ParseEfu;
+using ulbvc::transport::EncodeRtpUlbvcFragment;
+using ulbvc::transport::RtpMessageReceiver;
+using ulbvc::transport::RtpUlbvcFragment;
+using ulbvc::transport::RtpUnitType;
+using ulbvc::transport::SerializeEfu;
+using ulbvc::transport::SerializeScu;
 
 namespace {
 
@@ -35,8 +35,8 @@ void Require(bool condition, const char* message) {
 }
 
 std::vector<uint8_t> MakeRtpPacket(uint16_t sequence, uint32_t ssrc,
-                                   const RtpMlvcFragment& fragment) {
-  const std::vector<uint8_t> payload = EncodeRtpMlvcFragment(fragment);
+                                   const RtpUlbvcFragment& fragment) {
+  const std::vector<uint8_t> payload = EncodeRtpUlbvcFragment(fragment);
   std::vector<uint8_t> packet(12, 0);
   packet[0] = 0x80;  // RTP version 2.
   const bool is_last_fragment =
@@ -71,15 +71,15 @@ void SendPacket(int socket, uint16_t port, const std::vector<uint8_t>& packet) {
   Require(sent == static_cast<ssize_t>(packet.size()), "failed to send RTP test packet");
 }
 
-RtpMlvcFragment CompleteFragment(uint32_t unit_id, uint8_t value) {
-  MlvcEfu efu;
+RtpUlbvcFragment CompleteFragment(uint32_t unit_id, uint8_t value) {
+  UlbvcEfu efu;
   efu.config_id = 7;
   efu.frame_id = unit_id;
   efu.frame_type = 0;
   efu.unit_flags |= kEfuRandomAccess | kEfuResetReference;
   efu.entropy_payload = {value};
   const auto bytes = SerializeEfu(efu);
-  return RtpMlvcFragment{RtpUnitType::kEfu, kRtpMlvcStart | kRtpMlvcEnd, 7, unit_id, 0,
+  return RtpUlbvcFragment{RtpUnitType::kEfu, kRtpUlbvcStart | kRtpUlbvcEnd, 7, unit_id, 0,
                          static_cast<uint32_t>(bytes.size()), bytes};
 }
 
@@ -145,12 +145,12 @@ void TestReorderStillReassembles() {
   std::vector<uint8_t> unit;
   const auto complete = CompleteFragment(20, 0xaa);
   const std::size_t split = complete.payload.size() / 2;
-  const RtpMlvcFragment tail{RtpUnitType::kEfu, kRtpMlvcEnd, 7, 20,
+  const RtpUlbvcFragment tail{RtpUnitType::kEfu, kRtpUlbvcEnd, 7, 20,
                              static_cast<uint32_t>(split),
                              static_cast<uint32_t>(complete.payload.size()),
                              std::vector<uint8_t>(complete.payload.begin() + split,
                                                   complete.payload.end())};
-  const RtpMlvcFragment head{RtpUnitType::kEfu, kRtpMlvcStart, 7, 20, 0,
+  const RtpUlbvcFragment head{RtpUnitType::kEfu, kRtpUlbvcStart, 7, 20, 0,
                              static_cast<uint32_t>(complete.payload.size()),
                              std::vector<uint8_t>(complete.payload.begin(),
                                                   complete.payload.begin() + split)};
@@ -221,15 +221,15 @@ void TestMarkerMismatchRejected() {
 void TestScuFrameLimitAppliedBeforeReassembly() {
   RtpMessageReceiver receiver(0, "SCU frame-limit test");
   const int sender = MakeSenderSocket();
-  MlvcScu scu;
+  UlbvcScu scu;
   scu.config_id = 9;
   scu.coded_width = scu.visible_width = 64;
   scu.coded_height = scu.visible_height = 64;
   scu.max_frame_bytes = 1;
   scu.codec_bundle_sha256.fill(0x42);
   const auto scu_bytes = SerializeScu(scu);
-  const RtpMlvcFragment scu_fragment{RtpUnitType::kScu,
-                                     kRtpMlvcStart | kRtpMlvcEnd,
+  const RtpUlbvcFragment scu_fragment{RtpUnitType::kScu,
+                                     kRtpUlbvcStart | kRtpUlbvcEnd,
                                      9,
                                      9,
                                      0,
@@ -239,12 +239,12 @@ void TestScuFrameLimitAppliedBeforeReassembly() {
   std::vector<uint8_t> unit;
   Require(receiver.Receive(&unit), "SCU frame-limit setup was not received");
 
-  const RtpMlvcFragment oversized_efu{RtpUnitType::kEfu,
-                                      kRtpMlvcStart,
+  const RtpUlbvcFragment oversized_efu{RtpUnitType::kEfu,
+                                      kRtpUlbvcStart,
                                       9,
                                       0,
                                       0,
-                                      static_cast<uint32_t>(kMlvcHeaderMaxBytes + 2),
+                                      static_cast<uint32_t>(kUlbvcHeaderMaxBytes + 2),
                                       {0x01}};
   SendPacket(sender, receiver.local_port(),
              MakeRtpPacket(2, 0xabcdef01, oversized_efu));

@@ -35,14 +35,14 @@ def make_source_manifest(source_manifest: Path) -> None:
         {
             "created_at": "2026-05-16T00:00:00Z",
             "dtype": "fp16",
-            "sidecar": {"file": "sidecars.mlvcsc", "bytes": 1, "sha256": sha256_bytes(b"s")},
+            "sidecar": {"file": "sidecars.ulbvcsc", "bytes": 1, "sha256": sha256_bytes(b"s")},
             "models": [{"name": "stage_a", "file": "stage_a.sim.onnx"}],
         },
     )
 
 
 def make_acl_manifest(root: Path) -> Path:
-    sidecar = write_file(root / "sidecars.mlvcsc", b"s")
+    sidecar = write_file(root / "sidecars.ulbvcsc", b"s")
     runtime_artifacts = []
     for name in ("metadata.json", "gaussian_pmf.json", "bit_estimator_pmf.json"):
         runtime_artifacts.append({"name": name, "file": name, **write_file(root / name, b"{}")})
@@ -58,7 +58,7 @@ def make_acl_manifest(root: Path) -> Path:
         "runtime": "acl",
         "soc_version": "Ascend310P3",
         "dtype": "fp16",
-        "sidecar": {"file": "sidecars.mlvcsc", **sidecar},
+        "sidecar": {"file": "sidecars.ulbvcsc", **sidecar},
         "runtime_artifacts": runtime_artifacts,
         "models": [
             {
@@ -106,7 +106,7 @@ def assert_true(condition: bool, message: str) -> None:
 
 
 def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="mlvc_acl_stage_validation_") as temp:
+    with tempfile.TemporaryDirectory(prefix="ulbvc_acl_stage_validation_") as temp:
         root = Path(temp)
         source_manifest = root / "source" / "720p" / "manifest.json"
         acl_manifest = make_acl_manifest(root / "models" / "720p_acl")

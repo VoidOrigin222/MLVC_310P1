@@ -7,9 +7,9 @@
 #include <thread>
 #include <vector>
 
-#include "mlvc/core/status.h"
-#include "mlvc/core/tensor_handle.h"
-#include "mlvc/runtime/acl_runtime.h"
+#include "ulbvc/core/status.h"
+#include "ulbvc/core/tensor_handle.h"
+#include "ulbvc/runtime/acl_runtime.h"
 
 int main(int argc, char** argv) {
   int device = 0;
@@ -24,16 +24,16 @@ int main(int argc, char** argv) {
   }
 
   try {
-    mlvc::AclRuntime runtime(device);
-    mlvc::TensorCopyResult upload;
-    mlvc::TensorCopyResult download;
+    ulbvc::AclRuntime runtime(device);
+    ulbvc::TensorCopyResult upload;
+    ulbvc::TensorCopyResult download;
     std::string residency;
     std::exception_ptr worker_error;
     std::thread worker([&] {
       try {
         runtime.MakeCurrent();
-        mlvc::TensorHandle handle(mlvc::TensorShape(std::vector<int64_t>{1, 1, 1, 16}),
-                                  mlvc::DataType::kUInt8);
+        ulbvc::TensorHandle handle(ulbvc::TensorShape(std::vector<int64_t>{1, 1, 1, 16}),
+                                  ulbvc::DataType::kUInt8);
         std::vector<uint8_t> input(handle.bytes());
         for (std::size_t i = 0; i < input.size(); ++i) {
           input[i] = static_cast<uint8_t>(i * 7 + 3);
@@ -43,7 +43,7 @@ int main(int argc, char** argv) {
         handle.MarkAclModified();
         download = handle.MaterializeToCpu("validation", runtime.stream());
         if (std::memcmp(handle.CpuView().data(), input.data(), input.size()) != 0) {
-          throw mlvc::Error("TensorHandle ACL round trip mismatch");
+          throw ulbvc::Error("TensorHandle ACL round trip mismatch");
         }
         residency = handle.ResidencyString();
       } catch (...) {

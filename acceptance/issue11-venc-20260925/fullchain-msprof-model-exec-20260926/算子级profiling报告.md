@@ -4,7 +4,7 @@
 
 ## 采样范围
 
-Profiler 的有效算子汇总包含 **96 次** `MLVCDecoder_ascend310p1` 执行（Model ID 2），以及 96 次 `MlvcFp16Yuv444ToNv12` 自定义算子执行；应用本身处理了 537 帧。算子时长是这些已采样硬件任务的汇总，不等于全链路墙钟耗时，也不要把不同 stream 的任务时长直接相加来推算 FPS。
+Profiler 的有效算子汇总包含 **96 次** `ULBVCDecoder_ascend310p1` 执行（Model ID 2），以及 96 次 `UlbvcFp16Yuv444ToNv12` 自定义算子执行；应用本身处理了 537 帧。算子时长是这些已采样硬件任务的汇总，不等于全链路墙钟耗时，也不要把不同 stream 的任务时长直接相加来推算 FPS。
 
 首次采集未启用 `--model-execution=on`，只得到模型 API 总时长且硬件任务汇总异常；本报告只使用第二次、打开该开关后生成的 `op_summary` / `op_statistic` 数据。
 
@@ -12,11 +12,11 @@ Profiler 的有效算子汇总包含 **96 次** `MLVCDecoder_ascend310p1` 执行
 
 | 算子类别 | 96 次采样总时长 | 折算每次解码执行 | 占汇总 AI Core 任务时长 |
 |---|---:|---:|---:|
-| Conv2D（MLVCDecoder） | 2,035.2 ms | 21.20 ms | 48.45% |
+| Conv2D（ULBVCDecoder） | 2,035.2 ms | 21.20 ms | 48.45% |
 | FP16 YUV444→NV12 自定义算子 | 1,214.6 ms | 12.65 ms | 28.92% |
-| StridedSliceD（MLVCDecoder） | 398.9 ms | 4.16 ms | 9.50% |
-| TransData（MLVCDecoder） | 335.0 ms | 3.49 ms | 7.98% |
-| DepthToSpace（MLVCDecoder） | 174.0 ms | 1.81 ms | 4.14% |
+| StridedSliceD（ULBVCDecoder） | 398.9 ms | 4.16 ms | 9.50% |
+| TransData（ULBVCDecoder） | 335.0 ms | 3.49 ms | 7.98% |
+| DepthToSpace（ULBVCDecoder） | 174.0 ms | 1.81 ms | 4.14% |
 
 模型内具体热点（`op_summary` 的 Task Duration）：
 
@@ -27,7 +27,7 @@ Profiler 的有效算子汇总包含 **96 次** `MLVCDecoder_ascend310p1` 执行
 
 自定义 FP16→NV12 算子在 96 次采样中平均 **12.65 ms**，与应用 trace 中约 12.8 ms/帧吻合，证明本次全链路使用的是 ACL 自定义算子，而非 CPU fallback；之前单算子测试的更低时延没有在全链路里复现。
 
-交叉检查本轮 537 帧应用 trace：`MLVCDecoder` 阶段平均 **31.75 ms/帧**，FP16→NV12 device 事件平均 **12.89 ms/帧**。Profiler 汇总的 Decoder 节点任务时长折算约 **31.10 ms/次**，量级吻合。两者测量范围不同，不能当作完全相同的计时口径。
+交叉检查本轮 537 帧应用 trace：`ULBVCDecoder` 阶段平均 **31.75 ms/帧**，FP16→NV12 device 事件平均 **12.89 ms/帧**。Profiler 汇总的 Decoder 节点任务时长折算约 **31.10 ms/次**，量级吻合。两者测量范围不同，不能当作完全相同的计时口径。
 
 ## 优化优先级
 

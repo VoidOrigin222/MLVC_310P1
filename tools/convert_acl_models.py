@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert a MLVC ONNX model manifest to rewritten ONNX, ATC OM, AOE OM, and ACL manifest."""
+"""Convert a ULBVC ONNX model manifest to rewritten ONNX, ATC OM, AOE OM, and ACL manifest."""
 
 from __future__ import annotations
 

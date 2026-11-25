@@ -1,4 +1,4 @@
-#include "mlvc/transport/udp_message_transport.h"
+#include "ulbvc/transport/udp_message_transport.h"
 
 #include <cassert>
 #include <condition_variable>
@@ -12,7 +12,7 @@ int main() {
   std::condition_variable hook_cv;
   bool first_send_started = false;
   bool release_first_send = false;
-  mlvc::transport::UdpSendOptions options;
+  ulbvc::transport::UdpSendOptions options;
   options.before_send = [&] {
     std::unique_lock<std::mutex> lock(hook_mutex);
     ++send_count;
@@ -27,7 +27,7 @@ int main() {
 
   bool flush_failed = false;
   {
-    mlvc::transport::UdpMessageSender sender("127.0.0.1", 9, "flush error test", options);
+    ulbvc::transport::UdpMessageSender sender("127.0.0.1", 9, "flush error test", options);
     sender.Send({1});
     {
       std::unique_lock<std::mutex> lock(hook_mutex);
@@ -48,14 +48,14 @@ int main() {
   }
   assert(flush_failed);
 
-  mlvc::transport::UdpSendOptions queue_limits;
+  ulbvc::transport::UdpSendOptions queue_limits;
   queue_limits.pacing_rate_bps = 8000000;
   queue_limits.max_burst_bytes = 2048;
   queue_limits.max_queue_bytes = 4096;
   queue_limits.max_queue_delay_ms = 1;
   bool oversized_delay_rejected = false;
   {
-    mlvc::transport::UdpMessageSender sender("127.0.0.1", 9, "queue delay limit test",
+    ulbvc::transport::UdpMessageSender sender("127.0.0.1", 9, "queue delay limit test",
                                              queue_limits);
     try {
       sender.Send(std::vector<uint8_t>(1100, 0x5a));

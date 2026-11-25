@@ -1,4 +1,4 @@
-# Encoder board: native 1080p V4L2 camera into MLVC
+# Encoder board: native 1080p V4L2 camera into ULBVC
 
 Verified on the Ascend 310P1 encoder board on 2026-09-29. `/dev/video0`
 negotiates MJPG 1920×1080 at 30 FPS; its 1080p mode cannot deliver more than
@@ -34,19 +34,19 @@ The sections below record the earlier isolated camera benchmark.
 `scripts/bash_run_encode_camera_1080p.sh` selects the isolated camera binary
 and `configs/encoder_camera_1080p.toml`. It reads V4L2 MMAP MJPEG, decodes
 JPEG with DVPP, pads NV12 to 1088 lines, feeds the static AIPP encoder OM, and
-runs the existing MLVC encoder, entropy coding, and RTP output. The production
+runs the existing ULBVC encoder, entropy coding, and RTP output. The production
 config uses the existing encoder board RTP target `192.168.5.7:39220` and has
 camera RTSP output disabled. This task checked only the encoder board; RTP
 reception and decoding were not measured.
 
 ```bash
-cd /root/workplace/MLVC_c
+cd /root/workplace/ULBVC_c
 bash scripts/bash_run_encode_camera_1080p.sh
 ```
 
 The isolated binary and AIPP bundle are under
-`/root/workplace/MLVC_c/camera_1080p_aipp/`. The original
-`build/mlvc_encode` and `configs/encoder.toml` were not replaced. The AIPP OM
+`/root/workplace/ULBVC_c/camera_1080p_aipp/`. The original
+`build/ulbvc_encode` and `configs/encoder.toml` were not replaced. The AIPP OM
 SHA-256 is `9bd673907a7c85e8f054823c74c9dbf56d34e4d4d63c1e42961a266b4d245a18`.
 A complete local copy of the model bundle and build inputs is in the ignored
 `artifacts/camera_1080p_aipp/` directory. The board keeps the versioned source
@@ -71,7 +71,7 @@ For each independent processing run, the program first captures 120 real
 1080p MJPEG frames through V4L2, then repeatedly processes those frames. The
 preload is outside the `encode_fps` timer. Each run encodes 400 frames with 20
 warmup frames; the measured 380 frames include JPEGD, input conversion or
-AIPP, MLVC execution, entropy coding, and RTP loopback sending. Repetition
+AIPP, ULBVC execution, entropy coding, and RTP loopback sending. Repetition
 isolates processing capacity from the camera's 30 FPS delivery limit.
 
 | Path | Isolated run 1 | Isolated run 2 | Deployed binary |
@@ -117,7 +117,7 @@ service.
 
 The historical control used `input_synthetic = true` to generate 1080p FP16
 frames in memory and feed the
-original P1 MLVC encoder model, with entropy coding and RTP loopback retained.
+original P1 ULBVC encoder model, with entropy coding and RTP loopback retained.
 There is no camera device or frame file input. The 11,000-frame run on the
 same encoder board lasted from 13:24:45 to 13:30:45 (+08:00), with 30 warmup
 frames, `encode=ok`, and **30.7940 FPS** overall.

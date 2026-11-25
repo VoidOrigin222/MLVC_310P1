@@ -1,17 +1,19 @@
-#include <cerrno>
-#include <cstdint>
-#include <cstdio>
-#include <cstring>
 #include <fcntl.h>
-#include <fstream>
-#include <iostream>
 #include <linux/videodev2.h>
-#include <sstream>
-#include <stdexcept>
-#include <string>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <unistd.h>
+
+#include <cerrno>
+#include <chrono>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace {
@@ -42,6 +44,8 @@ int main(int argc, char** argv) {
   const int height = argc > 3 ? std::stoi(argv[3]) : 480;
   const std::string pixfmt_text = argc > 4 ? argv[4] : "MJPG";
   const std::string output = argc > 5 ? argv[5] : "camera_frame.bin";
+  const int fps = argc > 6 ? std::stoi(argv[6]) : 30;
+  const int discard_frames = argc > 7 ? std::stoi(argv[7]) : 0;
 
   int fd = open(device.c_str(), O_RDWR | O_NONBLOCK);
   if (fd < 0) {
@@ -51,6 +55,8 @@ int main(int argc, char** argv) {
 
   std::vector<Buffer> buffers;
   try {
+    if (discard_frames < 0 || discard_frames > 60)
+      throw std::runtime_error("discard_frames must be between 0 and 60");
     v4l2_capability capability{};
     CheckIoctl(fd, VIDIOC_QUERYCAP, &capability, "VIDIOC_QUERYCAP");
     if (!(capability.capabilities & V4L2_CAP_VIDEO_CAPTURE) ||
@@ -65,6 +71,12 @@ int main(int argc, char** argv) {
     format.fmt.pix.pixelformat = Fourcc(pixfmt_text);
     format.fmt.pix.field = V4L2_FIELD_ANY;
     CheckIoctl(fd, VIDIOC_S_FMT, &format, "VIDIOC_S_FMT");
+    if (fps <= 0 || fps > 240) throw std::runtime_error("fps must be between 1 and 240");
+    v4l2_streamparm parameters{};
+    parameters.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    parameters.parm.capture.timeperframe.numerator = 1;
+    parameters.parm.capture.timeperframe.denominator = fps;
+    CheckIoctl(fd, VIDIOC_S_PARM, &parameters, "VIDIOC_S_PARM");
     std::cout << "device=" << device << " driver=" << capability.driver
               << " card=" << capability.card << "\n"
               << "format=" << static_cast<char>(format.fmt.pix.pixelformat & 0xff)
@@ -74,6 +86,8 @@ int main(int argc, char** argv) {
               << " width=" << format.fmt.pix.width << " height=" << format.fmt.pix.height
               << " bytesperline=" << format.fmt.pix.bytesperline
               << " sizeimage=" << format.fmt.pix.sizeimage << "\n";
+    std::cout << "frame_interval=" << parameters.parm.capture.timeperframe.numerator << "/"
+              << parameters.parm.capture.timeperframe.denominator << "\n";
 
     v4l2_requestbuffers request{};
     request.count = 4;
@@ -90,8 +104,8 @@ int main(int argc, char** argv) {
       buffer.index = i;
       CheckIoctl(fd, VIDIOC_QUERYBUF, &buffer, "VIDIOC_QUERYBUF");
       buffers[i].length = buffer.length;
-      buffers[i].address = mmap(nullptr, buffer.length, PROT_READ | PROT_WRITE, MAP_SHARED,
-                                 fd, buffer.m.offset);
+      buffers[i].address =
+          mmap(nullptr, buffer.length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, buffer.m.offset);
       if (buffers[i].address == MAP_FAILED) throw std::runtime_error("mmap failed");
       CheckIoctl(fd, VIDIOC_QBUF, &buffer, "VIDIOC_QBUF");
     }
@@ -99,7 +113,9 @@ int main(int argc, char** argv) {
     v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     CheckIoctl(fd, VIDIOC_STREAMON, &type, "VIDIOC_STREAMON");
     bool streaming = true;
-    for (int attempt = 0; attempt < 100; ++attempt) {
+    int discarded = 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (std::chrono::steady_clock::now() < deadline) {
       v4l2_buffer buffer{};
       buffer.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
       buffer.memory = V4L2_MEMORY_MMAP;
@@ -110,10 +126,19 @@ int main(int argc, char** argv) {
         }
         throw std::runtime_error(std::string("VIDIOC_DQBUF failed: ") + std::strerror(errno));
       }
+      if (buffer.index >= buffers.size() || !buffer.bytesused ||
+          buffer.bytesused > buffers[buffer.index].length)
+        throw std::runtime_error("camera returned an invalid frame buffer");
+      if (discarded < discard_frames) {
+        ++discarded;
+        CheckIoctl(fd, VIDIOC_QBUF, &buffer, "VIDIOC_QBUF");
+        continue;
+      }
       std::ofstream file(output, std::ios::binary);
       file.write(static_cast<const char*>(buffers[buffer.index].address), buffer.bytesused);
       if (!file) throw std::runtime_error("failed to write output frame");
-      std::cout << "captured_bytes=" << buffer.bytesused << " output=" << output << "\n";
+      std::cout << "captured_bytes=" << buffer.bytesused << " sequence=" << buffer.sequence
+                << " discarded=" << discarded << " output=" << output << "\n";
       CheckIoctl(fd, VIDIOC_QBUF, &buffer, "VIDIOC_QBUF");
       CheckIoctl(fd, VIDIOC_STREAMOFF, &type, "VIDIOC_STREAMOFF");
       streaming = false;

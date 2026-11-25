@@ -8,10 +8,10 @@
 #include <string>
 #include <vector>
 
-#include "mlvc/core/buffer.h"
-#include "mlvc/core/status.h"
-#include "mlvc/runtime/acl_runtime.h"
-#include "mlvc/runtime/decode_prior_acl.h"
+#include "ulbvc/core/buffer.h"
+#include "ulbvc/core/status.h"
+#include "ulbvc/runtime/acl_runtime.h"
+#include "ulbvc/runtime/decode_prior_acl.h"
 
 namespace {
 
@@ -126,7 +126,7 @@ int SelectedChunk(int parts, int mask_index, int y, int x) {
 
 void CheckAclStatus(aclError status, const char* operation) {
   if (status != ACL_ERROR_NONE) {
-    throw mlvc::Error(std::string(operation) + " failed: ret=" + std::to_string(status));
+    throw ulbvc::Error(std::string(operation) + " failed: ret=" + std::to_string(status));
   }
 }
 
@@ -238,7 +238,7 @@ std::vector<uint16_t> ReferenceInt8ToFp16(const std::vector<int8_t>& symbols) {
 }
 
 template <typename T>
-void Upload(const std::vector<T>& host, mlvc::AclBuffer* device) {
+void Upload(const std::vector<T>& host, ulbvc::AclBuffer* device) {
   device->Allocate(host.size() * sizeof(T));
   CheckAclStatus(aclrtMemcpy(device->data(), device->bytes(), host.data(), device->bytes(),
                              ACL_MEMCPY_HOST_TO_DEVICE),
@@ -246,7 +246,7 @@ void Upload(const std::vector<T>& host, mlvc::AclBuffer* device) {
 }
 
 template <typename T>
-std::vector<T> Download(const mlvc::AclBuffer& device, std::size_t count) {
+std::vector<T> Download(const ulbvc::AclBuffer& device, std::size_t count) {
   std::vector<T> host(count);
   CheckAclStatus(aclrtMemcpy(host.data(), host.size() * sizeof(T), device.data(), device.bytes(),
                              ACL_MEMCPY_DEVICE_TO_HOST),
@@ -261,7 +261,7 @@ void CheckEqualBits(const std::vector<uint16_t>& actual, const std::vector<uint1
       std::cerr << name << " first_mismatch=" << i << " expected_bits=" << expected[i]
                 << " actual_bits=" << actual[i] << " expected=" << HalfBitsToFloat(expected[i])
                 << " actual=" << HalfBitsToFloat(actual[i]) << "\n";
-      throw mlvc::Error(name + " mismatch");
+      throw ulbvc::Error(name + " mismatch");
     }
   }
 }
@@ -272,7 +272,7 @@ void CheckEqualFp32(const std::vector<float>& actual, const std::vector<float>& 
     if (actual[i] != expected[i]) {
       std::cerr << name << " first_mismatch=" << i << " expected=" << expected[i]
                 << " actual=" << actual[i] << "\n";
-      throw mlvc::Error(name + " mismatch");
+      throw ulbvc::Error(name + " mismatch");
     }
   }
 }
@@ -284,19 +284,19 @@ void RunSinglePartCase(int parts, int mask_index, int channels, int height, int 
   const std::vector<float> full_fp32 = MakeFullFp32(channels, height, width);
   const std::vector<uint16_t> full_fp16 = Fp32ToFp16(full_fp32);
 
-  mlvc::AclBuffer full_fp32_dev;
-  mlvc::AclBuffer part_fp32_dev(part_elements * sizeof(float));
+  ulbvc::AclBuffer full_fp32_dev;
+  ulbvc::AclBuffer part_fp32_dev(part_elements * sizeof(float));
   Upload(full_fp32, &full_fp32_dev);
-  mlvc::DecodePriorSinglePartAcl(full_fp32_dev.data(), mlvc::DataType::kFloat32, parts, mask_index,
+  ulbvc::DecodePriorSinglePartAcl(full_fp32_dev.data(), ulbvc::DataType::kFloat32, parts, mask_index,
                                  channels, height, width, part_fp32_dev.data(), stream);
   CheckEqualFp32(Download<float>(part_fp32_dev, part_elements),
                  ReferenceSinglePartFp32(full_fp32, parts, mask_index, channels, height, width),
                  "single_part_fp32");
 
-  mlvc::AclBuffer full_fp16_dev;
-  mlvc::AclBuffer part_fp16_dev(part_elements * sizeof(uint16_t));
+  ulbvc::AclBuffer full_fp16_dev;
+  ulbvc::AclBuffer part_fp16_dev(part_elements * sizeof(uint16_t));
   Upload(full_fp16, &full_fp16_dev);
-  mlvc::DecodePriorSinglePartAcl(full_fp16_dev.data(), mlvc::DataType::kFloat16, parts, mask_index,
+  ulbvc::DecodePriorSinglePartAcl(full_fp16_dev.data(), ulbvc::DataType::kFloat16, parts, mask_index,
                                  channels, height, width, part_fp16_dev.data(), stream);
   CheckEqualBits(Download<uint16_t>(part_fp16_dev, part_elements),
                  ReferenceSinglePartFp16(full_fp16, parts, mask_index, channels, height, width),
@@ -310,16 +310,16 @@ void RunRestoreYCase(int parts, int mask_index, int channels, int height, int wi
   const std::vector<int8_t> symbols = MakeSymbols(part_elements);
   const std::vector<uint16_t> means = Fp32ToFp16(MakeFullFp32(channels, height, width));
 
-  mlvc::AclBuffer symbols_dev;
-  mlvc::AclBuffer means_dev;
-  mlvc::AclBuffer output_dev(full_elements * sizeof(uint16_t));
+  ulbvc::AclBuffer symbols_dev;
+  ulbvc::AclBuffer means_dev;
+  ulbvc::AclBuffer output_dev(full_elements * sizeof(uint16_t));
   Upload(symbols, &symbols_dev);
   Upload(means, &means_dev);
   std::vector<uint16_t> initial_output(full_elements, 0);
   CheckAclStatus(aclrtMemcpy(output_dev.data(), output_dev.bytes(), initial_output.data(),
                              output_dev.bytes(), ACL_MEMCPY_HOST_TO_DEVICE),
                  "aclrtMemcpy restore_y initial output H2D");
-  mlvc::DecodePriorRestoreYAcl(static_cast<const int8_t*>(symbols_dev.data()), means_dev.data(),
+  ulbvc::DecodePriorRestoreYAcl(static_cast<const int8_t*>(symbols_dev.data()), means_dev.data(),
                                parts, mask_index, channels, height, width, output_dev.data(),
                                stream);
   CheckEqualBits(Download<uint16_t>(output_dev, full_elements),
@@ -336,7 +336,7 @@ void RunRestoreYSequenceCase(int parts, int channels, int height, int width, voi
     expected[i] = FloatToHalfBits(static_cast<float>(static_cast<int>((i * 11 + 1) % 23) - 11));
   }
 
-  mlvc::AclBuffer output_dev(full_elements * sizeof(uint16_t));
+  ulbvc::AclBuffer output_dev(full_elements * sizeof(uint16_t));
   CheckAclStatus(aclrtMemcpy(output_dev.data(), output_dev.bytes(), expected.data(),
                              output_dev.bytes(), ACL_MEMCPY_HOST_TO_DEVICE),
                  "aclrtMemcpy restore_y sequence initial output H2D");
@@ -348,11 +348,11 @@ void RunRestoreYSequenceCase(int parts, int channels, int height, int width, voi
       means_source[i] += static_cast<float>(mask) / 3.0f;
     }
     const std::vector<uint16_t> means = Fp32ToFp16(means_source);
-    mlvc::AclBuffer symbols_dev;
-    mlvc::AclBuffer means_dev;
+    ulbvc::AclBuffer symbols_dev;
+    ulbvc::AclBuffer means_dev;
     Upload(symbols, &symbols_dev);
     Upload(means, &means_dev);
-    mlvc::DecodePriorRestoreYAcl(static_cast<const int8_t*>(symbols_dev.data()), means_dev.data(),
+    ulbvc::DecodePriorRestoreYAcl(static_cast<const int8_t*>(symbols_dev.data()), means_dev.data(),
                                  parts, mask, channels, height, width, output_dev.data(), stream);
     UpdateReferenceRestoreY(symbols, means, parts, mask, channels, height, width, &expected);
   }
@@ -369,12 +369,12 @@ void RunApplyQuantCase(int quant_channels, int channels, int height, int width, 
   }
   const std::vector<uint16_t> quant = Fp32ToFp16(quant_source);
 
-  mlvc::AclBuffer quant_dev;
-  mlvc::AclBuffer values_dev;
-  mlvc::AclBuffer output_dev(values.size() * sizeof(uint16_t));
+  ulbvc::AclBuffer quant_dev;
+  ulbvc::AclBuffer values_dev;
+  ulbvc::AclBuffer output_dev(values.size() * sizeof(uint16_t));
   Upload(quant, &quant_dev);
   Upload(values, &values_dev);
-  mlvc::DecodePriorApplyChannelQuantStepAcl(quant_dev.data(), quant_channels, values_dev.data(),
+  ulbvc::DecodePriorApplyChannelQuantStepAcl(quant_dev.data(), quant_channels, values_dev.data(),
                                             channels, height, width, output_dev.data(), stream);
   CheckEqualBits(Download<uint16_t>(output_dev, values.size()),
                  ReferenceApplyQuant(quant, quant_channels, values, channels, height, width),
@@ -383,11 +383,11 @@ void RunApplyQuantCase(int quant_channels, int channels, int height, int width, 
 
 void RunInt8ToFp16Case(std::size_t count, void* stream) {
   const std::vector<int8_t> symbols = MakeSymbols(count);
-  mlvc::AclBuffer symbols_dev;
-  mlvc::AclBuffer output_dev(count * sizeof(uint16_t));
+  ulbvc::AclBuffer symbols_dev;
+  ulbvc::AclBuffer output_dev(count * sizeof(uint16_t));
   Upload(symbols, &symbols_dev);
   const int64_t shape[4] = {1, 1, 1, static_cast<int64_t>(count)};
-  mlvc::DecodePriorInt8ToFp16Acl(static_cast<const int8_t*>(symbols_dev.data()), shape, 4, count,
+  ulbvc::DecodePriorInt8ToFp16Acl(static_cast<const int8_t*>(symbols_dev.data()), shape, 4, count,
                                  output_dev.data(), stream);
   CheckEqualBits(Download<uint16_t>(output_dev, count), ReferenceInt8ToFp16(symbols),
                  "int8_to_fp16");
@@ -418,10 +418,10 @@ int main(int argc, char** argv) {
   }
 
   try {
-    mlvc::Check(channels > 0 && channels % 4 == 0, "channels must be positive and divisible by 4");
-    mlvc::Check(height > 0 && width > 0, "height and width must be positive");
-    mlvc::AclRuntime runtime(device);
-    mlvc::Check(mlvc::DecodePriorAclAvailable(), "decode prior ACLNN custom ops are not available");
+    ulbvc::Check(channels > 0 && channels % 4 == 0, "channels must be positive and divisible by 4");
+    ulbvc::Check(height > 0 && width > 0, "height and width must be positive");
+    ulbvc::AclRuntime runtime(device);
+    ulbvc::Check(ulbvc::DecodePriorAclAvailable(), "decode prior ACLNN custom ops are not available");
 
     for (int parts : {2, 4}) {
       for (int mask = 0; mask < parts; ++mask) {

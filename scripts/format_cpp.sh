@@ -8,7 +8,7 @@ command -v "${format_binary}" >/dev/null 2>&1 || {
 }
 
 mapfile -d '' source_files < <(
-  find common mlvc application apps tools -type f \( -name '*.h' -o -name '*.cc' \) -print0
+  find common ulbvc application apps tools -type f \( -name '*.h' -o -name '*.cc' \) -print0
 )
 if ((${#source_files[@]} == 0)); then
   exit 0

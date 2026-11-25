@@ -275,7 +275,7 @@ def verify_manifest(manifest_path: Path, strict_assets: bool, allow_missing_fuse
     if strict_assets:
         if runtime == "acl":
             patterns = (
-                "*.mlvcsc",
+                "*.ulbvcsc",
                 "metadata.json",
                 "gaussian_pmf.json",
                 "bit_estimator_pmf.json",
@@ -289,7 +289,7 @@ def verify_manifest(manifest_path: Path, strict_assets: bool, allow_missing_fuse
         else:
             patterns = (
                 "*.onnx",
-                "*.mlvcsc",
+                "*.ulbvcsc",
                 "metadata.json",
                 "gaussian_pmf.json",
                 "bit_estimator_pmf.json",
@@ -312,7 +312,7 @@ def discover_manifests(models_root: Path) -> list[Path]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Verify MLVC model manifests and assets.")
+    parser = argparse.ArgumentParser(description="Verify ULBVC model manifests and assets.")
     parser.add_argument(
         "paths",
         nargs="*",
@@ -323,7 +323,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--no-strict-assets",
         action="store_true",
-        help="Do not fail on extra .onnx/.mlvcsc files in each model directory.",
+        help="Do not fail on extra .onnx/.ulbvcsc files in each model directory.",
     )
     parser.add_argument(
         "--allow-missing-fused",

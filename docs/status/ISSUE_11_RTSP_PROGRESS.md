@@ -27,7 +27,7 @@ RTSP 发布默认使用 UDP 媒体传输（RTSP 控制连接仍使用 TCP 8554�
 在两台 Ascend 310P1 设备上执行：
 
 ```text
-cmake -S . -B build -DMLVC_BUILD_APPS=ON -DBUILD_TESTING=ON
+cmake -S . -B build -DULBVC_BUILD_APPS=ON -DBUILD_TESTING=ON
 cmake --build build -j2
 ctest --output-on-failure
 ```
@@ -42,7 +42,7 @@ OPTIONS/ANNOUNCE/SETUP/RECORD、TCP 交错 RTP 数据、H.264 直通和 NV12/lib
 
 - 720P / 120 帧：解码 60.16 FPS，发布器丢帧 58，FFmpeg 正常退出。
 - 1080P / 120 帧：解码 24.42 FPS，发布器丢帧 65，FFmpeg 正常退出。
-- MediaMTX 路径 `mlvc720` 和 `mlvc1080` 均返回 `RTSP/1.0 200 OK`。
+- MediaMTX 路径 `ulbvc720` 和 `ulbvc1080` 均返回 `RTSP/1.0 200 OK`。
 
 UDP 媒体传输复测（1080P / 120 帧）：编码 31.78 FPS，解码 24.52 FPS，发布器丢帧 65，FFmpeg 正常退出。与 TCP 模式的 24.42 FPS 基本一致，说明传输协议切换没有解决当前性能瓶颈。
 

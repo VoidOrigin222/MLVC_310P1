@@ -1,8 +1,8 @@
-#include "mlvc/framework/entropy_worker.h"
+#include "ulbvc/framework/entropy_worker.h"
 
 #include <utility>
 
-namespace mlvc {
+namespace ulbvc {
 
 EntropyWorker::EntropyWorker(std::size_t thread_count) : worker_pool_(thread_count) {}
 
@@ -18,10 +18,10 @@ std::future<std::vector<uint8_t>> EntropyWorker::Submit(
 }
 
 std::future<void> EntropyWorker::SubmitVoid(std::function<void()> task) {
-  mlvc::Check(task != nullptr, "cannot submit an empty entropy task");
+  ulbvc::Check(task != nullptr, "cannot submit an empty entropy task");
   return SubmitTask(std::make_unique<FunctionTask>("function", -1, std::move(task)));
 }
 
 void EntropyWorker::Stop() { worker_pool_.Stop(); }
 
-}  // namespace mlvc
+}  // namespace ulbvc

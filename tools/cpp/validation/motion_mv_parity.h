@@ -1,14 +1,14 @@
-#ifndef MLVC_VALIDATION_MOTION_MV_PARITY_H_
-#define MLVC_VALIDATION_MOTION_MV_PARITY_H_
+#ifndef ULBVC_VALIDATION_MOTION_MV_PARITY_H_
+#define ULBVC_VALIDATION_MOTION_MV_PARITY_H_
 
-#include <mlvc/motion/translation_estimator.h>
-#include <mlvc/motion/h264_reference_policy.h>
+#include <ulbvc/motion/translation_estimator.h>
+#include <ulbvc/motion/h264_reference_policy.h>
 
 #include <cstdint>
 #include <stdexcept>
 #include <vector>
 
-namespace mlvc::validation {
+namespace ulbvc::validation {
 
 // Two independent decoder histories consume exactly the same access units.
 // Compare fields rather than struct storage (which may contain padding).
@@ -97,6 +97,6 @@ class MotionMvParity {
   std::vector<uint8_t> first_packet_, second_packet_;
 };
 
-}  // namespace mlvc::validation
+}  // namespace ulbvc::validation
 
-#endif  // MLVC_VALIDATION_MOTION_MV_PARITY_H_
+#endif  // ULBVC_VALIDATION_MOTION_MV_PARITY_H_

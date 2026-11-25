@@ -1,8 +1,8 @@
-# Issue #9：MLVC v1 RTP 载荷设计
+# Issue #9：ULBVC v1 RTP 载荷设计
 
 ## 目标
 
-定义传输无关的 MLVC 媒体单元，并用 RTP 承载同一媒体单元；文件和网络路径共享帧语义。
+定义传输无关的 ULBVC 媒体单元，并用 RTP 承载同一媒体单元；文件和网络路径共享帧语义。
 
 ## 媒体单元
 
@@ -35,7 +35,7 @@ RTP 使用标准 12 字节头，payload type 固定为  dynamic range `96`，时
 
 ## 分阶段实现
 
-1. 实现 `RtpMlvcPacketizer` 和 `RtpMlvcReassembler`，加入字节序、边界、乱序和丢包测试。
+1. 实现 `RtpUlbvcPacketizer` 和 `RtpUlbvcReassembler`，加入字节序、边界、乱序和丢包测试。
 2. 在编码端增加 RTP 输出模式，保留旧 UDP 模式作为独立适配器。
 3. 在解码端增加 RTP 输入模式，验证 SCU、EFU、EOS 端到端重组。
 4. 在两台 310P1 上完成 720p/1080p 长测。

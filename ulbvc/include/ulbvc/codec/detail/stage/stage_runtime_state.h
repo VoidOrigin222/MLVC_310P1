@@ -1,0 +1,93 @@
+#ifndef ULBVC_CODEC_DETAIL_STAGE_RUNTIME_STATE_H_
+#define ULBVC_CODEC_DETAIL_STAGE_RUNTIME_STATE_H_
+
+#include <ulbvc/codec/detail/stage/stage_types.h>
+#include <ulbvc/codec/detail/stage/stage_workspace.h>
+#include <ulbvc/core/buffer.h>
+#include <ulbvc/core/tensor_handle.h>
+#include <ulbvc/framework/codec_graph_executor.h>
+#include <ulbvc/framework/profiler.h>
+
+#include <string_view>
+
+namespace ulbvc::codec {
+
+extern bool g_skip_async_entropy_cpu_mirror;
+extern bool g_skip_async_encode_device_only_cpu_mirror;
+extern bool g_skip_async_decode_device_only_cpu_mirror;
+extern bool g_force_decode_video_output_cpu_mirror;
+extern ulbvc::CodecGraphExecutor* g_codec_graph_executor;
+extern bool g_validate_acl_decode_prior;
+extern bool g_enable_stage_fusion;
+extern StageOutputWorkspace* g_stage_output_workspace;
+extern void* g_acl_user_compute_stream;
+
+class ScopedAsyncEncodeDeviceOnlyMirrorSkip {
+ public:
+  explicit ScopedAsyncEncodeDeviceOnlyMirrorSkip(bool enabled)
+      : previous_(g_skip_async_encode_device_only_cpu_mirror) {
+    if (enabled) {
+      g_skip_async_encode_device_only_cpu_mirror = true;
+    }
+  }
+
+  ScopedAsyncEncodeDeviceOnlyMirrorSkip(const ScopedAsyncEncodeDeviceOnlyMirrorSkip&) = delete;
+  ScopedAsyncEncodeDeviceOnlyMirrorSkip& operator=(const ScopedAsyncEncodeDeviceOnlyMirrorSkip&) =
+      delete;
+
+  ~ScopedAsyncEncodeDeviceOnlyMirrorSkip() {
+    g_skip_async_encode_device_only_cpu_mirror = previous_;
+  }
+
+ private:
+  bool previous_ = false;
+};
+
+class ScopedAsyncDecodeDeviceOnlyMirrorSkip {
+ public:
+  explicit ScopedAsyncDecodeDeviceOnlyMirrorSkip(bool enabled)
+      : previous_(g_skip_async_decode_device_only_cpu_mirror) {
+    if (enabled) g_skip_async_decode_device_only_cpu_mirror = true;
+  }
+
+  ScopedAsyncDecodeDeviceOnlyMirrorSkip(const ScopedAsyncDecodeDeviceOnlyMirrorSkip&) = delete;
+  ScopedAsyncDecodeDeviceOnlyMirrorSkip& operator=(const ScopedAsyncDecodeDeviceOnlyMirrorSkip&) =
+      delete;
+
+  ~ScopedAsyncDecodeDeviceOnlyMirrorSkip() {
+    g_skip_async_decode_device_only_cpu_mirror = previous_;
+  }
+
+ private:
+  bool previous_ = false;
+};
+
+class ScopedDecodeVideoOutputMirror {
+ public:
+  explicit ScopedDecodeVideoOutputMirror(bool enabled)
+      : previous_(g_force_decode_video_output_cpu_mirror) {
+    if (enabled) g_force_decode_video_output_cpu_mirror = true;
+  }
+
+  ScopedDecodeVideoOutputMirror(const ScopedDecodeVideoOutputMirror&) = delete;
+  ScopedDecodeVideoOutputMirror& operator=(const ScopedDecodeVideoOutputMirror&) = delete;
+
+  ~ScopedDecodeVideoOutputMirror() { g_force_decode_video_output_cpu_mirror = previous_; }
+
+ private:
+  bool previous_ = false;
+};
+
+AsyncEntropyInputs CopyEntropyInputsToPinnedFromDevice(
+    std::string_view hyper_stage, std::string_view spatial_stage, int part_count,
+    ulbvc::PinnedHostBuffer* buffer, float force_zero_thres, PinnedCopySpan* copy_span,
+    ulbvc::Profiler* profiler);
+bool CloneAclHandle(const ulbvc::TensorHandle* source, ulbvc::TensorHandle* destination,
+                    std::string_view name, ulbvc::Profiler* profiler);
+bool CloneRunOutputHandle(const RunOutput& output, std::string_view tensor_name,
+                          ulbvc::TensorHandle* destination, std::string_view name,
+                          ulbvc::Profiler* profiler);
+
+}  // namespace ulbvc::codec
+
+#endif  // ULBVC_CODEC_DETAIL_STAGE_RUNTIME_STATE_H_

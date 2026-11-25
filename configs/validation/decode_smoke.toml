@@ -1,0 +1,8 @@
+mode = "decode"
+manifest = "models/codec/manifest_motion_ascend310p1.json"
+input = "logs/validation/smoke.es"
+format = "none"
+frame_num = 4
+fps = 30
+device = 0
+execution_profile = "pipeline-v1"

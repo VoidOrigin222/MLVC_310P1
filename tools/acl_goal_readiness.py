@@ -15,7 +15,7 @@ import check_acl_package_complete
 import verify_models
 
 
-DEFAULT_SOURCE_ROOT = Path("/root/workspace/cgc/mlvc_cpp/models")
+DEFAULT_SOURCE_ROOT = Path("/root/workspace/cgc/ulbvc_cpp/models")
 DEFAULT_RESOLUTIONS = ("720p", "1080p")
 ACCEPTANCE_GATES = (
     "single_stage_correctness",

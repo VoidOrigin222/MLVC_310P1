@@ -1,11 +1,11 @@
-#include <mlvc/application/cli/encoder_app.h>
-#include <mlvc/application/stream/mlvc_stream.h>
-#include <mlvc/application/stream/stream_encoder.h>
-#include <mlvc/codec/execution_profile.h>
-#include <mlvc/codec/mlvc_entropy.h>
-#include <mlvc/io/video_io.h>
-#include <mlvc/runtime/model_manifest.h>
 #include <toml++/toml.h>
+#include <ulbvc/application/cli/encoder_app.h>
+#include <ulbvc/application/stream/stream_encoder.h>
+#include <ulbvc/application/stream/ulbvc_stream.h>
+#include <ulbvc/codec/execution_profile.h>
+#include <ulbvc/codec/ulbvc_entropy.h>
+#include <ulbvc/io/video_io.h>
+#include <ulbvc/runtime/model_manifest.h>
 
 #include <algorithm>
 #include <cmath>
@@ -18,7 +18,7 @@
 #include <string>
 #include <string_view>
 
-#include "mlvc/core/status.h"
+#include "ulbvc/core/status.h"
 
 namespace {
 
@@ -28,41 +28,90 @@ void CheckKnownKeys(const toml::table& table, std::initializer_list<std::string_
     (void)value;
     const std::string name(key.str());
     if (std::find(allowed.begin(), allowed.end(), name) == allowed.end()) {
-      throw mlvc::Error("unknown config key: " +
-                        (section.empty() ? name : section + "." + name));
+      throw ulbvc::Error("unknown config key: " + (section.empty() ? name : section + "." + name));
     }
   }
 }
 
 void ValidateConfigKeys(const toml::table& config) {
   CheckKnownKeys(config,
-                 {"mode", "input", "output", "input_frame_dir", "input_video",
-                  "input_camera_device", "input_synthetic", "camera_width", "camera_height", "camera_fps",
-                  "camera_pixel_format", "camera_rtsp_url", "camera_rtsp_transport",
-                  "camera_rtsp_bitrate_bps", "camera_rtsp_gop", "camera_rtsp_queue_capacity",
+                 {"mode",
+                  "input",
+                  "output",
+                  "input_frame_dir",
+                  "input_video",
+                  "input_camera_device",
+                  "input_synthetic",
+                  "camera_width",
+                  "camera_height",
+                  "camera_fps",
+                  "camera_pixel_format",
+                  "camera_jpeg_normalize_padding",
+                  "camera_rtsp_url",
+                  "camera_rtsp_transport",
+                  "camera_rtsp_bitrate_bps",
+                  "camera_rtsp_gop",
+                  "camera_rtsp_queue_capacity",
                   "camera_preload_frames",
-                  "execution_profile", "manifest", "qp", "gop", "reset_interval", "device",
-                  "frame_num", "fps", "profile_warmup_frames", "profile_output",
-                  "enable_stage_fusion", "translation_warp", "motion_shifts_file", "motion_backend", "motion_prefetch_frames",
-                  "motion_x264_preset", "motion_x264_threads", "motion_skip_loop_filter", "motion_camera_nv12",
-                  "ltr_start_idx", "ltr_period", "ltr_qp_shift",
-                  "target_bitrate_bps", "min_qp", "max_qp", "forced_ltr_recovery_frame",
-                  "forced_ltr_reference_frame", "udp_host", "udp_port",
-                  "output_transport_host", "output_transport_mode", "output_transport_port",
+                  "execution_profile",
+                  "manifest",
+                  "qp",
+                  "gop",
+                  "reset_interval",
+                  "device",
+                  "frame_num",
+                  "fps",
+                  "profile_warmup_frames",
+                  "profile_output",
+                  "enable_stage_fusion",
+                  "translation_warp",
+                  "motion_shifts_file",
+                  "motion_backend",
+                  "motion_prefetch_frames",
+                  "motion_x264_preset",
+                  "motion_x264_threads",
+                  "motion_skip_loop_filter",
+                  "motion_camera_nv12",
+                  "ltr_start_idx",
+                  "ltr_period",
+                  "ltr_qp_shift",
+                  "target_bitrate_bps",
+                  "min_qp",
+                  "max_qp",
+                  "forced_ltr_recovery_frame",
+                  "forced_ltr_reference_frame",
+                  "udp_host",
+                  "udp_port",
+                  "output_transport_host",
+                  "output_transport_mode",
+                  "output_transport_port",
                   "output_transport_payload_type",
-                  "output_transport_pacing_rate_bps", "output_transport_max_burst_bytes",
-                  "output_transport_max_queue_bytes", "output_transport_max_queue_delay_ms",
-                   "mlvc_stats_host", "mlvc_stats_port", "mlvc_stats_interval_frames",
-                  "model", "pipeline"},
+                  "output_transport_pacing_rate_bps",
+                  "output_transport_max_burst_bytes",
+                  "output_transport_max_queue_bytes",
+                  "output_transport_max_queue_delay_ms",
+                  "ulbvc_stats_host",
+                  "ulbvc_stats_port",
+                  "ulbvc_stats_interval_frames",
+                  "detection_enabled",
+                  "detection_model",
+                  "detection_labels",
+                  "detection_report",
+                  "detection_confidence",
+                  "detection_nms_iou",
+                  "detection_queue_capacity",
+                  "model",
+                  "pipeline"},
                  "");
   if (const toml::node* model = config["model"].node(); model != nullptr) {
-    mlvc::Check(model->is_table(), "config section must be a table: model");
+    ulbvc::Check(model->is_table(), "config section must be a table: model");
     CheckKnownKeys(*model->as_table(), {"manifest", "input_frame_dir", "input_video"}, "model");
   }
   if (const toml::node* pipeline = config["pipeline"].node(); pipeline != nullptr) {
-    mlvc::Check(pipeline->is_table(), "config section must be a table: pipeline");
-    CheckKnownKeys(*pipeline->as_table(), {"stream_workers", "queue_capacity", "frame_buffer_slots",
-                                            "entropy_workers", "graph_packet_capacity"},
+    ulbvc::Check(pipeline->is_table(), "config section must be a table: pipeline");
+    CheckKnownKeys(*pipeline->as_table(),
+                   {"stream_workers", "queue_capacity", "frame_buffer_slots", "entropy_workers",
+                    "graph_packet_capacity"},
                    "pipeline");
   }
 }
@@ -71,7 +120,7 @@ toml::table ReadTomlConfig(const std::filesystem::path& path) {
   try {
     return toml::parse_file(path.string());
   } catch (const toml::parse_error& error) {
-    throw mlvc::Error("failed to parse config TOML: " + std::string(error.description()));
+    throw ulbvc::Error("failed to parse config TOML: " + std::string(error.description()));
   }
 }
 
@@ -79,7 +128,7 @@ std::string GetString(const toml::table& config, const std::string& key,
                       const std::string& fallback = "") {
   if (config[key].node() == nullptr) return fallback;
   const std::optional<std::string> value = config[key].value<std::string>();
-  mlvc::Check(value.has_value(), "config key must be a string: " + key);
+  ulbvc::Check(value.has_value(), "config key must be a string: " + key);
   return *value;
 }
 
@@ -87,18 +136,18 @@ std::string GetNestedString(const toml::table& config, const std::string& table_
                             const std::string& key, const std::string& fallback = "") {
   const toml::node* table_node = config[table_name].node();
   if (table_node == nullptr) return fallback;
-  mlvc::Check(table_node->is_table(), "config section must be a table: " + table_name);
+  ulbvc::Check(table_node->is_table(), "config section must be a table: " + table_name);
   if (config[table_name][key].node() == nullptr) return fallback;
   const std::optional<std::string> value = config[table_name][key].value<std::string>();
-  mlvc::Check(value.has_value(), "config key must be a string: " + table_name + "." + key);
+  ulbvc::Check(value.has_value(), "config key must be a string: " + table_name + "." + key);
   return *value;
 }
 
 int GetInt(const toml::table& config, const std::string& key, int fallback) {
   if (config[key].node() == nullptr) return fallback;
   const std::optional<int64_t> value = config[key].value<int64_t>();
-  mlvc::Check(value.has_value(), "config key must be an integer: " + key);
-  mlvc::Check(
+  ulbvc::Check(value.has_value(), "config key must be an integer: " + key);
+  ulbvc::Check(
       *value >= std::numeric_limits<int>::min() && *value <= std::numeric_limits<int>::max(),
       "config integer is out of int range: " + key);
   return static_cast<int>(*value);
@@ -108,11 +157,11 @@ int GetNestedInt(const toml::table& config, const std::string& table_name, const
                  int fallback) {
   const toml::node* table_node = config[table_name].node();
   if (table_node == nullptr) return fallback;
-  mlvc::Check(table_node->is_table(), "config section must be a table: " + table_name);
+  ulbvc::Check(table_node->is_table(), "config section must be a table: " + table_name);
   if (config[table_name][key].node() == nullptr) return fallback;
   const std::optional<int64_t> value = config[table_name][key].value<int64_t>();
-  mlvc::Check(value.has_value(), "config key must be an integer: " + table_name + "." + key);
-  mlvc::Check(
+  ulbvc::Check(value.has_value(), "config key must be an integer: " + table_name + "." + key);
+  ulbvc::Check(
       *value >= std::numeric_limits<int>::min() && *value <= std::numeric_limits<int>::max(),
       "config integer is out of int range: " + table_name + "." + key);
   return static_cast<int>(*value);
@@ -126,20 +175,20 @@ double GetDouble(const toml::table& config, const std::string& key, double fallb
   if (const std::optional<int64_t> value = config[key].value<int64_t>(); value.has_value()) {
     return static_cast<double>(*value);
   }
-  mlvc::Check(false, "config key must be a number: " + key);
+  ulbvc::Check(false, "config key must be a number: " + key);
   return fallback;
 }
 
 bool GetBool(const toml::table& config, const std::string& key, bool fallback) {
   if (config[key].node() == nullptr) return fallback;
   const std::optional<bool> value = config[key].value<bool>();
-  mlvc::Check(value.has_value(), "config key must be boolean: " + key);
+  ulbvc::Check(value.has_value(), "config key must be boolean: " + key);
   return *value;
 }
 
 }  // namespace
 
-namespace mlvc {
+namespace ulbvc {
 
 EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_path) {
   const toml::table config = ReadTomlConfig(config_path);
@@ -154,7 +203,7 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
       GetString(config, "input_video", GetNestedString(config, "model", "input_video"));
   const std::string camera_device = GetString(config, "input_camera_device");
   const std::string execution_profile =
-      GetString(config, "execution_profile", std::string(mlvc::codec::kCodecExecutionProfile));
+      GetString(config, "execution_profile", std::string(ulbvc::codec::kCodecExecutionProfile));
   // Issue #7 fix: Validate execution_profile
   Check(execution_profile == "pipeline-v1",
         "only pipeline-v1 execution profile is supported, got: " + execution_profile);
@@ -163,9 +212,9 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
       GetString(config, "manifest", GetNestedString(config, "model", "manifest"));
 
   Check(!manifest_path.empty(), "config requires manifest or [model].manifest");
-  const mlvc::ModelManifest manifest = mlvc::ModelManifest::Load(manifest_path);
-  Check(mlvc::codec::IsMlvcManifest(manifest),
-        "encoder manifest must contain MLVCEncoder and MLVCDecoder models");
+  const ulbvc::ModelManifest manifest = ulbvc::ModelManifest::Load(manifest_path);
+  Check(ulbvc::codec::IsUlbvcManifest(manifest),
+        "encoder manifest must contain ULBVCEncoder and ULBVCDecoder models");
   const int qp = GetInt(config, "qp", 18);
   const int gop = GetInt(config, "gop", 96);
   const int reset_interval = GetInt(config, "reset_interval", 32);
@@ -194,6 +243,24 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
   options.motion_x264_threads = GetInt(config, "motion_x264_threads", 1);
   options.motion_skip_loop_filter = GetBool(config, "motion_skip_loop_filter", false);
   options.motion_camera_nv12 = GetBool(config, "motion_camera_nv12", false);
+  options.detection.enabled = GetBool(config, "detection_enabled", false);
+  options.detection.model = GetString(config, "detection_model");
+  options.detection.labels = GetString(config, "detection_labels");
+  options.detection.report = GetString(config, "detection_report");
+  options.detection.confidence = GetDouble(config, "detection_confidence", 0.25);
+  options.detection.nms_iou = GetDouble(config, "detection_nms_iou", 0.45);
+  options.detection.queue_capacity = GetInt(config, "detection_queue_capacity", 2);
+  Check(std::isfinite(options.detection.confidence) && options.detection.confidence > 0 &&
+            options.detection.confidence <= 1 && std::isfinite(options.detection.nms_iou) &&
+            options.detection.nms_iou > 0 && options.detection.nms_iou <= 1 &&
+            options.detection.queue_capacity > 0 && options.detection.queue_capacity <= 8,
+        "invalid detection thresholds or queue capacity");
+  if (options.detection.enabled) {
+    Check(!options.detection.model.empty() && !options.detection.labels.empty(),
+          "detection_model and detection_labels are required when detection is enabled");
+    Check(camera_device.empty() ? options.motion_prefetch_frames > 0 : options.motion_camera_nv12,
+          "detection requires the matching NV12 sidecar from camera or video motion prefetch");
+  }
   Check(!options.motion_camera_nv12 ||
             (options.translation_warp && options.motion_shifts_file.empty() &&
              options.motion_prefetch_frames > 0),
@@ -239,24 +306,24 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
             (camera_device.empty() && input_video.empty() && input_frame_dir.empty() &&
              input.empty() && options.frame_num > 0),
         "synthetic input requires a finite frame_num and no other input source");
-  Check(camera_device.empty() ||
-            (input_video.empty() && input_frame_dir.empty() && input.empty()),
+  Check(camera_device.empty() || (input_video.empty() && input_frame_dir.empty() && input.empty()),
         "camera input cannot be combined with input_video or input_frame_dir");
   if (!camera_device.empty()) {
     options.input_camera_device = camera_device;
-    mlvc::io::CameraCaptureOptions camera_options;
+    ulbvc::io::CameraCaptureOptions camera_options;
     camera_options.width = GetInt(config, "camera_width", 1920);
     camera_options.height = GetInt(config, "camera_height", 1080);
     camera_options.fps = GetDouble(config, "camera_fps", 30.0);
     camera_options.pixel_format = GetString(config, "camera_pixel_format", "MJPG");
+    camera_options.jpeg_normalize_padding = GetBool(config, "camera_jpeg_normalize_padding", true);
     camera_options.rtsp_url = GetString(config, "camera_rtsp_url");
     camera_options.rtsp_transport = GetString(config, "camera_rtsp_transport", "tcp");
     const int camera_rtsp_bitrate = GetInt(config, "camera_rtsp_bitrate_bps", 8'000'000);
     const int camera_rtsp_gop = GetInt(config, "camera_rtsp_gop", 96);
     const int camera_rtsp_queue_capacity = GetInt(config, "camera_rtsp_queue_capacity", 3);
     const int camera_preload_frames = GetInt(config, "camera_preload_frames", 0);
-    Check(camera_options.width > 0 && camera_options.height > 0 &&
-              camera_options.width % 2 == 0 && camera_options.height % 2 == 0,
+    Check(camera_options.width > 0 && camera_options.height > 0 && camera_options.width % 2 == 0 &&
+              camera_options.height % 2 == 0,
           "camera dimensions must be positive and even");
     Check(std::isfinite(camera_options.fps) && camera_options.fps > 0.0 &&
               camera_options.fps <= 240.0,
@@ -287,7 +354,7 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
     options.input_video_path = camera_device;
   }
   const std::string video_input =
-      input_video.empty() && mlvc::io::IsVideoPath(input) ? input : input_video;
+      input_video.empty() && ulbvc::io::IsVideoPath(input) ? input : input_video;
   if (!camera_device.empty()) {
     // Camera input has already been selected above.
   } else if (!video_input.empty()) {
@@ -307,9 +374,9 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
   Check(options.ltr_qp_shift >= 0 && options.ltr_qp_shift <= 63, "ltr_qp_shift must be in [0, 63]");
   Check(std::isfinite(options.target_bitrate_bps) && options.target_bitrate_bps >= 0.0,
         "target_bitrate_bps must be finite and non-negative");
-  const double max_target_bitrate_bps = std::min(
-      static_cast<double>(std::numeric_limits<int>::max()) * 0.25,
-      static_cast<double>(std::numeric_limits<int>::max()) * options.fps / 16.0);
+  const double max_target_bitrate_bps =
+      std::min(static_cast<double>(std::numeric_limits<int>::max()) * 0.25,
+               static_cast<double>(std::numeric_limits<int>::max()) * options.fps / 16.0);
   Check(options.target_bitrate_bps <= max_target_bitrate_bps,
         "target_bitrate_bps exceeds the rate controller's integer budget");
   Check(options.min_qp >= 0 && options.min_qp <= 63, "min_qp must be in [0, 63]");
@@ -317,7 +384,7 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
   Check(options.min_qp <= options.max_qp, "min_qp must not exceed max_qp");
   options.forced_ltr_recovery_frame = GetInt(config, "forced_ltr_recovery_frame", -1);
   options.forced_ltr_reference_frame = GetInt(config, "forced_ltr_reference_frame", -1);
-  mlvc::codec::ValidateForcedLtrConfiguration(
+  ulbvc::codec::ValidateForcedLtrConfiguration(
       options.gop, options.ltr_start_idx, options.ltr_period, options.forced_ltr_recovery_frame,
       options.forced_ltr_reference_frame);
   Check(config["udp_host"].node() == nullptr && config["udp_port"].node() == nullptr,
@@ -353,15 +420,17 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
   if (options.output_transport_port > 0) {
     options.output_bitstream_path.clear();
   }
-  options.mlvc_stats_host = GetString(config, "mlvc_stats_host");
-  options.mlvc_stats_port = GetInt(config, "mlvc_stats_port", 0);
-  options.mlvc_stats_interval_frames = GetInt(config, "mlvc_stats_interval_frames", 30);
-  Check(options.mlvc_stats_port >= 0 && options.mlvc_stats_port <= 65535,
-        "mlvc_stats_port must be in [0, 65535]");
-  Check(options.mlvc_stats_interval_frames > 0,
-        "mlvc_stats_interval_frames must be positive");
-  Check(options.mlvc_stats_port == 0 || !options.mlvc_stats_host.empty(),
-        "mlvc_stats_host is required when mlvc_stats_port is set");
+  options.ulbvc_stats_host = GetString(config, "ulbvc_stats_host");
+  options.ulbvc_stats_port = GetInt(config, "ulbvc_stats_port", 0);
+  options.ulbvc_stats_interval_frames = GetInt(config, "ulbvc_stats_interval_frames", 30);
+  Check(options.ulbvc_stats_port >= 0 && options.ulbvc_stats_port <= 65535,
+        "ulbvc_stats_port must be in [0, 65535]");
+  Check(options.ulbvc_stats_interval_frames > 0, "ulbvc_stats_interval_frames must be positive");
+  Check(!options.detection.enabled || options.output_transport_mode == "rtp" ||
+            options.output_transport_port == 0,
+        "detection metadata requires RTP transport or file output");
+  Check(options.ulbvc_stats_port == 0 || !options.ulbvc_stats_host.empty(),
+        "ulbvc_stats_host is required when ulbvc_stats_port is set");
   const int stream_workers = GetNestedInt(config, "pipeline", "stream_workers", 1);
   const int queue_capacity = GetNestedInt(config, "pipeline", "queue_capacity", 3);
   const int frame_buffer_slots = GetNestedInt(config, "pipeline", "frame_buffer_slots", 3);
@@ -380,4 +449,4 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
   return EncoderApplicationConfig{std::move(options)};
 }
 
-}  // namespace mlvc
+}  // namespace ulbvc

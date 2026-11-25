@@ -1,5 +1,5 @@
-#include <mlvc/core/status.h>
-#include <mlvc/runtime/stage_runtime.h>
+#include <ulbvc/core/status.h>
+#include <ulbvc/runtime/stage_runtime.h>
 
 #include <cmath>
 #include <cstdint>
@@ -13,12 +13,12 @@
 namespace {
 
 struct TensorBuffer {
-  mlvc::TensorShape shape;
-  mlvc::DataType dtype = mlvc::DataType::kFloat16;
+  ulbvc::TensorShape shape;
+  ulbvc::DataType dtype = ulbvc::DataType::kFloat16;
   std::vector<uint8_t> bytes;
 
-  mlvc::TensorView View() {
-    return mlvc::TensorView::Borrowed(bytes.data(), &shape, dtype, mlvc::MemoryLocation::kCpu);
+  ulbvc::TensorView View() {
+    return ulbvc::TensorView::Borrowed(bytes.data(), &shape, dtype, ulbvc::MemoryLocation::kCpu);
   }
 };
 
@@ -105,14 +105,14 @@ float HalfBitsToFloat(uint16_t value) {
   return output;
 }
 
-TensorBuffer MakeInput(const mlvc::TensorSpec& spec, uint32_t seed) {
+TensorBuffer MakeInput(const ulbvc::TensorSpec& spec, uint32_t seed) {
   TensorBuffer buffer;
-  buffer.shape = mlvc::TensorShape(spec.shape);
+  buffer.shape = ulbvc::TensorShape(spec.shape);
   buffer.dtype = spec.dtype;
   const std::size_t elements = buffer.shape.NumElements();
-  buffer.bytes.resize(elements * mlvc::ElementSize(spec.dtype));
+  buffer.bytes.resize(elements * ulbvc::ElementSize(spec.dtype));
   switch (spec.dtype) {
-    case mlvc::DataType::kFloat16: {
+    case ulbvc::DataType::kFloat16: {
       auto* output = reinterpret_cast<uint16_t*>(buffer.bytes.data());
       for (std::size_t i = 0; i < elements; ++i) {
         const float value = (static_cast<int>((i + seed) % 23) - 11) / 16.0f;
@@ -120,35 +120,35 @@ TensorBuffer MakeInput(const mlvc::TensorSpec& spec, uint32_t seed) {
       }
       break;
     }
-    case mlvc::DataType::kFloat32: {
+    case ulbvc::DataType::kFloat32: {
       auto* output = reinterpret_cast<float*>(buffer.bytes.data());
       for (std::size_t i = 0; i < elements; ++i) {
         output[i] = (static_cast<int>((i + seed) % 23) - 11) / 16.0f;
       }
       break;
     }
-    case mlvc::DataType::kInt8: {
+    case ulbvc::DataType::kInt8: {
       auto* output = reinterpret_cast<int8_t*>(buffer.bytes.data());
       for (std::size_t i = 0; i < elements; ++i) {
         output[i] = static_cast<int8_t>(static_cast<int>((i + seed) % 17) - 8);
       }
       break;
     }
-    case mlvc::DataType::kInt16: {
+    case ulbvc::DataType::kInt16: {
       auto* output = reinterpret_cast<int16_t*>(buffer.bytes.data());
       for (std::size_t i = 0; i < elements; ++i) {
         output[i] = static_cast<int16_t>(static_cast<int>((i + seed) % 257) - 128);
       }
       break;
     }
-    case mlvc::DataType::kInt32: {
+    case ulbvc::DataType::kInt32: {
       auto* output = reinterpret_cast<int32_t*>(buffer.bytes.data());
       for (std::size_t i = 0; i < elements; ++i) {
         output[i] = static_cast<int32_t>(static_cast<int>((i + seed) % 257) - 128);
       }
       break;
     }
-    case mlvc::DataType::kUInt8: {
+    case ulbvc::DataType::kUInt8: {
       for (std::size_t i = 0; i < elements; ++i) {
         buffer.bytes[i] = static_cast<uint8_t>((i + seed) % 251);
       }
@@ -158,36 +158,36 @@ TensorBuffer MakeInput(const mlvc::TensorSpec& spec, uint32_t seed) {
   return buffer;
 }
 
-TensorBuffer MakeOutput(const mlvc::TensorSpec& spec) {
+TensorBuffer MakeOutput(const ulbvc::TensorSpec& spec) {
   TensorBuffer buffer;
-  buffer.shape = mlvc::TensorShape(spec.shape);
+  buffer.shape = ulbvc::TensorShape(spec.shape);
   buffer.dtype = spec.dtype;
-  buffer.bytes.resize(buffer.shape.NumElements() * mlvc::ElementSize(spec.dtype));
+  buffer.bytes.resize(buffer.shape.NumElements() * ulbvc::ElementSize(spec.dtype));
   return buffer;
 }
 
 double ReadValue(const TensorBuffer& buffer, std::size_t index) {
   switch (buffer.dtype) {
-    case mlvc::DataType::kFloat16:
+    case ulbvc::DataType::kFloat16:
       return HalfBitsToFloat(reinterpret_cast<const uint16_t*>(buffer.bytes.data())[index]);
-    case mlvc::DataType::kFloat32:
+    case ulbvc::DataType::kFloat32:
       return reinterpret_cast<const float*>(buffer.bytes.data())[index];
-    case mlvc::DataType::kInt8:
+    case ulbvc::DataType::kInt8:
       return reinterpret_cast<const int8_t*>(buffer.bytes.data())[index];
-    case mlvc::DataType::kInt16:
+    case ulbvc::DataType::kInt16:
       return reinterpret_cast<const int16_t*>(buffer.bytes.data())[index];
-    case mlvc::DataType::kInt32:
+    case ulbvc::DataType::kInt32:
       return reinterpret_cast<const int32_t*>(buffer.bytes.data())[index];
-    case mlvc::DataType::kUInt8:
+    case ulbvc::DataType::kUInt8:
       return reinterpret_cast<const uint8_t*>(buffer.bytes.data())[index];
   }
-  throw mlvc::Error("unsupported dtype");
+  throw ulbvc::Error("unsupported dtype");
 }
 
 OutputDiff CompareOutput(const std::string& name, const TensorBuffer& baseline,
                          const TensorBuffer& target, double atol, double rtol) {
-  mlvc::Check(baseline.dtype == target.dtype, "output dtype mismatch: " + name);
-  mlvc::Check(baseline.shape.dims() == target.shape.dims(), "output shape mismatch: " + name);
+  ulbvc::Check(baseline.dtype == target.dtype, "output dtype mismatch: " + name);
+  ulbvc::Check(baseline.shape.dims() == target.shape.dims(), "output shape mismatch: " + name);
   OutputDiff diff;
   diff.name = name;
   diff.elements = baseline.shape.NumElements();
@@ -249,11 +249,11 @@ int main(int argc, char** argv) {
   }
 
   try {
-    mlvc::StageRuntime runtime(device);
-    mlvc::ModelManifest manifest = mlvc::ModelManifest::Load(manifest_path);
-    const mlvc::ModelRecord& record = manifest.GetModel(stage_name);
+    ulbvc::StageRuntime runtime(device);
+    ulbvc::ModelManifest manifest = ulbvc::ModelManifest::Load(manifest_path);
+    const ulbvc::ModelRecord& record = manifest.GetModel(stage_name);
     if (baseline_om.empty()) {
-      mlvc::Check(!record.atc_model.empty(), "manifest stage has no atc_om_file: " + stage_name);
+      ulbvc::Check(!record.atc_model.empty(), "manifest stage has no atc_om_file: " + stage_name);
       baseline_om = ResolvePath(manifest.directory(), record.atc_model);
     }
     if (target_om.empty()) {
@@ -262,21 +262,21 @@ int main(int argc, char** argv) {
     baseline_om = ResolvePath(manifest.directory(), baseline_om);
     target_om = ResolvePath(manifest.directory(), target_om);
 
-    mlvc::AclStage baseline(&runtime, record, baseline_om);
-    mlvc::AclStage target(&runtime, record, target_om);
+    ulbvc::AclStage baseline(&runtime, record, baseline_om);
+    ulbvc::AclStage target(&runtime, record, target_om);
 
     std::vector<TensorBuffer> inputs;
     std::vector<TensorBuffer> baseline_outputs;
     std::vector<TensorBuffer> target_outputs;
-    std::vector<mlvc::NamedTensorView> input_views;
-    std::vector<mlvc::NamedTensorView> baseline_output_views;
-    std::vector<mlvc::NamedTensorView> target_output_views;
+    std::vector<ulbvc::NamedTensorView> input_views;
+    std::vector<ulbvc::NamedTensorView> baseline_output_views;
+    std::vector<ulbvc::NamedTensorView> target_output_views;
 
     uint32_t seed = 1;
-    for (const mlvc::TensorSpec& spec : record.inputs) {
+    for (const ulbvc::TensorSpec& spec : record.inputs) {
       inputs.push_back(MakeInput(spec, seed++));
     }
-    for (const mlvc::TensorSpec& spec : record.outputs) {
+    for (const ulbvc::TensorSpec& spec : record.outputs) {
       baseline_outputs.push_back(MakeOutput(spec));
       target_outputs.push_back(MakeOutput(spec));
     }

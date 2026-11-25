@@ -1,7 +1,7 @@
 // Offline proxy matching the Python ffmpeg medium/CRF18/GOP/no-B/single-ref
 // experiment. Keeps source YUV pixels and x264 lookahead defaults. Real-time
 // TranslationEstimator intentionally uses a different low-latency policy.
-#include <mlvc/motion/translation_estimator.h>
+#include <ulbvc/motion/translation_estimator.h>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -47,7 +47,7 @@ struct Packet {
   ~Packet() { av_packet_free(&value); }
 };
 
-std::vector<mlvc::motion::Translation> Export(const char* path, int limit, int gop) {
+std::vector<ulbvc::motion::Translation> Export(const char* path, int limit, int gop) {
   Input input;
   CheckAv(avformat_open_input(&input.value, path, nullptr, nullptr), "open input video");
   CheckAv(avformat_find_stream_info(input.value, nullptr), "read input video streams");
@@ -68,8 +68,8 @@ std::vector<mlvc::motion::Translation> Export(const char* path, int limit, int g
   Packet packet;
   Packet encoded;
   Check(frame.value && packet.value && encoded.value, "proxy input allocation failed");
-  mlvc::motion::H264MotionExtractor extractor(gop);
-  std::vector<mlvc::motion::Translation> shifts;
+  ulbvc::motion::H264MotionExtractor extractor(gop);
+  std::vector<ulbvc::motion::Translation> shifts;
   int submitted = 0;
   auto drain_proxy = [&] {
     while (true) {

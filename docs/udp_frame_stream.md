@@ -1,6 +1,6 @@
 # UDP Frame Stream
 
-The copied `mlvc_acl_cppv1` project keeps the original MLVC model, reference
+The copied `ulbvc_acl_cppv1` project keeps the original ULBVC model, reference
 state, and official rANS implementation. It changes only the transport path:
 
 ```text
@@ -19,14 +19,14 @@ UDP payloads using the VideoTrans packet layout:
         [channel:u8] [reserved:u8] [payload <= 1024] [CD DE]
 ```
 
-The reassembled MLVC message starts with a kind byte (`1` header, `2` frame,
+The reassembled ULBVC message starts with a kind byte (`1` header, `2` frame,
 `3` end). A frame message then contains frame index, frame type, Q index,
-payload length, and the complete official MLVC rANS payload. The receiver
+payload length, and the complete official ULBVC rANS payload. The receiver
 validates magic, tail, fragment bounds, and all reassembly lengths before
 passing a frame to the decoder. The receiver socket uses an 8 MiB kernel
 receive buffer, matching the VideoTrans receiver's burst-oriented design.
 UDP itself does not guarantee delivery; a missing fragment causes the current
-logical message to be discarded when the next message starts. MLVC receive
+logical message to be discarded when the next message starts. ULBVC receive
 uses a dedicated `recvfrom`/reassembly thread and a condition-variable queue;
 the decoder thread only consumes complete messages.
 
@@ -34,7 +34,7 @@ the decoder thread only consumes complete messages.
 
 原始 YUV 和 JPEG/VideoTrans 转发方案已删除。当前解码器支持本地视频和 RTSP 输出。
 
-Run `mlvc_decode` first so it is blocked on the UDP port, then run
-`mlvc_encode`. The example configs use Q8, GOP128, Reset32, LTR start 8,
+Run `ulbvc_decode` first so it is blocked on the UDP port, then run
+`ulbvc_encode`. The example configs use Q8, GOP128, Reset32, LTR start 8,
 LTR period 64, and LTR QP shift 8. `frame_num` can be reduced for a smoke test
 or set to `-1` for all available frames.

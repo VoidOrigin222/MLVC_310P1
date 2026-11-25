@@ -35,9 +35,9 @@ def build(args):
         raise ValueError("source bundle must use FP16")
     for record in [source["sidecar"], *source.get("runtime_artifacts", []), *source["models"]]:
         verify_record(root, record)
-    if any(record["name"] == "MLVCReferenceFromFrame" for record in source["models"]):
+    if any(record["name"] == "ULBVCReferenceFromFrame" for record in source["models"]):
         raise ValueError("source manifest already contains frame-reference stage")
-    encoder = next(record for record in source["models"] if record["name"] == "MLVCEncoder")
+    encoder = next(record for record in source["models"] if record["name"] == "ULBVCEncoder")
     input_spec = next(spec for spec in encoder["inputs"] if spec["name"] == "x")
     feature_spec = next(spec for spec in encoder["inputs"] if spec["name"] == "ref_feature")
     batch, channels, height, width = input_spec["shape"]
@@ -55,7 +55,7 @@ def build(args):
         raise ValueError("reference stage must be a nonempty .om file")
     motion = copy.deepcopy(source)
     motion["models"].append({
-        "name": "MLVCReferenceFromFrame", "file": relative_om, "backend": "acl",
+        "name": "ULBVCReferenceFromFrame", "file": relative_om, "backend": "acl",
         "bytes": om.stat().st_size, "sha256": actual_sha,
         "inputs": [{"name": "ref_frame", "dtype": "float16", "shape": [1, 3, height, width]}],
         "outputs": [{"name": "ref_feature", "dtype": "float16", "shape": feature_spec["shape"]}],

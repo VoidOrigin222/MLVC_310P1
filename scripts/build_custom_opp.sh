@@ -30,8 +30,8 @@ build_and_install() {
 
   "${run_pkg}" --quiet --install-path="${install_root}"
   echo "Installed ${op_name} custom OPP to ${install_root}"
-  echo "Source environment with: source ${install_root}/vendors/mlvc/bin/set_env.bash"
+  echo "Source environment with: source ${install_root}/vendors/ulbvc/bin/set_env.bash"
 }
 
 build_and_install wsiluchunkadd
-build_and_install mlvc_prior_ops
+build_and_install ulbvc_prior_ops

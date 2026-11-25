@@ -1,4 +1,4 @@
-#include "mlvc/transport/rtp_message_receiver.h"
+#include "ulbvc/transport/rtp_message_receiver.h"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -15,7 +15,7 @@
 #include <random>
 #include <utility>
 
-namespace mlvc::transport {
+namespace ulbvc::transport {
 
 namespace {
 constexpr std::size_t kMaxSequenceHistory = 4096;
@@ -29,7 +29,7 @@ uint32_t RandomSsrc() {
 
 std::string CnameForSsrc(uint32_t ssrc) {
   static constexpr char kHex[] = "0123456789abcdef";
-  std::string cname = "mlvc-";
+  std::string cname = "ulbvc-";
   for (int shift = 28; shift >= 0; shift -= 4) cname.push_back(kHex[(ssrc >> shift) & 0xf]);
   return cname;
 }
@@ -62,7 +62,7 @@ RtpMessageReceiver::RtpMessageReceiver(uint16_t port, std::string context, uint8
   // RTP frames are fragmented into many datagrams and decoding can briefly
   // stop reading while an accelerator operation is in flight.  Keep enough
   // kernel queue for a complete short burst so a transient scheduling pause
-  // does not turn into a permanently incomplete MLVC unit.
+  // does not turn into a permanently incomplete ULBVC unit.
   int receive_buffer = 16 * 1024 * 1024;
   (void)::setsockopt(socket_, SOL_SOCKET, SO_RCVBUF, &receive_buffer, sizeof(receive_buffer));
   timeval receive_timeout{};
@@ -209,7 +209,7 @@ void RtpMessageReceiver::ReceiveLoop() {
       if (TrackSequence(packet.sequence, std::chrono::steady_clock::now())) continue;
       UpdateRtcpReceiveStats(packet);
 
-      RtpMlvcFragment fragment = DecodeRtpMlvcFragment(packet.payload);
+      RtpUlbvcFragment fragment = DecodeRtpUlbvcFragment(packet.payload);
       fragment.timestamp = packet.timestamp;
       fragment.ssrc = packet.ssrc;
       if (fragment.unit_type == RtpUnitType::kEfu) {
@@ -218,8 +218,8 @@ void RtpMessageReceiver::ReceiveLoop() {
             [&fragment](const auto& entry) { return entry.first == fragment.config_id; });
         if (config_limit != config_frame_limits_.end()) {
           const uint64_t max_unit_bytes = std::min<uint64_t>(
-              kMlvcMediaUnitMaxBytes,
-              static_cast<uint64_t>(config_limit->second) + kMlvcHeaderMaxBytes);
+              kUlbvcMediaUnitMaxBytes,
+              static_cast<uint64_t>(config_limit->second) + kUlbvcHeaderMaxBytes);
           if (fragment.unit_length > max_unit_bytes) {
             throw std::runtime_error(context_ + ": EFU exceeds its SCU frame-size limit");
           }
@@ -230,7 +230,7 @@ void RtpMessageReceiver::ReceiveLoop() {
           fragment.unit_length;
       const bool expected_marker = fragment.unit_type == RtpUnitType::kEfu && fragment_is_last;
       if (packet.marker != expected_marker)
-        throw std::runtime_error(context_ + ": RTP marker does not match MLVC unit boundary");
+        throw std::runtime_error(context_ + ": RTP marker does not match ULBVC unit boundary");
       std::vector<uint8_t> unit;
       if (!reassembler_.Push(fragment, &unit)) continue;
       const auto media_header = ParseMediaUnitHeader(unit);
@@ -242,13 +242,13 @@ void RtpMessageReceiver::ReceiveLoop() {
       }
       try {
         ValidateMediaUnit(unit);
-      } catch (const MlvcEfuCrcError&) {
+      } catch (const UlbvcEfuCrcError&) {
         // A complete but damaged EFU is a lost frame, not a fatal RTP session
         // error. The frame-level receiver waits for a valid recovery point.
         continue;
       }
-      if (media_header.unit_type == MlvcMediaUnitType::kScu) {
-        const MlvcScu scu = ParseScu(unit);
+      if (media_header.unit_type == UlbvcMediaUnitType::kScu) {
+        const UlbvcScu scu = ParseScu(unit);
         auto existing = std::find_if(
             config_frame_limits_.begin(), config_frame_limits_.end(),
             [&scu](const auto& entry) { return entry.first == scu.config_id; });
@@ -487,4 +487,4 @@ bool RtpMessageReceiver::ReceiveFor(std::vector<uint8_t>* unit,
   return true;
 }
 
-}  // namespace mlvc::transport
+}  // namespace ulbvc::transport

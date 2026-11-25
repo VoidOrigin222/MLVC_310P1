@@ -1,0 +1,15 @@
+mode = "encode"
+manifest = "models/codec/manifest_motion_ascend310p1.json"
+input_synthetic = true
+output = "logs/validation/smoke.es"
+frame_num = 4
+qp = 11
+gop = 96
+reset_interval = 32
+ltr_period = 0
+fps = 30
+device = 0
+execution_profile = "pipeline-v1"
+translation_warp = true
+motion_backend = "dvpp"
+motion_prefetch_frames = 2

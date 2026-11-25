@@ -3,7 +3,7 @@ const $ = id => document.getElementById(id);
 const channels = [
   {key:'original', name:'原图', tag:'原始输入', path:'camera-original', hint:'等待摄像头原始流'},
   {key:'h264', name:'H.264', tag:'编码对照', path:'camera-h264', hint:'等待 H.264 推流'},
-  {key:'mlvc', name:'语义压缩', tag:'解码输出', path:'mlvc', hint:'等待解码板视频流'},
+  {key:'ulbvc', name:'语义压缩', tag:'解码输出', path:'ulbvc', hint:'等待解码板视频流'},
 ];
 const cameraIcon = '<svg viewBox="0 0 48 48"><rect x="6" y="13" width="27" height="23" rx="4"/><path d="m33 20 10-5v20l-10-5M17 13l3-5h10l3 5"/><circle cx="19.5" cy="24.5" r="5.5"/></svg>';
 const expandIcon = '<svg viewBox="0 0 24 24"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></svg>';
@@ -13,7 +13,7 @@ for (const [index,c] of channels.entries()) {
 }
 let settings = {}, configLoaded = false, enabled = true, refreshing = false, statusSnapshot = null;
 const players = {};
-function notice(message, error=false) {$('notice').hidden=false;$('notice').textContent=String(message).replace(/mlvc/gi,'语义压缩');$('notice').className='notice'+(error?' error':'');}
+function notice(message, error=false) {$('notice').hidden=false;$('notice').textContent=String(message).replace(/ulbvc/gi,'语义压缩');$('notice').className='notice'+(error?' error':'');}
 async function api(path, body) {
   // AbortController also works in browsers without AbortSignal.timeout().
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),6000);
@@ -191,13 +191,13 @@ function drawBitrate(now=performance.now()) {
   const chart=$('bitrate-chart'),width=Math.max(240,chart.clientWidth),height=chart.clientHeight||146;
   const left=48,right=12,top=12,bottom=24,w=width-left-right,h=height-top-bottom;
   bitrateHistory.prune(now);
-  const peak=Math.max(1,...bitrateHistory.samples.flatMap(sample=>[sample.h264,sample.mlvc]).filter(Number.isFinite));
+  const peak=Math.max(1,...bitrateHistory.samples.flatMap(sample=>[sample.h264,sample.ulbvc]).filter(Number.isFinite));
   const raw=peak*1.15,scale=10**Math.floor(Math.log10(raw)),upper=Math.ceil(raw/scale)*scale;
   const x=time=>left+w*(1-(now-time)/30000),y=value=>top+h*(1-value/upper);
   let markup='';
   for(const fraction of [0,.5,1]){const value=upper*fraction,position=y(value);markup+=`<line class="chart-grid" x1="${left}" x2="${width-right}" y1="${position}" y2="${position}"/><text x="${left-9}" y="${position+3}" text-anchor="end">${format(value,value<10?1:0)}</text>`;}
   for(const [fraction,label,anchor] of [[0,'30 秒前','start'],[.5,'15 秒前','middle'],[1,'现在','end']])markup+=`<text x="${left+w*fraction}" y="${height-4}" text-anchor="${anchor}">${label}</text>`;
-  for(const key of ['h264','mlvc'])for(const segment of bitrateHistory.segments(key,now)){
+  for(const key of ['h264','ulbvc'])for(const segment of bitrateHistory.segments(key,now)){
     markup+=`<path class="chart-line ${key}-line" d="${segment.map((sample,index)=>`${index?'L':'M'}${x(sample.time).toFixed(2)},${y(sample[key]).toFixed(2)}`).join(' ')}"/>`;
     const last=segment[segment.length-1];markup+=`<circle class="${key}-dot" cx="${x(last.time).toFixed(2)}" cy="${y(last[key]).toFixed(2)}" r="2.5"/>`;
   }
@@ -212,13 +212,13 @@ async function refresh() {
     for(const c of channels){const published=!!status.feeds[c.key];
       if(!published&&$(c.key+'-card').classList.contains('live')){players[c.key].close(false);setState(c.key,'未发布');if(enabled)players[c.key].schedule();}
       if(!players[c.key].pc&&!players[c.key].retry)setState(c.key,enabled?(published?'等待连接':'未发布'):'已断开');
-      const ready=c.key==='original'||(c.key==='mlvc'?status.mlvc_actual:status.h264_actual);
+      const ready=c.key==='original'||(c.key==='ulbvc'?status.ulbvc_actual:status.h264_actual);
       metric(c.key,status.metrics[c.key],ready);
       players[c.key].stats();
     }
-    bitrateHistory.add(performance.now(),{h264:status.feeds.h264&&status.h264_actual?status.metrics.h264.kbs:null,mlvc:status.feeds.mlvc&&status.mlvc_actual?status.metrics.mlvc.kbs:null});drawBitrate();
-    const error=status.error||status.mlvc_stats_error;if(error&&error!==lastError)notice(error,true);lastError=error;
-  } catch(error) {if(lastError!=='offline')notice('控制服务连接失败',true);lastError='offline';for(const c of channels)metric(c.key,{},false);bitrateHistory.add(performance.now(),{h264:null,mlvc:null});drawBitrate();}
+    bitrateHistory.add(performance.now(),{h264:status.feeds.h264&&status.h264_actual?status.metrics.h264.kbs:null,ulbvc:status.feeds.ulbvc&&status.ulbvc_actual?status.metrics.ulbvc.kbs:null});drawBitrate();
+    const error=status.error||status.ulbvc_stats_error;if(error&&error!==lastError)notice(error,true);lastError=error;
+  } catch(error) {if(lastError!=='offline')notice('控制服务连接失败',true);lastError='offline';for(const c of channels)metric(c.key,{},false);bitrateHistory.add(performance.now(),{h264:null,ulbvc:null});drawBitrate();}
   finally {refreshing=false;}
 }
 async function pipeline(action) {
@@ -241,8 +241,8 @@ for(const id of ['close-settings','cancel-settings'])$(id).addEventListener('cli
 $('settings-dialog').addEventListener('close',fillSettings);
 $('settings-form').addEventListener('submit',async e=>{e.preventDefault();const draft={...settings};for(const field of $('settings-form').querySelectorAll('input,select'))draft[field.name]=field.type==='number'?Number(field.value):field.value.trim();
   $('save-settings').disabled=true;
-  try {for(const key of ['original','h264','mlvc'])if(new URL(draft[key]).protocol!=='rtsp:'||!pathFor(draft[key]))throw new Error('视频源地址必须使用 rtsp:// 并包含流路径');if(!['http:','https:'].includes(new URL(draft.webrtc).protocol))throw new Error('WebRTC 地址必须使用 http:// 或 https://');const applyEncoder=enabled&&['original','h264','transport','h264_qp','ffmpeg'].some(key=>draft[key]!==settings[key]);await api('/api/config',draft);settings=draft;configLoaded=true;$('settings-dialog').close();if(applyEncoder)await pipeline('start');await reconnect();notice('已保存');}
-  catch(error){$('settings-error').hidden=false;$('settings-error').textContent=String(error.message).replace(/mlvc/gi,'语义压缩');}finally{$('save-settings').disabled=false;}
+  try {for(const key of ['original','h264','ulbvc'])if(new URL(draft[key]).protocol!=='rtsp:'||!pathFor(draft[key]))throw new Error('视频源地址必须使用 rtsp:// 并包含流路径');if(!['http:','https:'].includes(new URL(draft.webrtc).protocol))throw new Error('WebRTC 地址必须使用 http:// 或 https://');const applyEncoder=enabled&&['original','h264','transport','h264_qp','ffmpeg'].some(key=>draft[key]!==settings[key]);await api('/api/config',draft);settings=draft;configLoaded=true;$('settings-dialog').close();if(applyEncoder)await pipeline('start');await reconnect();notice('已保存');}
+  catch(error){$('settings-error').hidden=false;$('settings-error').textContent=String(error.message).replace(/ulbvc/gi,'语义压缩');}finally{$('save-settings').disabled=false;}
 });
 function clock(){const now=new Date();$('clock').textContent=now.toLocaleTimeString('zh-CN',{hour12:false});$('clock').dateTime=now.toISOString();}clock();setInterval(clock,1000);
 window.addEventListener('pagehide',()=>{enabled=false;for(const p of Object.values(players))p.close(false);});

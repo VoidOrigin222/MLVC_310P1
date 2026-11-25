@@ -1,10 +1,10 @@
-#include "mlvc/core/tensor.h"
+#include "ulbvc/core/tensor.h"
 
 #include <algorithm>
 
-#include "mlvc/core/status.h"
+#include "ulbvc/core/status.h"
 
-namespace mlvc {
+namespace ulbvc {
 
 std::size_t ElementSize(DataType dtype) {
   switch (dtype) {
@@ -132,4 +132,4 @@ TensorView TensorView::Borrowed(void* data, const TensorShape* shape, DataType d
   return view;
 }
 
-}  // namespace mlvc
+}  // namespace ulbvc

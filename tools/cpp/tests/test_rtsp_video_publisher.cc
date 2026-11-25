@@ -1,6 +1,6 @@
-#include <mlvc/codec/tensor_utils.h>
-#include <mlvc/core/status.h>
-#include <mlvc/io/video_io.h>
+#include <ulbvc/codec/tensor_utils.h>
+#include <ulbvc/core/status.h>
+#include <ulbvc/io/video_io.h>
 
 #include <cstdint>
 #include <exception>
@@ -16,7 +16,7 @@ int main() {
   std::cout << "rtsp publisher test skipped on Windows\n";
   return 0;
 }
-#elif defined(MLVC_HAS_LIBAVFORMAT)
+#elif defined(ULBVC_HAS_LIBAVFORMAT)
 
 #include <algorithm>
 #include <arpa/inet.h>
@@ -163,8 +163,8 @@ std::vector<uint8_t> SampleH264() {
 int main() {
   try {
     RtspTestServer server;
-    mlvc::io::RtspVideoPublisher publisher(
-        "rtsp://127.0.0.1:" + std::to_string(server.port()) + "/mlvc", 30.0, 2, 2,
+    ulbvc::io::RtspVideoPublisher publisher(
+        "rtsp://127.0.0.1:" + std::to_string(server.port()) + "/ulbvc", 30.0, 2, 2,
         "ultrafast", 23, 2, "tcp", true);
     publisher.WriteH264Frame(SampleH264());
     publisher.Close();
@@ -174,8 +174,8 @@ int main() {
     Expect(server.rtp_packet_count() > 0, "direct RTSP publisher wrote no RTP packets");
 
     RtspTestServer nv12_server;
-    mlvc::io::RtspVideoPublisher nv12_publisher(
-        "rtsp://127.0.0.1:" + std::to_string(nv12_server.port()) + "/mlvc", 30.0, 2, 2,
+    ulbvc::io::RtspVideoPublisher nv12_publisher(
+        "rtsp://127.0.0.1:" + std::to_string(nv12_server.port()) + "/ulbvc", 30.0, 2, 2,
         "ultrafast", 23, 2, "tcp", false);
     nv12_publisher.WriteNv12Frame(std::vector<uint8_t>(6, 128));
     nv12_publisher.Close();
@@ -205,30 +205,30 @@ void Expect(bool condition, const std::string& message) {
 
 int main() {
   try {
-    const std::filesystem::path root = "/tmp/mlvc_rtsp_publisher_test";
+    const std::filesystem::path root = "/tmp/ulbvc_rtsp_publisher_test";
     std::filesystem::create_directories(root / "bin");
     const std::filesystem::path script = root / "bin" / "ffmpeg";
     const std::filesystem::path output = root / "stream.bin";
     const std::filesystem::path arguments = root / "arguments.txt";
     {
       std::ofstream file(script);
-      file << "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$MLVC_RTSP_TEST_ARGUMENTS\"\n"
-              "cat > \"$MLVC_RTSP_TEST_OUTPUT\"\n";
+      file << "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$ULBVC_RTSP_TEST_ARGUMENTS\"\n"
+              "cat > \"$ULBVC_RTSP_TEST_OUTPUT\"\n";
     }
     chmod(script.c_str(), 0755);
-    setenv("MLVC_RTSP_TEST_OUTPUT", output.c_str(), 1);
-    setenv("MLVC_RTSP_TEST_ARGUMENTS", arguments.c_str(), 1);
+    setenv("ULBVC_RTSP_TEST_OUTPUT", output.c_str(), 1);
+    setenv("ULBVC_RTSP_TEST_ARGUMENTS", arguments.c_str(), 1);
     const std::string path =
-        std::string("/tmp/mlvc_rtsp_publisher_test/bin:") + std::getenv("PATH");
+        std::string("/tmp/ulbvc_rtsp_publisher_test/bin:") + std::getenv("PATH");
     setenv("PATH", path.c_str(), 1);
 
-    mlvc::codec::TensorData frame = mlvc::codec::MakeFp16Tensor({1, 3, 2, 2}, 0.0F);
+    ulbvc::codec::TensorData frame = ulbvc::codec::MakeFp16Tensor({1, 3, 2, 2}, 0.0F);
     auto* data = reinterpret_cast<uint16_t*>(frame.bytes.data());
-    data[0] = mlvc::codec::FloatToHalfBits(0.5F);
-    data[4] = mlvc::codec::FloatToHalfBits(0.5F);
-    data[8] = mlvc::codec::FloatToHalfBits(0.5F);
+    data[0] = ulbvc::codec::FloatToHalfBits(0.5F);
+    data[4] = ulbvc::codec::FloatToHalfBits(0.5F);
+    data[8] = ulbvc::codec::FloatToHalfBits(0.5F);
 
-    mlvc::io::RtspVideoPublisher publisher("rtsp://127.0.0.1:8554/mlvc", 30.0, 2, 2,
+    ulbvc::io::RtspVideoPublisher publisher("rtsp://127.0.0.1:8554/ulbvc", 30.0, 2, 2,
                                            "ultrafast", 0, 2);
     publisher.WriteTensorFrame(frame);
     publisher.Close();

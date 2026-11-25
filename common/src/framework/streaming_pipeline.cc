@@ -1,11 +1,11 @@
-#include "mlvc/framework/streaming_pipeline.h"
+#include "ulbvc/framework/streaming_pipeline.h"
 
 #include <algorithm>
 #include <utility>
 
-#include "mlvc/core/status.h"
+#include "ulbvc/core/status.h"
 
-namespace mlvc {
+namespace ulbvc {
 
 StreamingPipeline::StreamingPipeline(std::size_t worker_count, std::size_t queue_capacity)
     : worker_count_(std::max<std::size_t>(1, worker_count)),
@@ -164,4 +164,4 @@ void StreamingPipeline::ReleaseInFlightSlot() {
   in_flight_cv_.notify_one();
 }
 
-}  // namespace mlvc
+}  // namespace ulbvc

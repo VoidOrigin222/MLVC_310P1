@@ -1,5 +1,5 @@
-#include <mlvc/core/status.h>
-#include <mlvc/framework/streaming_pipeline.h>
+#include <ulbvc/core/status.h>
+#include <ulbvc/framework/streaming_pipeline.h>
 
 #include <chrono>
 #include <future>
@@ -9,7 +9,7 @@
 #include <vector>
 
 namespace {
-struct Item : mlvc::DataObject {
+struct Item : ulbvc::DataObject {
   explicit Item(int value) : value(value) {}
   int value;
 };
@@ -17,29 +17,29 @@ struct Item : mlvc::DataObject {
 
 int main() {
   try {
-    mlvc::StreamingPipeline pipeline(4, 8);
-    pipeline.SetProcessor([](const std::shared_ptr<mlvc::DataObject>& input) {
+    ulbvc::StreamingPipeline pipeline(4, 8);
+    pipeline.SetProcessor([](const std::shared_ptr<ulbvc::DataObject>& input) {
       const auto item = std::dynamic_pointer_cast<Item>(input);
-      mlvc::Check(item != nullptr, "unexpected pipeline item type");
+      ulbvc::Check(item != nullptr, "unexpected pipeline item type");
       std::this_thread::sleep_for(std::chrono::milliseconds(20 - item->value));
-      return std::static_pointer_cast<mlvc::DataObject>(std::make_shared<Item>(item->value));
+      return std::static_pointer_cast<ulbvc::DataObject>(std::make_shared<Item>(item->value));
     });
     pipeline.Start();
     for (int i = 0; i < 8; ++i) {
-      mlvc::Check(pipeline.AddInput(std::make_shared<Item>(i)), "failed to add pipeline item");
+      ulbvc::Check(pipeline.AddInput(std::make_shared<Item>(i)), "failed to add pipeline item");
     }
     pipeline.CloseInput();
     std::vector<int> values;
-    std::shared_ptr<mlvc::DataObject> output;
+    std::shared_ptr<ulbvc::DataObject> output;
     while (pipeline.GetOutput(&output)) {
       const auto item = output->As<Item>();
-      mlvc::Check(item != nullptr, "pipeline returned an unexpected output type");
+      ulbvc::Check(item != nullptr, "pipeline returned an unexpected output type");
       values.push_back(item->value);
     }
     pipeline.Stop();
-    mlvc::Check(values.size() == 8, "pipeline output count mismatch");
+    ulbvc::Check(values.size() == 8, "pipeline output count mismatch");
     for (int i = 0; i < 8; ++i) {
-      mlvc::Check(values[static_cast<std::size_t>(i)] == i,
+      ulbvc::Check(values[static_cast<std::size_t>(i)] == i,
                   "multi-worker pipeline output order mismatch at " + std::to_string(i) + ": got " +
                       std::to_string(values[static_cast<std::size_t>(i)]));
     }
@@ -48,26 +48,26 @@ int main() {
     std::promise<void> later_results_ready;
     std::promise<void> release_first;
     std::shared_future<void> release_first_future = release_first.get_future().share();
-    mlvc::StreamingPipeline bounded_pipeline(2, 4);
+    ulbvc::StreamingPipeline bounded_pipeline(2, 4);
     bounded_pipeline.SetProcessor(
-        [&](const std::shared_ptr<mlvc::DataObject>& input) {
+        [&](const std::shared_ptr<ulbvc::DataObject>& input) {
           const auto item = std::dynamic_pointer_cast<Item>(input);
-          mlvc::Check(item != nullptr, "unexpected bounded pipeline item type");
+          ulbvc::Check(item != nullptr, "unexpected bounded pipeline item type");
           if (item->value == 0) {
             first_started.set_value();
             release_first_future.wait();
           } else if (item->value == 3) {
             later_results_ready.set_value();
           }
-          return std::static_pointer_cast<mlvc::DataObject>(
+          return std::static_pointer_cast<ulbvc::DataObject>(
               std::make_shared<Item>(item->value));
         });
     bounded_pipeline.Start();
-    mlvc::Check(bounded_pipeline.AddInput(std::make_shared<Item>(0)),
+    ulbvc::Check(bounded_pipeline.AddInput(std::make_shared<Item>(0)),
                 "failed to add first bounded pipeline item");
     first_started.get_future().wait();
     for (int value = 1; value < 4; ++value) {
-      mlvc::Check(bounded_pipeline.AddInput(std::make_shared<Item>(value)),
+      ulbvc::Check(bounded_pipeline.AddInput(std::make_shared<Item>(value)),
                   "pipeline rejected input within total in-flight capacity");
     }
     later_results_ready.get_future().wait();
@@ -77,34 +77,34 @@ int main() {
     const bool fifth_was_blocked =
         fifth_add.wait_for(std::chrono::milliseconds(100)) == std::future_status::timeout;
     release_first.set_value();
-    mlvc::Check(bounded_pipeline.GetOutput(&output),
+    ulbvc::Check(bounded_pipeline.GetOutput(&output),
                 "bounded pipeline did not publish its first output");
     const auto first_value = output->As<Item>()->value;
     const bool fifth_was_accepted = fifth_add.get();
     bounded_pipeline.CloseInput();
     std::vector<int> bounded_values{first_value};
     for (int index = 1; index < 5; ++index) {
-      mlvc::Check(bounded_pipeline.GetOutput(&output),
+      ulbvc::Check(bounded_pipeline.GetOutput(&output),
                   "bounded pipeline did not publish every accepted output");
       bounded_values.push_back(output->As<Item>()->value);
     }
     bounded_pipeline.Stop();
-    mlvc::Check(fifth_was_blocked,
+    ulbvc::Check(fifth_was_blocked,
                 "reorder backlog bypassed total in-flight pipeline capacity");
-    mlvc::Check(fifth_was_accepted, "pipeline rejected input after output capacity was released");
-    mlvc::Check(bounded_values == std::vector<int>({0, 1, 2, 3, 4}),
+    ulbvc::Check(fifth_was_accepted, "pipeline rejected input after output capacity was released");
+    ulbvc::Check(bounded_values == std::vector<int>({0, 1, 2, 3, 4}),
                 "bounded pipeline output order mismatch");
 
-    mlvc::StreamingPipeline failing_pipeline(3, 4);
-    failing_pipeline.SetProcessor([](const std::shared_ptr<mlvc::DataObject>& input) {
+    ulbvc::StreamingPipeline failing_pipeline(3, 4);
+    failing_pipeline.SetProcessor([](const std::shared_ptr<ulbvc::DataObject>& input) {
       const auto item = std::dynamic_pointer_cast<Item>(input);
-      mlvc::Check(item != nullptr, "unexpected failing pipeline item type");
-      mlvc::Check(item->value != 2, "expected worker failure");
-      return std::static_pointer_cast<mlvc::DataObject>(std::make_shared<Item>(item->value));
+      ulbvc::Check(item != nullptr, "unexpected failing pipeline item type");
+      ulbvc::Check(item->value != 2, "expected worker failure");
+      return std::static_pointer_cast<ulbvc::DataObject>(std::make_shared<Item>(item->value));
     });
     failing_pipeline.Start();
     for (int i = 0; i < 4; ++i) {
-      mlvc::Check(failing_pipeline.AddInput(std::make_shared<Item>(i)),
+      ulbvc::Check(failing_pipeline.AddInput(std::make_shared<Item>(i)),
                   "failed to add failing pipeline item");
     }
     failing_pipeline.CloseInput();
@@ -117,7 +117,7 @@ int main() {
     } catch (const std::exception&) {
       propagated = true;
     }
-    mlvc::Check(propagated, "worker exception was not propagated");
+    ulbvc::Check(propagated, "worker exception was not propagated");
     std::cout << "streaming pipeline order test passed\n";
     return 0;
   } catch (const std::exception& error) {
