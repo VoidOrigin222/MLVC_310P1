@@ -5,16 +5,17 @@
 #include <ulbvc/application/stream/encode/encode_state.h>
 #include <ulbvc/application/stream/ulbvc_internal.h>
 #include <ulbvc/codec/ulbvc_rate_control.h>
-#include <ulbvc/entropy/ulbvc_official_entropy.h>
 #include <ulbvc/entropy/sidecar.h>
+#include <ulbvc/entropy/ulbvc_official_entropy.h>
 #include <ulbvc/framework/codec_graph_executor.h>
 #include <ulbvc/framework/entropy_worker.h>
 #include <ulbvc/framework/profiler.h>
-#include <ulbvc/runtime/stage_runtime.h>
-#include <ulbvc/motion/translation_estimator.h>
 #include <ulbvc/motion/dvpp_translation_estimator.h>
+#include <ulbvc/motion/translation_estimator.h>
+#include <ulbvc/runtime/stage_runtime.h>
 
 #include <condition_variable>
+#include <atomic>
 #include <cstddef>
 #include <future>
 #include <memory>
@@ -46,12 +47,15 @@ class EncodeFrameProcessor {
                               int expected_frame_index);
   void ValidateMotionFrameCount(int frames) const;
   void PrepareMotion(const std::shared_ptr<ulbvc::DataObject>& data);
+  void RequestRandomAccess();
   const LatencyStats& motion_work() const { return motion_work_; }
   const LatencyStats& ready_to_motion() const { return ready_to_motion_; }
   const LatencyStats& ready_to_encode() const { return ready_to_encode_; }
   std::size_t motion_nonzero_frames() const { return motion_nonzero_frames_; }
 
  private:
+  std::atomic<bool> random_access_requested_{false};
+  std::chrono::steady_clock::time_point last_random_access_request_{};
   ulbvc::motion::Translation EstimateMotion(const ulbvc::app::InputFrame& frame, bool random_access);
   const EncodeStreamOptions& options_;
   ulbvc::StageModelSet* models_ = nullptr;

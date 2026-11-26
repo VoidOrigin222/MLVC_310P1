@@ -1,28 +1,126 @@
 <!doctype html>
 <html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#15181c">
-  <title>语义压缩 · 三路视频控制台</title>
-  <link rel="stylesheet" href="/styles.css">
-  <script src="/app.js" defer></script>
-</head>
-<body>
-  <div class="workspace">
-    <header class="topbar">
-      <h1 class="product">语义压缩视频监控系统</h1><span id="live-count">0 / 3 在线</span>
-      <div class="control-actions"><button class="button plain" id="reconnect-button"><svg viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></svg>重新连接</button><button class="button secondary" id="stop-button"><svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1"/></svg>停止 H.264</button><button class="button primary" id="start-button"><svg viewBox="0 0 24 24"><path d="m9 5 11 7-11 7z"/></svg>启动 H.264</button></div><div class="topbar-right"><time id="clock">--:--:--</time><button class="button secondary settings-trigger" data-open-settings>参数设置</button></div>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#111419" />
+    <title>ulbvc 视频监控 V0.5</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <header class="app-header">
+      <h1>ulbvc 视频监控 <small>V0.5</small></h1>
+      <time id="clock"></time>
+      <div class="toolbar">
+        <button class="button" id="h264-stop">停止 H.264</button>
+        <button class="button" id="h264-start">启动 H.264</button>
+        <button class="button" id="pause-button">
+          <span id="pause-icon">Ⅱ</span
+          ><span id="pause-label">暂停预览</span></button
+        ><button class="button" id="reconnect-button">
+          <svg viewBox="0 0 24 24">
+            <path
+              d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"
+            /></svg
+          >重新连接</button
+        ><button class="button primary" data-settings>
+          <svg viewBox="0 0 24 24">
+            <path d="M5 6h14M5 12h14M5 18h14" />
+            <circle cx="9" cy="6" r="2" />
+            <circle cx="15" cy="12" r="2" />
+            <circle cx="10" cy="18" r="2" /></svg
+          >参数设置
+        </button>
+      </div>
     </header>
     <main>
-      <div class="notice" id="notice" role="status" hidden></div>
-      <section id="monitor" class="monitor-section" aria-label="三路视频"><div class="video-grid" id="video-grid"></div></section>
-      <section class="bitrate-panel" aria-labelledby="bitrate-title">
-        <div class="bitrate-heading"><h2 id="bitrate-title">码率对比 <span>kB/s</span></h2><div class="chart-legend"><span class="h264-legend">H.264</span><span class="semantic-legend">语义压缩</span></div></div>
-        <svg id="bitrate-chart" role="img" aria-label="H.264 与语义压缩最近 30 秒码率曲线"></svg>
-      </section>
+      <div class="view-bar">
+        <button class="channel-link active" id="overview">全部</button>
+        <nav id="channel-nav" aria-label="视频通道"></nav>
+        <div class="filters" aria-label="筛选通道">
+          <button class="filter active" data-filter="all">全部通道</button
+          ><button class="filter" data-filter="live">
+            播放中 <span id="live-count">0</span>
+          </button>
+        </div>
+      </div>
+      <div class="notice error" id="h264-error" role="status" hidden></div>
+      <section
+        class="channel-grid"
+        id="channel-grid"
+        aria-label="视频通道"
+      ></section>
+      <div class="empty-filter" id="empty-filter" hidden>暂无播放通道</div>
+      <footer id="bandwidth-summary" class="total-bandwidth">
+        <span>语义压缩合计</span><strong id="bandwidth-total">—</strong
+        ><span>kB/s</span>
+      </footer>
     </main>
-  </div>
-  <dialog id="settings-dialog" aria-labelledby="settings-title"><form id="settings-form"><div class="drawer-heading"><div><h2 id="settings-title">推流参数</h2></div><button type="button" class="icon-button" id="close-settings" aria-label="关闭设置">×</button></div><fieldset><legend>视频源与播放</legend><label>原图 RTSP<input id="original" name="original" required value="rtsp://127.0.0.1:8554/camera-original"></label><label>H.264 输出 RTSP<input id="h264" name="h264" required value="rtsp://127.0.0.1:8554/camera-h264"></label><label>语义压缩 RTSP 地址<input id="ulbvc" name="ulbvc" required value="rtsp://127.0.0.1:8554/ulbvc"></label><label>WebRTC 服务地址<input id="webrtc" name="webrtc" required value="http://127.0.0.1:8889"></label></fieldset><fieldset><legend>H.264 编码</legend><div class="form-grid"><label>RTSP 传输<select id="transport" name="transport"><option value="tcp">TCP</option><option value="udp">UDP</option></select></label><label>H.264 QP<input id="h264_qp" name="h264_qp" type="number" min="0" max="51" step="1" value="40" required></label></div><label>FFmpeg 路径<input id="ffmpeg" name="ffmpeg" value="auto" placeholder="auto（内置）或可执行文件路径" required></label></fieldset><fieldset><legend>语义压缩统计</legend><label>编码端 UDP 统计端口<input id="ulbvc_stats_port" name="ulbvc_stats_port" type="number" min="1" max="65535" value="39341" required></label></fieldset><div id="settings-error" role="alert" class="form-error" hidden></div><div class="drawer-actions"><button type="button" class="button secondary" id="cancel-settings">取消</button><button type="submit" class="button primary" id="save-settings">保存并连接</button></div></form></dialog>
-</body>
+    <div id="toast" class="toast" role="status" hidden></div>
+    <dialog id="settings-dialog" aria-labelledby="settings-title">
+      <form id="settings-form">
+        <header class="drawer-heading">
+          <div>
+            <h2 id="settings-title">视频源与播放</h2>
+          </div>
+          <button
+            type="button"
+            class="icon-button"
+            id="close-settings"
+            aria-label="关闭"
+          >
+            ×
+          </button>
+        </header>
+        <fieldset>
+          <legend>播放服务</legend>
+          <label
+            >WebRTC 地址<input
+              name="webrtc"
+              id="webrtc"
+              type="url"
+              required /></label
+          ><label
+            >MediaMTX API 地址<input
+              name="media_api"
+              id="media_api"
+              type="url"
+              required /></label
+          ><label
+            >原图显示补偿 <span class="field-unit">ms</span
+            ><input
+              name="original_delay_ms"
+              id="original_delay_ms"
+              type="number"
+              min="0"
+              max="2000"
+              required
+          /></label>
+        </fieldset>
+        <fieldset>
+          <legend>H.264 对照</legend>
+          <label>QP<input id="h264_qp" type="number" min="0" max="51" required /></label>
+          <label>H.264 显示补偿 <span class="field-unit">ms</span><input id="h264_delay_ms" type="number" min="0" max="2000" required /></label>
+          <label>FFmpeg 路径<input id="h264_ffmpeg" required spellcheck="false" /></label>
+          <label>对照编码器<select id="h264_encoder"><option value="auto">自动选择硬件编码器</option><option value="h264_qsv">Intel QSV</option><option value="h264_nvenc">NVIDIA NVENC</option><option value="h264_amf">AMD AMF</option><option value="libx264">软件 x264</option></select></label>
+          <label>RTSP 传输<select id="h264_transport"><option value="tcp">TCP</option><option value="udp">UDP</option></select></label>
+          <label class="checkbox-label"><input id="h264_auto_start" type="checkbox" />自动启动 H.264</label>
+        </fieldset>
+        <fieldset>
+          <legend>视频通道</legend>
+          <div class="settings-tabs" id="settings-tabs"></div>
+          <div class="channel-actions"><button type="button" class="button" id="add-channel">添加通道</button><button type="button" class="button" id="remove-channel">删除当前通道</button></div>
+          <div id="channel-fields"></div>
+        </fieldset>
+        <div class="form-error" id="settings-error" role="alert" hidden></div>
+        <footer class="drawer-actions">
+          <button type="button" class="button" id="cancel-settings">取消</button
+          ><button type="submit" class="button primary" id="save-settings">
+            保存并连接
+          </button>
+        </footer>
+      </form>
+    </dialog>
+  </body>
 </html>

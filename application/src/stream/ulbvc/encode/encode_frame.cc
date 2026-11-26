@@ -136,8 +136,20 @@ void EncodeFrameProcessor::PrepareMotion(const std::shared_ptr<ulbvc::DataObject
   Check(packet && packet->frame().frame, "motion worker received an empty frame");
   if (next_motion_frame_ == 0)
     Check(aclrtSetCurrentContext(context_) == ACL_SUCCESS, "motion worker cannot set ACL context");
-  packet->motion = EstimateMotion(packet->frame(), packet->frame().frame_index % options_.gop == 0);
+  packet->force_random_access = random_access_requested_.exchange(false);
+  packet->motion =
+      EstimateMotion(packet->frame(), packet->force_random_access ||
+                                          packet->frame().frame_index % options_.gop == 0);
   packet->motion_ready_at = std::chrono::steady_clock::now();
+}
+
+void EncodeFrameProcessor::RequestRandomAccess() {
+  const auto now = std::chrono::steady_clock::now();
+  if (last_random_access_request_ != std::chrono::steady_clock::time_point{} &&
+      now - last_random_access_request_ < std::chrono::seconds(1))
+    return;
+  random_access_requested_.store(true);
+  last_random_access_request_ = now;
 }
 
 void EncodeFrameProcessor::ValidateMotionFrameCount(int frames) const {
@@ -159,6 +171,10 @@ PendingEncodedFrame EncodeFrameProcessor::Process(const std::shared_ptr<ulbvc::D
 
   static ulbvc::app::LiveQualityCapture quality_capture;
   quality_capture.Reference(frame_index, *prepared_frame.frame, prepared_frame.motion_nv12);
+
+  if (packet->force_random_access ||
+      (options_.motion_prefetch_frames == 0 && random_access_requested_.exchange(false)))
+    state_->SetForceRandomAccess(true);
 
   const EncodeFrameDecision decision = state_->BeginFrame(frame_index, options_);
   if (options_.translation_warp && decision.reset_reference) {

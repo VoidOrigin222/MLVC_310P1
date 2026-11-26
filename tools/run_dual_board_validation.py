@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import time
 from urllib.request import urlopen
+from urllib.parse import urlsplit
 
 
 ROOT = "/root/ULBVC_310P1"
@@ -34,7 +35,8 @@ def start(host, role, config, name, profile_npu=False):
         f"echo $child > {ROOT}/logs/{name}-{role}.pid; wait $child"
     )
     return subprocess.Popen(["ssh", "-o", "BatchMode=yes", host, command],
-                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
 def stop(host, role, name):
@@ -65,6 +67,7 @@ def temperature(host):
 
 
 def main():
+    global ROOT
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--encoder-config", required=True)
     parser.add_argument("--decoder-config", required=True)
@@ -74,15 +77,30 @@ def main():
     parser.add_argument("--capture", action="store_true")
     parser.add_argument("--profile-npu", action="store_true",
                         help="collect encoder CANN API/task timeline (adds profiling overhead)")
+    parser.add_argument("--remote-root", default=ROOT,
+                        help="isolated source/runtime directory on both boards")
+    parser.add_argument("--media-api", default="http://127.0.0.1:9997")
+    parser.add_argument("--capture-url", default="rtsp://127.0.0.1:8554/ulbvc")
+    parser.add_argument("--max-temperature", type=int, default=85)
     args = parser.parse_args()
     if args.timeout < 0:
         parser.error("timeout must be nonnegative")
+    if (not re.fullmatch(r"/[A-Za-z0-9_/-]+", args.remote_root) or
+            not args.remote_root.strip("/") or ".." in args.remote_root.split("/")):
+        parser.error("remote-root must be an absolute board directory without traversal")
+    if not 50 <= args.max_temperature <= 90:
+        parser.error("max-temperature must be in [50,90]")
+    ROOT = args.remote_root.rstrip("/")
     if not re.fullmatch(r"[a-z0-9_-]+", args.name):
         parser.error("name must contain only lowercase letters, digits, underscores or hyphens")
     output = REPO / "artifacts/dual-board" / args.name
     if output.exists():
         parser.error("test output already exists; choose a new name")
     output.mkdir(parents=True)
+    for host in ("310PEncoder", "310PDecoder"):
+        initial = temperature(host)
+        if initial["temperature_c"] >= args.max_temperature or initial["health"] != "OK":
+            raise RuntimeError("device is not ready for a finite test: " + host)
     decoder = start("310PDecoder", "decode", args.decoder_config, args.name)
     time.sleep(0.5)
     encoder = start("310PEncoder", "encode", args.encoder_config, args.name, args.profile_npu)
@@ -97,19 +115,20 @@ def main():
                 raise RuntimeError("test timeout")
             if encoder.poll() not in (None, 0) or decoder.poll() not in (None, 0):
                 raise RuntimeError("a board process failed")
-            if elapsed - last_temperature >= 5:
+            if elapsed - last_temperature >= 2:
                 sample = {"elapsed_s": elapsed, "encoder": temperature("310PEncoder"),
                           "decoder": temperature("310PDecoder")}
                 samples.append(sample)
                 last_temperature = elapsed
-                if any(value["temperature_c"] >= 90 or value["health"] != "OK"
+                if any(value["temperature_c"] >= args.max_temperature or value["health"] != "OK"
                        for value in (sample["encoder"], sample["decoder"])):
                     raise RuntimeError("temperature or device health limit reached")
             if args.capture and capture is None:
                 try:
-                    with urlopen("http://127.0.0.1:9997/v3/paths/list", timeout=1) as response:
+                    with urlopen(args.media_api.rstrip("/") + "/v3/paths/list", timeout=1) as response:
                         paths = json.load(response)["items"]
-                    ready = any(path.get("name") == "ulbvc" and path.get("ready") for path in paths)
+                    stream_path = urlsplit(args.capture_url).path.strip("/")
+                    ready = any(path.get("name") == stream_path and path.get("ready") for path in paths)
                 except (OSError, ValueError):
                     ready = False
                 if ready:
@@ -117,8 +136,9 @@ def main():
                     capture = subprocess.Popen([
                         shutil.which("ffmpeg") or "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "warning",
                         "-rtsp_transport", "tcp", "-analyzeduration", "100000", "-probesize", "1000000",
-                        "-i", "rtsp://127.0.0.1:8554/ulbvc", "-frames:v", "1", "-update", "1",
-                        str(output / "decoded.png")], stdout=capture_log, stderr=subprocess.STDOUT)
+                        "-i", args.capture_url, "-frames:v", "1", "-update", "1",
+                        str(output / "decoded.png")], stdout=capture_log, stderr=subprocess.STDOUT,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             time.sleep(0.2)
     except Exception as error:
         failure = str(error)

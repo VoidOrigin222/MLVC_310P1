@@ -1383,6 +1383,8 @@ RtspVideoPublisher::RtspVideoPublisher(const std::string& url, double fps, int w
   direct_state_->stream = avformat_new_stream(direct_state_->format, nullptr);
   Check(direct_state_->stream != nullptr, "create RTSP video stream");
   direct_state_->stream->time_base = direct_state_->stream_time_base;
+  direct_state_->stream->avg_frame_rate = av_inv_q(direct_state_->input_time_base);
+  direct_state_->stream->r_frame_rate = direct_state_->stream->avg_frame_rate;
   direct_state_->stream->codecpar->codec_type = AVMEDIA_TYPE_VIDEO;
   direct_state_->stream->codecpar->codec_id = AV_CODEC_ID_H264;
   direct_state_->stream->codecpar->width = width_;

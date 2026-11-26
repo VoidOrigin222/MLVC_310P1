@@ -1,10 +1,10 @@
 #ifndef ULBVC_IO_UDP_FRAME_TRANSPORT_H_
 #define ULBVC_IO_UDP_FRAME_TRANSPORT_H_
 
-#include <cstddef>
-#include <cstdint>
 #include <array>
 #include <chrono>
+#include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <map>
 #include <optional>
@@ -64,7 +64,7 @@ class RtpUlbvcSender {
   RtpUlbvcSender(const std::string& host, uint16_t port, uint64_t pacing_rate_bps = 0,
                 std::size_t max_burst_bytes = 4096,
                 std::size_t max_queue_bytes = 4u * 1024u * 1024u,
-                uint64_t max_queue_delay_ms = 1000, uint8_t payload_type = 96);
+                uint64_t max_queue_delay_ms = 200, uint8_t payload_type = 96);
   ~RtpUlbvcSender();
   void SendHeader(const UlbvcBitstreamHeader& header);
   // Starts a new protocol configuration.  The next frame must be a random
@@ -78,6 +78,9 @@ class RtpUlbvcSender {
   void Close();
   bool ConsumeRandomAccessRequest();
   bool PopUlbvcControl(ulbvc::transport::UlbvcControlMessage* message);
+  void EnableRateFeedback(uint32_t interval_ms = 500);
+  void SetPacingRate(uint64_t wire_bps);
+  ulbvc::transport::RateFeedbackSnapshot Feedback() const;
   ulbvc::transport::RtpTransportStats Stats() const;
   uint16_t rtcp_local_port() const;
   void SendUlbvcControlResponse(const ulbvc::transport::UlbvcControlMessage& request, bool accepted,
@@ -102,6 +105,7 @@ class RtpUlbvcReceiver {
                            std::array<uint8_t, 32> expected_bundle_hash = {},
                            uint8_t payload_type = 96);
   ~RtpUlbvcReceiver();
+  void ReportDecodedFrame(uint32_t frame_id) { receiver_.ReportDecodedFrame(frame_id); }
   uint16_t local_port() const { return receiver_.local_port(); }
   UlbvcBitstreamHeader ReceiveHeader();
   bool ReceiveFrame(int* frame_index, ulbvc::codec::UlbvcFrameType* frame_type, int* q_index,

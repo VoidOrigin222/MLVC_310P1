@@ -3,6 +3,7 @@
 
 #include "ulbvc/application/stream/ulbvc_internal.h"
 #include "ulbvc/core/status.h"
+#include "ulbvc/transport/rate_feedback.h"
 
 namespace ulbvc::codec {
 
@@ -49,23 +50,17 @@ EncodeFrameDecision EncodeState::BeginFrame(int frame_index, const EncodeStreamO
 }
 
 bool EncodeState::ApplyControl(const ulbvc::transport::UlbvcControlMessage& message,
-                               int frame_index) {
-  if (message.type != ulbvc::transport::UlbvcControlType::kCommand ||
-      (message.flags & ulbvc::transport::kUlbvcControlAtomic) == 0 ||
-      (message.apply_after_frame_id != 0xffffffffu &&
-      frame_index < static_cast<int>(message.apply_after_frame_id))) return false;
-  for (const auto& tlv : message.tlvs) {
-    if (tlv.type == 1 && tlv.value.size() == 4) {
-      fixed_q_index_ = (static_cast<int>(tlv.value[0]) << 24) |
-                       (static_cast<int>(tlv.value[1]) << 16) |
-                       (static_cast<int>(tlv.value[2]) << 8) | static_cast<int>(tlv.value[3]);
-    } else if (tlv.type == 3 && tlv.value.size() == 4) {
-      gop_override_ = (static_cast<int>(tlv.value[0]) << 24) |
-                      (static_cast<int>(tlv.value[1]) << 16) |
-                      (static_cast<int>(tlv.value[2]) << 8) | static_cast<int>(tlv.value[3]);
-    } else if (tlv.type == 4) {
-      force_random_access_ = true;
-    }
+                               int frame_index, bool defer_random_access) {
+  try {
+    const auto command = ulbvc::transport::DecodeRateCommand(message);
+    if (message.apply_after_frame_id != 0xffffffffu &&
+        uint32_t(frame_index) < message.apply_after_frame_id)
+      return false;
+    if (command.fixed_q) fixed_q_index_ = *command.fixed_q;
+    if (command.gop) gop_override_ = *command.gop;
+    if (command.random_access && !defer_random_access) force_random_access_ = true;
+  } catch (const std::invalid_argument&) {
+    return false;
   }
   return true;
 }

@@ -94,6 +94,38 @@ int main() {
       ExpectReject([&] { (void)ulbvc::LoadEncoderConfig(config); }, description);
     };
     expect_invalid("output_transport_pacing_rate_bps = -1\n", "negative pacing rate");
+    expect_invalid("rate_control_mode = \"unknown\"\n", "unknown rate mode");
+    expect_invalid("rate_control_mode = \"target_rate\"\n", "missing codec target");
+    expect_invalid("rate_control_mode = \"fixed_q\"\ntarget_bitrate_bps = 1000000\n",
+                   "conflicting fixed Q and codec target");
+    expect_invalid("rate_control_mode = \"adaptive_rate\"\n", "adaptive mode without RTP");
+    expect_invalid("rtcp_feedback_interval_ms = 99\n", "feedback interval below minimum");
+    expect_invalid("rtcp_feedback_interval_ms = 1000\nadaptive_feedback_timeout_ms = 2000\n",
+                   "feedback timeout before three reports");
+    expect_invalid("fps = 0.1\nadaptive_max_bitrate_bps = 100000000\n",
+                   "adaptive bitrate exceeds integer budget at low FPS");
+    const std::string adaptive_fields =
+        "rate_control_mode = \"adaptive_rate\"\n"
+        "output_transport_mode = \"rtp\"\noutput_transport_host = \"127.0.0.1\"\n"
+        "output_transport_port = 39340\n";
+    expect_invalid((adaptive_fields + "output_transport_max_queue_delay_ms = 0\n").c_str(),
+                   "unbounded adaptive queue");
+    expect_invalid((adaptive_fields + "adaptive_max_bitrate_bps = 16000\n").c_str(),
+                   "budget cannot serialize one packet within queue delay");
+    expect_invalid((adaptive_fields + "target_bitrate_bps = 1000000\n").c_str(),
+                   "adaptive mode with a fixed codec target");
+    {
+      std::ofstream output(config);
+      output << "input_frame_dir = \"/tmp\"\nmanifest = \"" << manifest.string() << "\"\n"
+             << adaptive_fields;
+    }
+    const auto adaptive = ulbvc::LoadEncoderConfig(config).stream;
+    ulbvc::Check(adaptive.rate_control_mode == "adaptive_rate" &&
+                     adaptive.adaptive_max_bitrate_bps == 2000000 &&
+                     adaptive.rtcp_feedback_interval_ms == 500 &&
+                     adaptive.adaptive_feedback_timeout_ms == 3000 &&
+                     adaptive.output_transport_max_queue_delay_ms == 200,
+                 "adaptive defaults must preserve the approved link budget and queue delay");
     expect_invalid("output_transport_payload_type = 128\n", "payload type above dynamic range");
     expect_invalid("ltr_qp_shift = -1\n", "negative LTR shift");
     expect_invalid("min_qp = 50\nmax_qp = 40\n", "inverted QP range");

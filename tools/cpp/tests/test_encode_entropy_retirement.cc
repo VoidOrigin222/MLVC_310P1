@@ -29,8 +29,8 @@ int main() {
                     ShouldRetireReadyEntropy(2, false, status),
                 "fixed-QP prefetch must retire completed fronts");
     ulbvc::Check(!ShouldRetireReadyEntropy(0, false, status) &&
-                    !ShouldRetireReadyEntropy(2, true, status),
-                "serial/adaptive-QP retirement timing must remain unchanged");
+                    ShouldRetireReadyEntropy(2, true, status),
+                "adaptive prefetch must retire completed fronts without delaying two frames");
     ulbvc::Check(front.valid() && front.get() == 1 && later.get() == 2,
                 "readiness checks must not consume the future payload");
     auto deferred = std::async(std::launch::deferred, [] { return 3; });

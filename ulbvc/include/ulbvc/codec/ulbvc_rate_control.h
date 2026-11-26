@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <optional>
 
 #include "ulbvc/codec/ulbvc_entropy.h"
@@ -24,6 +25,9 @@ class UlbvcRateController {
   explicit UlbvcRateController(const UlbvcRateControlOptions& options);
 
   bool enabled() const { return enabled_; }
+  void SetTargetBitrate(double bitrate_bps);
+  double target_bitrate_bps() const { return target_bitrate_bps_; }
+  bool saturated() const { return saturated_; }
   int SolveQIndex(double presentation_time, UlbvcFrameType frame_type);
   void Update(double presentation_time, UlbvcFrameType frame_type, int q_index,
               std::size_t payload_bytes, std::size_t overhead_bytes = 0);
@@ -139,6 +143,15 @@ class UlbvcRateController {
   mutable double frame_weight_ = 1.0;
   mutable double prev_frame_weight_ = 1.0;
   mutable int prev_res_q_index_ = -1;
+  struct FrameReservation {
+    UlbvcFrameType type;
+    double weight;
+    int bits;
+    bool reserved;
+  };
+  std::map<double, FrameReservation> reservations_;
+  std::optional<double> last_solved_time_;
+  bool saturated_ = false;
   mutable UlbvcFrameType frame_type_ = UlbvcFrameType::kIFrame;
   mutable double presentation_time_ = 0.0;
   mutable RateAllocator alloc_;

@@ -1,0 +1,68 @@
+{
+  "webrtc": "http://127.0.0.1:8889",
+  "media_api": "http://127.0.0.1:9997",
+  "original_delay_ms": 200,
+  "channels": [
+    {
+      "id": "ch1",
+      "name": "通道 01",
+      "original": "rtsp://127.0.0.1:8554/input0",
+      "semantic": "rtsp://127.0.0.1:8554/ulbvc0",
+      "width": 1920,
+      "height": 1080,
+      "fps": 12,
+      "stats_port": 39600,
+      "h264": "rtsp://127.0.0.1:8554/camera-h2640"
+    },
+    {
+      "id": "ch2",
+      "name": "通道 02",
+      "original": "rtsp://127.0.0.1:8554/input1",
+      "semantic": "rtsp://127.0.0.1:8554/ulbvc1",
+      "width": 1920,
+      "height": 1080,
+      "fps": 12,
+      "stats_port": 39601,
+      "h264": "rtsp://127.0.0.1:8554/camera-h2641"
+    },
+    {
+      "id": "ch3",
+      "name": "通道 03",
+      "original": "rtsp://127.0.0.1:8554/input2",
+      "semantic": "rtsp://127.0.0.1:8554/ulbvc2",
+      "width": 1920,
+      "height": 1080,
+      "fps": 12,
+      "stats_port": 39602,
+      "h264": "rtsp://127.0.0.1:8554/camera-h2642"
+    },
+    {
+      "id": "ch4",
+      "name": "通道 04",
+      "original": "rtsp://127.0.0.1:8554/input3",
+      "semantic": "rtsp://127.0.0.1:8554/ulbvc3",
+      "width": 1920,
+      "height": 1080,
+      "fps": 12,
+      "stats_port": 39603,
+      "h264": "rtsp://127.0.0.1:8554/camera-h2643"
+    },
+    {
+      "id": "ch5",
+      "name": "通道 05",
+      "original": "rtsp://127.0.0.1:8554/input4",
+      "semantic": "rtsp://127.0.0.1:8554/ulbvc4",
+      "width": 1920,
+      "height": 1080,
+      "fps": 12,
+      "stats_port": 39604,
+      "h264": "rtsp://127.0.0.1:8554/camera-h2644"
+    }
+  ],
+  "h264_qp": 28,
+  "h264_delay_ms": 200,
+  "h264_ffmpeg": "auto",
+  "h264_encoder": "auto",
+  "h264_auto_start": true,
+  "h264_transport": "tcp"
+}

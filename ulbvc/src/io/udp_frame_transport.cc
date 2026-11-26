@@ -1,9 +1,9 @@
 #include "ulbvc/io/udp_frame_transport.h"
 
-#include <chrono>
-#include <cstring>
-#include <cmath>
 #include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstring>
 #include <limits>
 #include <numeric>
 #include <random>
@@ -446,6 +446,13 @@ bool RtpUlbvcSender::ConsumeRandomAccessRequest() {
 bool RtpUlbvcSender::PopUlbvcControl(ulbvc::transport::UlbvcControlMessage* message) {
   return sender_.PopUlbvcControl(message);
 }
+void RtpUlbvcSender::EnableRateFeedback(uint32_t interval_ms) {
+  sender_.EnableRateFeedback(interval_ms);
+}
+void RtpUlbvcSender::SetPacingRate(uint64_t wire_bps) { sender_.SetPacingRate(wire_bps); }
+ulbvc::transport::RateFeedbackSnapshot RtpUlbvcSender::Feedback() const {
+  return sender_.Feedback();
+}
 ulbvc::transport::RtpTransportStats RtpUlbvcSender::Stats() const { return sender_.Stats(); }
 uint16_t RtpUlbvcSender::rtcp_local_port() const { return sender_.rtcp_local_port(); }
 void RtpUlbvcSender::SendUlbvcControlResponse(
@@ -697,6 +704,7 @@ std::optional<uint32_t> RtpUlbvcReceiver::FindRecoveryFrame() const {
 
 void RtpUlbvcReceiver::MarkDependencyGap() {
   waiting_for_recovery_ = true;
+  receiver_.RequestRandomAccess();
   reorder_deadline_.reset();
   const uint32_t expected = static_cast<uint32_t>(expected_frame_index_);
   for (auto it = pending_frames_.begin(); it != pending_frames_.end();) {
@@ -912,7 +920,10 @@ bool RtpUlbvcReceiver::ReceiveFrame(int* frame_index, ulbvc::codec::UlbvcFrameTy
           message = std::move(*target);
           pending_config_units_.erase(target);
           HandleConfigurationUnit(message);
-          if (switching_past_missing_frame) waiting_for_recovery_ = true;
+          if (switching_past_missing_frame) {
+            waiting_for_recovery_ = true;
+            receiver_.RequestRandomAccess();
+          }
           continue;
         }
       }

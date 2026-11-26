@@ -6,6 +6,7 @@
 #include <ulbvc/codec/ulbvc_entropy.h>
 #include <ulbvc/io/video_io.h>
 #include <ulbvc/runtime/model_manifest.h>
+#include <ulbvc/transport/network_rate_controller.h>
 
 #include <algorithm>
 #include <cmath>
@@ -76,6 +77,10 @@ void ValidateConfigKeys(const toml::table& config) {
                   "ltr_period",
                   "ltr_qp_shift",
                   "target_bitrate_bps",
+                  "rate_control_mode",
+                  "adaptive_max_bitrate_bps",
+                  "adaptive_feedback_timeout_ms",
+                  "rtcp_feedback_interval_ms",
                   "min_qp",
                   "max_qp",
                   "forced_ltr_recovery_frame",
@@ -369,6 +374,27 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
   Check(options.ltr_start_idx >= 0, "ltr_start_idx must be non-negative");
   Check(options.ltr_period >= 0, "ltr_period must be non-negative");
   options.target_bitrate_bps = GetDouble(config, "target_bitrate_bps", 0.0);
+  options.rate_control_mode = GetString(config, "rate_control_mode",
+                                        options.target_bitrate_bps > 0 ? "target_rate" : "fixed_q");
+  const int adaptive_max = GetInt(config, "adaptive_max_bitrate_bps", 2000000);
+  const int feedback_timeout = GetInt(config, "adaptive_feedback_timeout_ms", 3000);
+  const int feedback_interval = GetInt(config, "rtcp_feedback_interval_ms", 500);
+  Check(adaptive_max >= 16000 && adaptive_max <= 100000000,
+        "adaptive_max_bitrate_bps must be in [16000,100000000]");
+  Check(feedback_interval >= 100 && feedback_interval <= 5000,
+        "rtcp_feedback_interval_ms must be in [100,5000]");
+  Check(feedback_timeout >= std::max(1000, feedback_interval * 3) && feedback_timeout <= 60000,
+        "adaptive_feedback_timeout_ms must allow three feedback intervals and be <=60000");
+  Check(options.rate_control_mode == "fixed_q" || options.rate_control_mode == "target_rate" ||
+            options.rate_control_mode == "adaptive_rate",
+        "invalid rate_control_mode");
+  Check(options.rate_control_mode != "target_rate" || options.target_bitrate_bps > 0,
+        "target_rate requires positive target_bitrate_bps");
+  Check(options.rate_control_mode != "fixed_q" || options.target_bitrate_bps == 0,
+        "fixed_q conflicts with target_bitrate_bps");
+  options.adaptive_max_bitrate_bps = static_cast<uint64_t>(adaptive_max);
+  options.adaptive_feedback_timeout_ms = static_cast<uint32_t>(feedback_timeout);
+  options.rtcp_feedback_interval_ms = static_cast<uint32_t>(feedback_interval);
   options.min_qp = GetInt(config, "min_qp", 0);
   options.max_qp = GetInt(config, "max_qp", 63);
   Check(options.ltr_qp_shift >= 0 && options.ltr_qp_shift <= 63, "ltr_qp_shift must be in [0, 63]");
@@ -379,6 +405,8 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
                static_cast<double>(std::numeric_limits<int>::max()) * options.fps / 16.0);
   Check(options.target_bitrate_bps <= max_target_bitrate_bps,
         "target_bitrate_bps exceeds the rate controller's integer budget");
+  Check(options.adaptive_max_bitrate_bps <= max_target_bitrate_bps,
+        "adaptive_max_bitrate_bps exceeds the rate controller's integer budget");
   Check(options.min_qp >= 0 && options.min_qp <= 63, "min_qp must be in [0, 63]");
   Check(options.max_qp >= 0 && options.max_qp <= 63, "max_qp must be in [0, 63]");
   Check(options.min_qp <= options.max_qp, "min_qp must not exceed max_qp");
@@ -399,7 +427,7 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
   const int pacing_rate_bps = GetInt(config, "output_transport_pacing_rate_bps", 0);
   const int max_burst_bytes = GetInt(config, "output_transport_max_burst_bytes", 4096);
   const int max_queue_bytes = GetInt(config, "output_transport_max_queue_bytes", 4 * 1024 * 1024);
-  const int max_queue_delay_ms = GetInt(config, "output_transport_max_queue_delay_ms", 1000);
+  const int max_queue_delay_ms = GetInt(config, "output_transport_max_queue_delay_ms", 200);
   Check(pacing_rate_bps >= 0, "output_transport_pacing_rate_bps must be non-negative");
   Check(payload_type >= 96 && payload_type <= 127,
         "output_transport_payload_type must be in the dynamic RTP range [96, 127]");
@@ -413,6 +441,16 @@ EncoderApplicationConfig LoadEncoderConfig(const std::filesystem::path& config_p
   options.output_transport_max_burst_bytes = static_cast<std::size_t>(max_burst_bytes);
   options.output_transport_max_queue_bytes = static_cast<std::size_t>(max_queue_bytes);
   options.output_transport_max_queue_delay_ms = static_cast<uint64_t>(max_queue_delay_ms);
+  if (options.rate_control_mode == "adaptive_rate") {
+    Check(options.output_transport_mode == "rtp" && options.output_transport_port > 0,
+          "adaptive_rate requires RTP output");
+    Check(max_queue_delay_ms > 0 && max_queue_delay_ms <= 60000,
+          "adaptive_rate requires output_transport_max_queue_delay_ms in [1,60000]");
+    Check(uint64_t(adaptive_max) >= ulbvc::transport::MinimumAdaptiveWireRate(max_queue_delay_ms),
+          "adaptive budget cannot serialize one packet within the queue budget");
+    Check(options.target_bitrate_bps == 0,
+          "adaptive_rate uses adaptive_max_bitrate_bps, not a fixed codec target");
+  }
   Check(options.output_transport_port >= 0 && options.output_transport_port <= 65535,
         "output_transport_port must be in [0, 65535]");
   Check(options.output_transport_port == 0 || !options.output_transport_host.empty(),

@@ -22,6 +22,14 @@ motion_skip_loop_filter = true
 motion_camera_nv12 = true
 
 qp = 11
+# In this codec, lower q_index reduces bitrate. Recover quality up to the baseline 11.
+min_qp = 0
+max_qp = 11
+rate_control_mode = "adaptive_rate"
+# Forward encoder-to-decoder RTP/IP + retransmission + RTCP budget. PC previews are separate.
+adaptive_max_bitrate_bps = 2000000
+adaptive_feedback_timeout_ms = 3000
+rtcp_feedback_interval_ms = 500
 gop = 96
 reset_interval = 32
 ltr_period = 0
@@ -36,6 +44,7 @@ output_transport_port = 39340
 output_transport_payload_type = 96
 output_transport_pacing_rate_bps = 2000000
 output_transport_max_burst_bytes = 1240
+output_transport_max_queue_delay_ms = 200
 
 # Cumulative encoded ULBVC RTP counters for the Windows comparison UI.
 # media_unit_bytes is the ULBVC codec stream; wire_bytes includes RTP/UDP/IP.

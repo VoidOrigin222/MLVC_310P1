@@ -1,20 +1,24 @@
 #include "ulbvc/transport/rtcp_session.h"
 
 #include <algorithm>
-#include <stdexcept>
+#include <atomic>
 #include <cstdlib>
+#include <map>
+#include <mutex>
+#include <stdexcept>
 #ifdef ULBVC_HAS_OPENSSL
 #include <openssl/hmac.h>
 #endif
 #ifndef _WIN32
 #include <arpa/inet.h>
-#include <cerrno>
-#include <cstring>
 #include <netdb.h>
-#include <limits>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
+
+#include <cerrno>
+#include <cstring>
+#include <limits>
 #endif
 
 namespace ulbvc::transport {
@@ -40,9 +44,10 @@ std::vector<uint8_t> AuthenticateRtcp(const std::vector<uint8_t>& packet, uint64
   return out;
 }
 bool VerifyAndStripRtcp(std::vector<uint8_t>* packet, const std::string& key,
-                        uint64_t* highest, uint64_t* window) {
+                        std::map<uint32_t, std::pair<uint64_t, uint64_t>>* replay) {
   if (packet->size() < kAuthTrailerBytes) return false;
   const std::size_t begin = packet->size() - kAuthTrailerBytes;
+  if (begin < 8) return false;
   if (!std::equal(std::begin(kAuthMagic), std::end(kAuthMagic), packet->begin() + begin) ||
       (*packet)[begin + 4] != 1) return false;
   uint64_t index = 0;
@@ -50,6 +55,17 @@ bool VerifyAndStripRtcp(std::vector<uint8_t>* packet, const std::string& key,
   const auto expected = AuthenticateRtcp(
       std::vector<uint8_t>(packet->begin(), packet->begin() + begin), index, key);
   if (!std::equal(expected.end() - 16, expected.end(), packet->end() - 16)) return false;
+  // The authenticated reporting SSRC is a replay namespace. A restarted
+  // receiver uses a fresh random SSRC and must not inherit the old index.
+  const uint32_t sender = (uint32_t((*packet)[4]) << 24) | (uint32_t((*packet)[5]) << 16) |
+                          (uint32_t((*packet)[6]) << 8) | (*packet)[7];
+  auto entry = replay->find(sender);
+  if (entry == replay->end()) {
+    if (replay->size() >= 32) return false;  // Never evict old replay windows to admit a replay.
+    entry = replay->emplace(sender, std::make_pair(uint64_t{0}, uint64_t{0})).first;
+  }
+  auto* highest = &entry->second.first;
+  auto* window = &entry->second.second;
   if (index > *highest) {
     const uint64_t shift = index - *highest;
     *window = shift >= 64 ? 1ull : ((*window << shift) | 1ull);
@@ -675,6 +691,12 @@ uint32_t DecodeRtcpSessionBye(const std::vector<uint8_t>& packet) {
 
 class RtcpUdpEndpoint::Impl {
  public:
+  mutable std::mutex send_mutex;
+  std::atomic<uint64_t> wire_sent{0};
+  std::mutex budget_mutex;
+  uint64_t budget_bps = 0;
+  double budget_tokens = 1200;
+  std::chrono::steady_clock::time_point budget_at = std::chrono::steady_clock::now();
   int socket = -1;
   sockaddr_storage remote{};
   socklen_t remote_length = 0;
@@ -686,8 +708,7 @@ class RtcpUdpEndpoint::Impl {
 #ifdef ULBVC_HAS_OPENSSL
   std::string auth_key;
   uint64_t tx_index = 0;
-  uint64_t rx_highest = 0;
-  uint64_t rx_window = 0;
+  std::map<uint32_t, std::pair<uint64_t, uint64_t>> replay_windows;
 #endif
 
   ~Impl() { Close(); }
@@ -751,6 +772,7 @@ uint16_t RtcpUdpEndpoint::local_port() const {
 }
 
 void RtcpUdpEndpoint::Send(const std::vector<uint8_t>& compound_packet) {
+  std::lock_guard<std::mutex> lock(impl_->send_mutex);
   if (!impl_ || impl_->socket < 0) throw std::runtime_error("RTCP socket is closed");
   if (impl_->remote_length == 0) throw std::runtime_error("RTCP remote endpoint is not configured");
   (void)DecodeRtcpCompound(compound_packet);
@@ -764,9 +786,11 @@ void RtcpUdpEndpoint::Send(const std::vector<uint8_t>& compound_packet) {
   if (sent < 0 || static_cast<std::size_t>(sent) != wire.size()) {
     throw std::runtime_error("failed to send RTCP packet");
   }
+  impl_->wire_sent.fetch_add(wire.size() + 28);
 }
 
 void RtcpUdpEndpoint::AcceptLastPeer() {
+  std::lock_guard<std::mutex> lock(impl_->send_mutex);
   if (!impl_ || impl_->socket < 0) throw std::runtime_error("RTCP socket is closed");
   if (impl_->last_peer_length == 0) throw std::runtime_error("RTCP peer has not sent a packet");
   impl_->reply_peer = impl_->last_peer;
@@ -774,6 +798,7 @@ void RtcpUdpEndpoint::AcceptLastPeer() {
 }
 
 void RtcpUdpEndpoint::SendToLastPeer(const std::vector<uint8_t>& compound_packet) {
+  std::lock_guard<std::mutex> lock(impl_->send_mutex);
   if (!impl_ || impl_->socket < 0) throw std::runtime_error("RTCP socket is closed");
   if (impl_->reply_peer_length == 0) throw std::runtime_error("RTCP reply peer is not accepted");
   (void)DecodeRtcpCompound(compound_packet);
@@ -787,6 +812,53 @@ void RtcpUdpEndpoint::SendToLastPeer(const std::vector<uint8_t>& compound_packet
   if (sent < 0 || static_cast<std::size_t>(sent) != wire.size()) {
     throw std::runtime_error("failed to send RTCP reply");
   }
+  impl_->wire_sent.fetch_add(wire.size() + 28);
+}
+
+bool RtcpUdpEndpoint::LastPeerMatchesRemoteHost() const {
+  std::lock_guard<std::mutex> lock(impl_->send_mutex);
+  if (impl_->remote_length == 0 || impl_->last_peer_length == 0) return false;
+  const auto* remote = reinterpret_cast<const sockaddr_in*>(&impl_->remote);
+  const auto* peer = reinterpret_cast<const sockaddr_in*>(&impl_->last_peer);
+  return remote->sin_family == AF_INET && peer->sin_family == AF_INET &&
+         remote->sin_addr.s_addr == peer->sin_addr.s_addr;
+}
+uint64_t RtcpUdpEndpoint::sent_wire_bytes() const { return impl_->wire_sent.load(); }
+void RtcpUdpEndpoint::SetSendBudget(uint64_t bps) {
+  if (bps > 100000000) throw std::invalid_argument("RTCP send budget too large");
+  std::lock_guard<std::mutex> lock(impl_->budget_mutex);
+  const auto now = std::chrono::steady_clock::now();
+  if (impl_->budget_bps)
+    impl_->budget_tokens =
+        std::min(1200.0, impl_->budget_tokens +
+                             std::chrono::duration<double>(now - impl_->budget_at).count() *
+                                 impl_->budget_bps / 8.0);
+  impl_->budget_at = now;
+  impl_->budget_bps = bps;
+}
+bool RtcpUdpEndpoint::TrySend(const std::vector<uint8_t>& packet, bool to_last_peer) {
+  (void)DecodeRtcpCompound(packet);
+  std::size_t wire_size = packet.size() + 28;
+#ifdef ULBVC_HAS_OPENSSL
+  if (!impl_->auth_key.empty()) wire_size += kAuthTrailerBytes;
+#endif
+  {
+    std::lock_guard<std::mutex> lock(impl_->budget_mutex);
+    if (impl_->budget_bps) {
+      const auto now = std::chrono::steady_clock::now();
+      const auto seconds = std::chrono::duration<double>(now - impl_->budget_at).count();
+      impl_->budget_tokens =
+          std::min(1200.0, impl_->budget_tokens + seconds * impl_->budget_bps / 8.0);
+      impl_->budget_at = now;
+      if (wire_size > 1200 || impl_->budget_tokens < wire_size) return false;
+      impl_->budget_tokens -= wire_size;
+    }
+  }
+  if (to_last_peer)
+    SendToLastPeer(packet);
+  else
+    Send(packet);
+  return true;
 }
 
 bool RtcpUdpEndpoint::Receive(std::vector<uint8_t>* compound_packet,
@@ -820,11 +892,15 @@ bool RtcpUdpEndpoint::Receive(std::vector<uint8_t>* compound_packet,
   }
 #ifdef ULBVC_HAS_OPENSSL
   if (!impl_->auth_key.empty() &&
-      !VerifyAndStripRtcp(&buffer, impl_->auth_key, &impl_->rx_highest, &impl_->rx_window)) return false;
+      !VerifyAndStripRtcp(&buffer, impl_->auth_key, &impl_->replay_windows))
+    return false;
 #endif
   (void)DecodeRtcpCompound(buffer);
+  {
+    std::lock_guard<std::mutex> lock(impl_->send_mutex);
   impl_->last_peer = peer;
   impl_->last_peer_length = peer_length;
+  }
   *compound_packet = std::move(buffer);
   return true;
 }
@@ -843,6 +919,10 @@ RtcpUdpEndpoint::RtcpUdpEndpoint(uint16_t, std::string, uint16_t)
 }
 RtcpUdpEndpoint::~RtcpUdpEndpoint() = default;
 uint16_t RtcpUdpEndpoint::local_port() const { return 0; }
+bool RtcpUdpEndpoint::LastPeerMatchesRemoteHost() const { return false; }
+uint64_t RtcpUdpEndpoint::sent_wire_bytes() const { return 0; }
+void RtcpUdpEndpoint::SetSendBudget(uint64_t) {}
+bool RtcpUdpEndpoint::TrySend(const std::vector<uint8_t>&, bool) { return false; }
 void RtcpUdpEndpoint::Send(const std::vector<uint8_t>&) {
   throw std::runtime_error("RTCP UDP endpoint is not supported on this build");
 }

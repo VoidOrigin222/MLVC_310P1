@@ -1,266 +1,108 @@
-# 语义压缩三路视频控制台
+# ulbvc 统一五路 UI · V0.5
 
-现有 RTSP / MediaMTX 链路上的本地 WebRTC 控制台，无需安装前端依赖。
+Thor 与 Ascend 310P 使用同一套网页、Python 后端和 Windows 程序。通过参数文件适配视频地址和统计端口，不再维护两种界面。
 
-- 固定三路并排预览：原图、H.264、语义压缩；支持单路全屏。
-- H.264 推流启动 / 停止、三路重新连接、参数抽屉与错误反馈。
-- 实际接收 FPS、分辨率、bpp、带宽（kB/s）与压缩比。
-- H.264 与语义压缩的码率对比曲线，显示最近 30 秒。
-- 窄窗口保留三路并排。
-- H.264 使用固定 QP；原图与 H.264 页面播放均额外缓冲 200 ms 解码帧。
+默认五组通道，每组并排显示原图、H.264 对照、ulbvc 解码，共 15 个画面。支持五路总览、单通道放大、单画面全屏、暂停预览、重新连接和独立通道设置。无视频时显示“无信号”，无统计时显示 `—`。五组展示容量不意味着要求板端同时运行五路模型。
 
-页面会自动连接已有视频源。点击“启动 H.264 推流”才启动本地 FFmpeg；
-关闭或刷新浏览器只释放播放会话，不会停止正在运行的推流进程。
-停止按钮会断开本页预览并停止 UI 管理的 H.264 进程，板端原图和 ULBVC 进程仍由板端控制。
-参数从独立的 `ui_config.json` 加载；“参数设置 → 保存并连接”会写入该文件，重启后保留。
+## 运行
 
-文件：`web_ui.py` 提供控制接口，`index.html`、`styles.css`、`app.js` 提供界面。
-验证命令：在本目录运行 `python -m unittest -v test_web_ui.py`。
+双击 `ULBVCMonitor.exe`；同目录保留 `ui_config.json`。源码启动需要 Python 3.10+：
 
-运行需要 Python 3.10 或更新版本、包含 libx264 的 FFmpeg，以及已配置的 MediaMTX
-RTSP / WebRTC / API 服务。Python 后端只使用标准库，前端不需要安装 npm 依赖。
-板端配套使用 `motion` 分支的 `e32a134` 或更新版本（包含编码端 UDP 带宽统计）。
-Node.js 仅用于运行前端回归测试。
+```powershell
+python tools/ui/launch_ui.py
+# 只启动后台 HTTP 服务：
+python tools/ui/server.py --port 8765
+```
 
-2026-10-22 浏览器兼容修复：控制接口使用 `AbortController` 和普通定时器实现请求超时，
-不再依赖 `AbortSignal.timeout()`。配置读取失败时三路明确显示“配置读取失败”，
-点击“重新连接”会重新读取配置；直接点击“启动 H.264”也可恢复三路连接。
-保存参数后重新连接全部视频源。浏览器仍需支持 WebRTC 和页面所用的现代 JavaScript；
-本修复不提供 IE 或 IE 兼容模式支持。
+`run_ui.bat`、原有 `run_web_ui.bat` 均调用同一个启动器；`web_ui.py` 仅为旧命令的兼容入口。
+默认页面为 `http://127.0.0.1:8765/`。关闭启动器结束本地服务和自建 H.264 对照进程；板端编解码与 MediaMTX 独立管理。启动 UI 不会启动板端模型。
 
-2026-10-22 v2 同时修复旧浏览器把 RTSP 主机和端口包含在 `URL.pathname` 中的问题：
-提取流路径时仅将地址副本按 HTTP URL 解析，再生成 WHEP 路径；实际 RTSP 输入与推流地址
-保持原值。修复 MediaMTX 报 `invalid path name (...127.0.0.1:8554/...)` 的连接失败。
-播放连接异常会在页面提示中显示 WHEP 状态码及服务器返回的具体原因。
+## 一套程序，两种配置模板
 
-兼容性回归：`node test_browser_compat.cjs`，覆盖缺少 `AbortSignal` API 时的配置请求、
-三路 WHEP 连接、读取失败后的恢复、无效配置与请求超时清理。
-
-## 同质量模式
-
-页面不显示模式标识，H.264 使用 libx264 固定 QP（`-qp`），不设置
-CBR/VBV 码率限制，码率随画面复杂度变化。不再采样、传输原始帧或计算 PSNR。
-语义压缩的板端参数由 `configs/encoder.toml` 控制，页面不修改它。
-
-H.264 QP 初始值为 40，可在参数设置中调整（0–51 整数）。它是人工调整画质的起始值，
-不是从语义压缩 QP 或历史 CRF 直接换算的对应值。QP 调小提高画质，调大降低画质。
-在同质量模式保存新 QP 会重启 H.264 发布器使其生效。“同质量”表示主观近似画质对照，
-不保证两路具有相同 PSNR。
-
-页面对原图与 H.264 解码帧各加入 200 ms 显示缓冲，以 canvas 绘制到期帧，额外延时约 200 ms（受刷新周期影响）。语义压缩直接播放；重连和停止时释放缓存帧，每路队列最多 12 帧，不累积延时。这是固定延时补偿，三路各自的编码与网络延时仍可能波动，不保证逐帧同步。
-
-测试页面延时队列：`node test_delayed_video.cjs`。
-
-## 地址和路径
-
-| 用途 | 地址 |
+| 参数文件 | 使用方式 |
 | --- | --- |
-| 原图 RTSP（编码板发布） | `rtsp://127.0.0.1:8554/camera-original` |
-| H.264 RTSP（Windows FFmpeg 发布） | `rtsp://127.0.0.1:8554/camera-h264` |
-| 语义压缩 RTSP（解码板发布） | `rtsp://127.0.0.1:8554/ulbvc` |
-| 网页 | `http://127.0.0.1:8765` |
-| MediaMTX WebRTC | `http://127.0.0.1:8889` |
-| MediaMTX API | `http://127.0.0.1:9997` |
+| `ui_config.json` | 日常参数，默认与 310P 现有单路链路对应，保留五组位置 |
+| `ui_config.310p.json` | 310P 初始模板：第一组使用 `/camera-original`、`/camera-h264`、`/ulbvc`，统计端口 39341，1080P/30 FPS |
+| `ui_config.thor.json` | Thor 初始模板：`/input0`～`/input4`、`/camera-h2640`～`/camera-h2644`、`/ulbvc0`～`/ulbvc4`，统计端口 39600～39604 |
 
-UI 与 MediaMTX 默认在同一台电脑，播放与发布地址使用 `127.0.0.1`。
-参数设置显示并保存完整 RTSP 地址，包括语义压缩的 `/ulbvc` 流路径；可直接修改完整路径。
-板端配置中的 RTSP 服务器 IP 和统计接收 IP 仍需填写该电脑的局域网 IP。
-
-## 独立参数文件
-
-启动时读取 `ui_config.json`：EXE 版本从 EXE 同目录读取，Python 版本从 `web_ui.py` 同目录读取，与启动时的工作目录无关。文件不存在时自动生成默认参数；已有文件不会被启动过程覆盖。
-
-```json
-{
-  "original": "rtsp://127.0.0.1:8554/camera-original",
-  "h264": "rtsp://127.0.0.1:8554/camera-h264",
-  "semantic": "rtsp://127.0.0.1:8554/ulbvc",
-  "webrtc": "http://127.0.0.1:8889",
-  "transport": "tcp",
-  "h264_qp": 40,
-  "ffmpeg": "auto",
-  "stats_port": 39341
-}
-```
-
-`original`、`h264`、`semantic` 分别为三路完整 RTSP 地址；`webrtc` 为 WebRTC 服务地址。`transport` 可填 `tcp` 或 `udp`；`h264_qp` 为 0–51 的整数；`stats_port` 为 1–65535 的 UDP 接收端口。
-
-`ffmpeg: "auto"` 自动使用 EXE 内置 FFmpeg，Python 版本则使用 PATH 中的 FFmpeg。可填写其他 FFmpeg 的完整路径，或相对于参数文件目录的路径，例如 `bin/ffmpeg.exe`。内置 FFmpeg 的临时解压路径不会写入参数文件。
-
-可直接修改文件后重启 UI，也可在网页参数设置中保存，立即生效并持久保存。修改 H.264 的输入、输出、QP、传输或 FFmpeg 后，处于启用状态的 H.264 发布器会按新参数重启。文件缺少的字段使用默认值；格式或参数有误时提示具体错误，不覆盖原文件。保存失败时保留原参数，并在页面提示错误。
-
-需要指定其他文件时运行 `SemanticVideoUI.exe --config "D:/部署/ui_config.json"`，或为 Python 服务设置环境变量 `ULBVC_UI_CONFIG`。相同端口已有 UI 时仍复用原实例；切换参数文件前需退出原启动器。
-
-## 启动网页服务
-
-### Windows EXE
-
-双击 `SemanticVideoUI.exe`，启动器会启动本地 UI 服务并打开浏览器。
-EXE 内置 Python、网页资源、FFmpeg 及共享库，不需要另外安装 Python 或 FFmpeg。
-部署时一同复制 `SemanticVideoUI.exe` 和同目录的 `ui_config.json`。
-启动器窗口中的“停止并退出”或关闭按钮会停止 UI 服务及它管理的 H.264 发布器。
-再次双击时，如果已有 UI 在运行，会打开现有页面。
-MediaMTX 和板端编解码仍按原部署方式提前启动。
-
-EXE 的 FFmpeg 日志保存到 `%LOCALAPPDATA%\SemanticVideoUI\logs\ffmpeg_ui.log`。
-
-在 Windows x64 上重建 EXE（使用含 Tkinter 的 Python 3.10+）：
+同一个程序可直接指定模板或独立参数文件：
 
 ```powershell
-cd tools/ui
-python -m pip install -r requirements-build.txt
-python build_windows_exe.py
+.\ULBVCMonitor.exe --config .\ui_config.thor.json
+# 源码方式相同：
+python tools/ui/launch_ui.py --config tools/ui/ui_config.310p.json
 ```
 
-构建时需要 FFmpeg 可在 PATH 中找到，或通过 `--ffmpeg` 指定 `ffmpeg.exe`。
-默认输出为仓库根目录的 `artifacts/ui-exe/dist/SemanticVideoUI.exe`。
+模板是接入起点，视频地址、源尺寸与统计端口必须与实际设备匹配。可以在同一个五路配置中混合 Thor 与 310P 通道；每路使用唯一统计端口。界面填写的 FPS/尺寸用于统计计算，不修改板端采集、检测或编码分辨率。
 
-验证生成的 EXE（在移除 Python / FFmpeg PATH 的子进程中测试页面、编码、启动及退出）：
+“参数设置 → 保存并连接”会校验并原子保存参数。旧 310P 单路参数文件首次加载时自动迁移为五组，保留原有视频地址、H.264 QP、FFmpeg 路径、TCP/UDP 和统计端口，原文件备份为 `ui_config.json.v0.5-backup`。新参数文件与 Thor 已有多路格式兼容。
+
+## 视频与 H.264 对照
+
+视频继续通过 MediaMTX 的 WHEP/WebRTC 接口播放。解码板已叠加的检测框与 label 随原画面显示，UI 不重新运行检测或按浏览器到达时间拼接框。
+
+H.264 对照支持 `auto`、`h264_qsv`、`h264_nvenc`、`h264_amf`、`libx264`。自动模式保持硬件优先，不偷偷回退软件；需要软件编码时明确选择 `libx264`。
+
+310P 模板保持原有软件 x264、固定 QP 40、手动启动；Thor 模板保持硬件自动、QP 28、原图就绪后自动启动。两种模板调用同一套实现。H.264 QP 越小画质越高；它和板端 ulbvc 的 q_index 方向及标度不同。
+
+原图和 H.264 默认分别补偿显示 200 ms，可在参数中调整。这是播放补偿，与编码板发送队列的 200 ms 预算独立，也不是严格逐帧对齐或端到端延迟测量。视频使用各自源分辨率播放，允许单通道放大或全屏。
+
+UI 只管理它自己创建的对照推流进程，已有外部 H.264 流不会被替换；暂停预览不停止板端编解码。
+
+## 统一统计口径
+
+后端自动识别两种现有报文，无需在界面切换设备类型：
+
+- Thor：`kind = "semantic_codec_stats"`，使用 `payload_bytes` / `frames`。
+- 310P：`kind = "ulbvc_rtp_stats"`，使用 `payload_bytes` / `frames`，另读取 `wire_bytes`。
+
+ulbvc 主指标与曲线统一为编码净载荷码率，十进制 kB/s；bpp 用实际编码帧数和配置的源尺寸计算，压缩比以 RGB24 的 24 bpp 为基准。310P 如有 `wire_bytes`，附加显示 RTP/UDP/IP 发送带宽，包含 RTP 重传；不将该值冒充 codec 净码率，也不宣称包含独立 RTCP 流量。
+
+H.264 对照统计为浏览器收到的 RTP 净载荷，采样位置与编码器不同。原图指标为配置源尺寸/帧率的 RGB24 理论值，仅在原图播放时显示。标题上的 FPS 是浏览器实际收到/解码的 FPS。
+
+累计计数回退、协议来源改变、保存新配置或超过 5 秒未更新时清除旧统计基准，避免把旧设备数据继续显示为当前值。没有有效采样时不显示虚构的 0。曲线保留最近 30 秒。
+
+PC 的展示与本地 H.264 对照独立于板间的 RTP/RTCP 码率闭环。本次统一不增加 PC 调节板端 qp 或带宽的入口；RTCP 的完整状态面板仍可后续扩展。
+
+310P 当前板端统计地址来自 `configs/encoder.toml` 的 `ulbvc_stats_host` / `ulbvc_stats_port`；Thor 来自其编码配置的 `ui_stats_host` / `ui_stats_port`。地址应填写 UI 电脑的局域网 IP，统计端口不要与 RTP/RTCP 端口混用。
+
+## 维护与同步
+
+统一维护入口为 310P 仓库的 `tools/ui`。Thor 仓库保留同版本镜像，使用同步脚本更新，保留对端自己的 `ui_config.json`：
 
 ```powershell
-python test_windows_exe.py ../../artifacts/ui-exe/dist/SemanticVideoUI.exe --report ../../artifacts/ui-exe/dist/VALIDATION.json
+python tools/sync_ui.py path/to/other/checkout/tools/ui
+python tools/sync_ui.py path/to/other/checkout/tools/ui --check
 ```
 
-### Python 方式
+脚本只同步显式列出的共用源码、测试及模板，不覆盖运行参数。两端交付同一个 `ULBVCMonitor.exe`，仅外置配置不同。
+
+## 验证和打包
 
 ```powershell
-# 从仓库根目录执行
-cd tools/ui
-python web_ui.py
+python -m unittest discover -s tools/ui -p 'test_*.py' -v
+node --check tools/ui/app.js
+node tools/ui/test_frame_delay.cjs
+node tools/ui/test_player_recovery.cjs
+node tools/ui/test_connection_recovery.cjs
+python tools/ui/launch_ui.py --self-test artifacts/ui-self-test.json
+python tools/ui/build_windows_exe.py --output artifacts/unified-ui/dist
+python tools/ui/test_windows_exe.py artifacts/unified-ui/dist/ULBVCMonitor.exe --report artifacts/unified-ui/exe-test.json
 ```
 
-打开 `http://127.0.0.1:8765`。如果网页服务已经在运行，不要再次启动第二个实例。
+构建需要 `requirements-build.txt` 中的 PyInstaller、可用的 FFmpeg 和 Tkinter。构建产物包含 FFmpeg、网页、两种配置模板、说明、文件哈希和构建信息。`--self-test` 只在后台检查资源、HTTP、FFmpeg 及清理，不打开窗口或启动板端模型。
 
-## 播放方式
+本轮后台回归覆盖参数迁移/备份、Thor/310P 混合 UDP 统计、净载荷与 RTP/IP 分离、软件/硬件对照命令、配置保存、WHEP 会话归属、视频帧补偿和连接恢复。板端保持停止，实时视频和不同电脑的硬件编码可用性需要在对应环境验证。
 
-网页使用 MediaMTX 的 WebRTC/WHEP 接口显示三路 `<video>`：
 
-- 原图：编码板将 DVPP JPEGD 输出的设备 NV12 交给 DVPP H.264 编码，再通过 libavformat RTSP 发布到 `camera-original`；原图发布使用 VENC 通道 0，运动估计使用通道 1。
-- H.264：Windows 本地 FFmpeg 从原图 RTSP 读取，使用 `libx264` 编码后发布到 `camera-h264`
-- 语义压缩：解码板发布的 `ulbvc`
+## 2026-11-25 时间戳与卡帧修复
 
-视频不经过网页转码，也不使用 HLS 的多段缓冲。MediaMTX 需要开启 WebRTC，默认
-控制端口为 `8889`；当前 `mediamtx.yml` 已开启 `webrtc`、CORS 和低延时 UDP ICE。
+统一 UI 时曾漏带旧 310P 界面的时间戳直通设置，短探测窗口下可能将 90 kHz RTP 时钟当成帧率，造成大量 CFR 补帧、堆积和 H.264 卡住。本次恢复 `-fps_mode:v passthrough`、`-enc_time_base:v demux`、`nobuffer` / `low_delay`，并恢复足够的输入探测窗口；不使用与 passthrough 冲突的 `-r` / `-fpsmax`。
 
-语义压缩统计由编码板通过 UDP `39341` 发布：`wire_bytes` 是 RTP/UDP/IP
-线速字节，网页用它计算占用带宽，不使用解码端的 H.264 预览流统计。
+实际相机流对照中，旧参数重复帧计数为 14103，修复参数为 0，修复后的对照推流约 29.6 FPS。输入确定离线时停止本 UI 自建的对应 H.264 进程，避免继续保留卡死/失去输入的进程；只有媒体 API 暂不可达时保留现有推流，不误判为源离线。
 
-编码板配置需要设置：
+原图/H.264 的 200 ms 固定播放补偿保持原值。它不是本次新增的延迟，也不等于板间发送队列预算。编码端另已修复“开启码控时完成帧仍等待两帧”的调度，编译及相关 CTest 通过；编码板 SSH 暂时断连，尚未获得修复后等待时间的板上测量，不能据此承诺具体端到端延迟。
 
-```toml
-ulbvc_stats_host = "192.168.5.3"
-ulbvc_stats_port = 39341
-ulbvc_stats_interval_frames = 30
-```
+现场解码板曾达到 103°C / Warning，现已停机，用户要求散热未处理前保持停止。本修复包不会启动板端模型。更换程序时请手动退出旧 UI，再打开新包中的 `ULBVCMonitor.exe`，避免两套后端争用统计端口。
 
-## 正确启动顺序
-
-### 1. 确认 MediaMTX 已运行
-
-由部署方启动 MediaMTX，开放 RTSP、WebRTC/WHEP 和 HTTP API 服务。
-本 UI 不自动启动 MediaMTX。
-
-### 2. 启动板端
-
-先启动解码板，再启动编码板。编码板必须先发布 `camera-original`，Windows FFmpeg 才能启动。
-
-解码板 `192.168.5.11`：
-
-```bash
-cd /root/workplace/grifcc/ULBVC_310P1
-bash scripts/bash_run.sh configs/decoder.toml
-```
-
-编码板 `192.168.5.13`：
-
-```bash
-cd /root/workplace/grifcc/ULBVC_310P1
-bash scripts/bash_run_encode.sh configs/encoder.toml
-```
-
-两条命令都在各自板子的前台终端运行；需要停止时在对应终端按 `Ctrl+C`。
-
-启动后可在 Windows 检查路径：
-
-```powershell
-(Invoke-RestMethod http://127.0.0.1:9997/v3/paths/list).items |
-  Select-Object name, ready, tracks
-```
-
-确认列表中出现 `camera-original` 后，再启动 Windows FFmpeg。
-
-### 3. 启动 Windows FFmpeg（推荐方式）
-
-网页服务已经运行时，通过本地控制接口启动 FFmpeg：
-
-```powershell
-Invoke-RestMethod `
-  -Method Post `
-  -Uri http://127.0.0.1:8765/api/start `
-  -ContentType "application/json" `
-  -Body "{}"
-```
-
-该接口会启动一个由 UI 管理的 FFmpeg 子进程：
-
-```text
-camera-original (RTSP) → FFmpeg/libx264 → camera-h264 (RTSP)
-```
-
-H.264 默认使用同质量的固定 QP 模式，使用 veryfast、2 个编码线程、GOP 96。
-原图源就绪后启动，不等待语义压缩的码率统计，不设置 CBR/VBV 限制。
-停止推流后不会自动启动；正常运行不依赖浏览器轮询。
-
-FFmpeg 启动时最多分析 1 秒媒体数据（探测字节上限 5 MB），避免把 RTP 的
-90 kHz 时钟误判为视频帧率。输出使用 `-fps_mode:v passthrough` 和
-`-enc_time_base:v demux`，保留原图时间戳，每个输入帧只编码一次。
-不要再使用 `-probesize 32 -analyzeduration 0`，也不要添加 CFR 补帧或 `fps` 滤镜。
-
-然后确认 `camera-h264` 已发布：
-
-```powershell
-(Invoke-RestMethod http://127.0.0.1:9997/v3/paths/list).items |
-  Select-Object name, ready, tracks
-```
-
-列表应至少包含：`camera-original`、`camera-h264`、`ulbvc`。
-
-### 4. 打开网页并连接
-
-打开 `http://127.0.0.1:8765`，点击“重新连接视频”（或刷新页面）。三路视频分别对应
-`camera-original`、`camera-h264` 和 `ulbvc`。
-
-不要同时使用网页的 `/api/start` 和另一个手工 FFmpeg 进程发布 `camera-h264`，否则会发生
-发布者争用。同一时间只保留一个 H.264 发布进程。
-
-## H.264 发布失败时
-
-如果 FFmpeg 在原图流尚未就绪时启动，会在 `ffmpeg_ui.log` 中看到 `not enough frames`、
-`Failed reading RTSP data` 或 `Broken pipe`，随后 `camera-h264` 不会出现。处理方法是：
-
-1. 等 `camera-original` 在 MediaMTX API 中显示 `ready=true`；
-2. 再执行上面的 `/api/start` 命令；
-3. 确认 `camera-h264` 出现后刷新网页。
-
-FFmpeg 异常退出后，UI 会在 30 秒重试间隔后尝试恢复当前编码参数；明确停止后不会自动恢复。
-日志位置：`tools/ui/ffmpeg_ui.log`（相对于仓库根目录）。
-
-浏览器显示播放状态、分辨率、实际接收 FPS、bpp、带宽（kB/s）与压缩比。页面参数面板默认收起，
-打开页面后自动连接三路视频。未收到实际数据时显示“—”。
-界面的 kB/s 沿用原项目每秒字节 / 1024 口径。
-MediaMTX API 中路径必须 `ready=true` 才判定为已发布；“播放中”由浏览器实际播放事件确认。
-
-原图带宽使用固定理论值：1920 × 1080 × 配置 FPS × 3 / 1024，默认 30 FPS 时为 182,250.0 kB/s，不随相机画面变化。原图 bpp 为 24，压缩比为 1，作为未压缩图像基准。H.264 沿用 MediaMTX 接收统计；语义压缩带宽沿用编码板 RTP/UDP/IP 线速统计，bpp 和压缩比按媒体单元字节计算。压缩比为 24 / bpp。原图不显示理论码率。
-
-码率曲线每秒记录后端实际 kbs，与画面下方的带宽数值一致，单位统一显示 kB/s（沿用每秒字节 / 1024 口径），保留最近 30 秒；无有效统计时断开曲线，不以零值代替。曲线沿用后端已有的 12 秒平均速率统计。画面与曲线在桌面布局下保持 32 px 间距。
-
-## 回归测试
-
-在 `tools/ui` 目录执行，不需要连接相机、板子或启动推流：
-
-```powershell
-python -m unittest -v test_web_ui.py
-node test_delayed_video.cjs
-node test_bitrate_history.cjs
-node test_settings.cjs
-```
+FFmpeg 参数依据：[官方文档](https://ffmpeg.org/ffmpeg.html)。

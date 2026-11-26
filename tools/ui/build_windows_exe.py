@@ -1,76 +1,88 @@
-"""Build a Windows x64 one-file UI, with FFmpeg and its DLLs embedded."""
+"""Build the same portable V0.5 monitor for Thor and Ascend."""
+
 import argparse
 import hashlib
-import importlib.util
 import json
 import os
+from pathlib import Path
 import shutil
 import subprocess
 import sys
-from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parents[1]
 
 
-def main() -> None:
+def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--ffmpeg", type=Path)
     parser.add_argument("--output", type=Path, default=REPO / "artifacts/ui-exe/dist")
+    parser.add_argument("--ffmpeg", type=Path, help="指定随程序打包的 FFmpeg")
     args = parser.parse_args()
     if sys.platform != "win32":
-        parser.error("Build this executable on Windows x64")
-    if importlib.util.find_spec("PyInstaller") is None:
-        parser.error("Install the build dependencies: python -m pip install -r requirements-build.txt")
+        parser.error("需要在 Windows 上构建")
     ffmpeg = (args.ffmpeg or Path(shutil.which("ffmpeg") or "ffmpeg.exe")).resolve()
     if not ffmpeg.is_file():
-        parser.error("FFmpeg not found; pass --ffmpeg path/to/ffmpeg.exe")
+        parser.error("FFmpeg 不存在，无法打包 H.264 对照功能")
     output = args.output.resolve()
-    exe = output / "SemanticVideoUI.exe"
-    if exe.exists():
-        parser.error("Output already exists; choose a new --output directory")
+    if (output / "ULBVCMonitor.exe").exists():
+        parser.error("输出目录已有程序，请选择新的 --output 目录")
     work = REPO / "artifacts/ui-exe/build"
     spec = REPO / "artifacts/ui-exe/spec"
-    command = [sys.executable, "-m", "PyInstaller", "--onefile", "--windowed", "--noupx",
-               "--name", "SemanticVideoUI", "--distpath", str(output),
-               "--workpath", str(work), "--specpath", str(spec)]
-    environment = os.environ.copy()
-    conda_bin = Path(sys.base_prefix) / "Library/bin"
-    if conda_bin.is_dir():
-        environment["PATH"] = str(conda_bin) + os.pathsep + environment.get("PATH", "")
-        # A venv built from Conda does not expose conda-meta to PyInstaller.
-        # Add Tk's native libraries explicitly for the launcher window.
-        for library in ("tcl86t.dll", "tk86t.dll"):
-            file = conda_bin / library
-            if file.is_file():
-                command += ["--add-binary", str(file) + ";."]
-    for filename in ("index.html", "styles.css", "app.js"):
-        command += ["--add-data", str(ROOT / filename) + ";."]
+    env = os.environ.copy()
+    conda = Path(sys.base_prefix) / "Library/bin"
+    command = [
+        sys.executable,
+        "-m",
+        "PyInstaller",
+        "--onefile",
+        "--windowed",
+        "--noupx",
+        "--name",
+        "ULBVCMonitor",
+        "--distpath",
+        str(output),
+        "--workpath",
+        str(work),
+        "--specpath",
+        str(spec),
+    ]
+    if conda.is_dir():
+        env["PATH"] = str(conda) + os.pathsep + env.get("PATH", "")
+        for name in ("tcl86t.dll", "tk86t.dll"):
+            if (conda / name).exists():
+                command += ["--add-binary", str(conda / name) + ";."]
+    for name in ("index.html", "app.js", "styles.css", "ui_config.json", "ui_config.310p.json", "ui_config.thor.json"):
+        command += ["--add-data", str(ROOT / name) + ";."]
     dependencies = [ffmpeg] + sorted(ffmpeg.parent.glob("*.dll"))
     for file in dependencies:
-        # Keep all FFmpeg binaries together at the bundle root. PyInstaller
-        # can then deduplicate the same DLLs found during dependency analysis.
         command += ["--add-binary", str(file) + ";."]
     license_file = ffmpeg.parent.parent / "LICENSE"
     if license_file.is_file():
         command += ["--add-data", str(license_file) + ";licenses/ffmpeg"]
-    command += [str(ROOT / "launch_ui.py")]
-    subprocess.run(command, cwd=ROOT, env=environment, check=True)
-    config = output / "ui_config.json"
-    if not config.exists():
-        shutil.copyfile(ROOT / "ui_config.json", config)
-    digest = hashlib.sha256(exe.read_bytes()).hexdigest()
-    (output / "SemanticVideoUI.exe.sha256").write_text(digest + "  SemanticVideoUI.exe\n", encoding="utf-8")
-    metadata = {"executable": exe.name, "sha256": digest, "bytes": exe.stat().st_size,
-                "python": sys.version, "ffmpeg_files": [p.name for p in dependencies],
-                "ffmpeg_version": subprocess.check_output([str(ffmpeg), "-version"], text=True),
-                "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip(),
-                "source_files": {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
-                                 for name in ("web_ui.py", "launch_ui.py", "index.html", "app.js", "styles.css", "ui_config.json")},
-                "config_file": config.name,
-                "config_sha256": hashlib.sha256(config.read_bytes()).hexdigest()}
-    (output / "BUILD_INFO.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(str(exe))
+    command.append(str(ROOT / "launch_ui.py"))
+    subprocess.run(command, cwd=ROOT, env=env, check=True)
+    for name in ("ui_config.json", "ui_config.310p.json", "ui_config.thor.json"):
+        shutil.copy2(ROOT / name, output / name)
+    shutil.copy2(ROOT / "README.md", output / "README.md")
+    exe = output / "ULBVCMonitor.exe"
+    metadata = {
+        "version": "0.5",
+        "platforms": ["Thor", "Ascend 310P"],
+        "executable": exe.name,
+        "sha256": hashlib.sha256(exe.read_bytes()).hexdigest(),
+        "bytes": exe.stat().st_size,
+        "ffmpeg_files": [p.name for p in dependencies],
+        "files": {
+            p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in ROOT.iterdir()
+            if p.suffix in (".py", ".js", ".css", ".html", ".json")
+        },
+    }
+    (output / "BUILD_INFO.json").write_text(
+        json.dumps(metadata, indent=2), encoding="utf8"
+    )
+    (output / "ULBVCMonitor.exe.sha256").write_text(metadata["sha256"] + "  ULBVCMonitor.exe\n", encoding="utf-8")
+    print(exe)
 
 
 if __name__ == "__main__":

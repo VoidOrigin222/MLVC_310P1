@@ -1,8 +1,8 @@
 #ifndef ULBVC_TRANSPORT_RTCP_SESSION_H_
 #define ULBVC_TRANSPORT_RTCP_SESSION_H_
 
-#include <cstdint>
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -131,6 +131,10 @@ class RtcpUdpEndpoint {
   RtcpUdpEndpoint& operator=(const RtcpUdpEndpoint&) = delete;
 
   uint16_t local_port() const;
+  bool LastPeerMatchesRemoteHost() const;
+  uint64_t sent_wire_bytes() const;
+  void SetSendBudget(uint64_t bps);
+  bool TrySend(const std::vector<uint8_t>& packet, bool to_last_peer = false);
   void Send(const std::vector<uint8_t>& compound_packet);
   // Pins the source of the most recent successful Receive as the reply peer.
   // Call only after validating its session identity.

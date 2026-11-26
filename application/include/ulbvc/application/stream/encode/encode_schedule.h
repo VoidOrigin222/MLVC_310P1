@@ -8,11 +8,12 @@
 
 namespace ulbvc::codec {
 
-// Early writes also advance rate-control feedback. Restrict opportunistic
-// retirement to fixed-QP prefetch so adaptive-QP decisions retain their order.
+// Feedback is settled against each frame's own reservation. A completed queue
+// front can be retired without holding it for two more input frames.
 inline bool ShouldRetireReadyEntropy(int prefetch_frames, bool rate_control_enabled,
                                     std::future_status front_status) {
-  return prefetch_frames > 0 && !rate_control_enabled &&
+  (void)rate_control_enabled;
+  return prefetch_frames > 0 &&
          front_status == std::future_status::ready;
 }
 

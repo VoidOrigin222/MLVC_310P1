@@ -77,6 +77,8 @@ add_library(ulbvc_common
   common/src/transport/rtp_ulbvc.cc
   common/src/transport/rtp_message_receiver.cc
   common/src/transport/rtcp_session.cc
+  common/src/transport/rate_feedback.cc
+  common/src/transport/network_rate_controller.cc
 )
 if(BUILD_TESTING)
   add_executable(test_detection_metadata tools/cpp/tests/test_detection_metadata.cc)
@@ -155,6 +157,17 @@ if(BUILD_TESTING)
   )
   add_test(NAME udp_pacer_rate COMMAND test_udp_pacer_rate)
   add_executable(test_rtcp_session tools/cpp/tests/test_rtcp_session.cc)
+  add_executable(test_network_rate_control tools/cpp/tests/test_network_rate_control.cc)
+  target_link_libraries(test_network_rate_control PRIVATE ulbvc_common)
+  add_test(NAME network_rate_control COMMAND test_network_rate_control)
+  add_executable(test_adaptive_rtcp_session tools/cpp/tests/test_adaptive_rtcp_session.cc)
+  target_link_libraries(test_adaptive_rtcp_session PRIVATE ulbvc_common)
+  add_test(NAME adaptive_rtcp_session COMMAND test_adaptive_rtcp_session)
+  if(OpenSSL_FOUND)
+    add_executable(test_rtcp_authentication tools/cpp/tests/test_rtcp_authentication.cc)
+    target_link_libraries(test_rtcp_authentication PRIVATE ulbvc_common)
+    add_test(NAME rtcp_authentication COMMAND test_rtcp_authentication)
+  endif()
   target_link_libraries(test_rtcp_session PRIVATE ulbvc_common)
   target_compile_options(test_rtcp_session PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
@@ -573,6 +586,9 @@ endif()
 if(BUILD_TESTING)
   add_executable(test_detection_preprocess tools/cpp/tests/test_detection_preprocess.cc)
   add_executable(test_jpeg_padding tools/cpp/tests/test_jpeg_padding.cc)
+  add_executable(test_runtime_rate_control tools/cpp/tests/test_runtime_rate_control.cc)
+  target_link_libraries(test_runtime_rate_control PRIVATE ulbvc_codec)
+  add_test(NAME runtime_rate_control COMMAND test_runtime_rate_control)
   target_link_libraries(test_jpeg_padding PRIVATE ulbvc_codec)
   add_test(NAME jpeg_padding COMMAND test_jpeg_padding)
   target_link_libraries(test_detection_preprocess PRIVATE ulbvc_codec)

@@ -1,14 +1,14 @@
 ﻿#ifndef ULBVC_TRANSPORT_RTP_ULBVC_H_
 #define ULBVC_TRANSPORT_RTP_ULBVC_H_
+#include <chrono>
 #include <cstdint>
 #include <map>
 #include <memory>
 #include <string>
 #include <tuple>
 #include <vector>
+#include "ulbvc/transport/rate_feedback.h"
 #include "ulbvc/transport/rtcp_session.h"
-#include <chrono>
-
 #include "ulbvc/transport/udp_pacer.h"
 #include "ulbvc/transport/ulbvc_media_unit.h"
 namespace ulbvc::transport {
@@ -26,6 +26,12 @@ struct RtpTransportStats {
   uint64_t socket_block_us = 0;
   uint64_t rtcp_packets_sent = 0;
   uint64_t rtcp_packets_received = 0;
+  uint64_t rtcp_wire_bytes = 0;
+  uint64_t retransmitted_wire_bytes = 0;
+  uint64_t queued_wire_bytes = 0;
+  uint64_t oldest_queue_delay_us = 0;
+  uint64_t pacing_rate_bps = 0;
+  uint64_t serialized_wire_bytes = 0;  // Unique media units admitted, before retransmission.
 };
 using RtpUnitType = UlbvcMediaUnitType;
 constexpr uint8_t kRtpUlbvcStart = 0x80;
@@ -84,7 +90,7 @@ class RtpUlbvcSender {
   RtpUlbvcSender(const std::string& host, uint16_t port, uint32_t ssrc = 0,
                 uint64_t pacing_rate_bps = 0, std::size_t max_burst_bytes = 4096,
                 std::size_t max_queue_bytes = 4u * 1024u * 1024u,
-                uint64_t max_queue_delay_ms = 1000, uint8_t payload_type = 96,
+                uint64_t max_queue_delay_ms = 200, uint8_t payload_type = 96,
                 std::chrono::milliseconds rtcp_interval = std::chrono::seconds(5));
   ~RtpUlbvcSender();
   RtpUlbvcSender(const RtpUlbvcSender&) = delete;
@@ -102,6 +108,9 @@ class RtpUlbvcSender {
   void SendUlbvcControlResponse(const UlbvcControlMessage& request, bool accepted,
                                const std::string& reason);
   RtpTransportStats Stats() const;
+  void EnableRateFeedback(uint32_t interval_ms = 500);
+  void SetPacingRate(uint64_t wire_bps);
+  RateFeedbackSnapshot Feedback() const;
 
  private:
   struct Impl;

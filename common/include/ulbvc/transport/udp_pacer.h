@@ -20,8 +20,10 @@ class UdpPacer {
 
   // Update the target bitrate dynamically
   void UpdateRate(uint64_t new_rate_bps);
+  std::chrono::microseconds RemainingDelay();
 
  private:
+  void Accrue();
   uint64_t rate_bps_;
   std::size_t max_burst_bytes_;
   double tokens_;  // Current token count in bytes

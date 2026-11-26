@@ -22,7 +22,7 @@ struct UdpSendOptions {
   uint64_t pacing_rate_bps = 0;
   std::size_t max_burst_bytes = 4096;
   std::size_t max_queue_bytes = 4u * 1024u * 1024u;
-  uint64_t max_queue_delay_ms = 1000;
+  uint64_t max_queue_delay_ms = 200;
   // Optional deterministic failure hook used by transport tests.
   std::function<void()> before_send;
 };

@@ -1,12 +1,10 @@
 #include <acl/acl.h>
-#include <opencv2/imgproc.hpp>
-#include <ulbvc/transport/detection_metadata.h>
 #include <ulbvc/application/input/frame_input_queue.h>
-#include <ulbvc/application/stream/live_quality_capture.h>
 #include <ulbvc/application/pipeline/codec_frame_pipeline.h>
 #include <ulbvc/application/pipeline/ordered_future_window.h>
 #include <ulbvc/application/progress.h>
 #include <ulbvc/application/runtime/ulbvc_codec_runtime.h>
+#include <ulbvc/application/stream/live_quality_capture.h>
 #include <ulbvc/application/stream/ulbvc_entropy_decode.h>
 #include <ulbvc/application/stream/ulbvc_stream.h>
 #include <ulbvc/codec/detail/frame/reference_state.h>
@@ -17,24 +15,25 @@
 #include <ulbvc/codec/detail/stage/stage_types.h>
 #include <ulbvc/codec/detail/tensor/tensor_utils.h>
 #include <ulbvc/codec/execution_profile.h>
-#include <ulbvc/codec/ulbvc_entropy.h>
-#include <ulbvc/codec/ulbvc_rate_control.h>
 #include <ulbvc/codec/tensor_utils.h>
 #include <ulbvc/codec/translation_warp.h>
+#include <ulbvc/codec/ulbvc_entropy.h>
+#include <ulbvc/codec/ulbvc_rate_control.h>
 #include <ulbvc/entropy/entropy_codec.h>
-#include <ulbvc/entropy/ulbvc_official_entropy.h>
 #include <ulbvc/entropy/sidecar.h>
+#include <ulbvc/entropy/ulbvc_official_entropy.h>
 #include <ulbvc/framework/codec_graph_executor.h>
 #include <ulbvc/framework/entropy_worker.h>
 #include <ulbvc/framework/profile_range.h>
 #include <ulbvc/framework/profiler.h>
-#include <ulbvc/io/frame_source.h>
 #include <ulbvc/io/dvpp_h264_encoder.h>
-#include <ulbvc/io/ulbvc_bitstream.h>
+#include <ulbvc/io/frame_source.h>
 #include <ulbvc/io/udp_frame_transport.h>
+#include <ulbvc/io/ulbvc_bitstream.h>
 #include <ulbvc/io/video_io.h>
 #include <ulbvc/runtime/fp16_yuv444_to_nv12_acl.h>
 #include <ulbvc/runtime/stage_runtime.h>
+#include <ulbvc/transport/detection_metadata.h>
 
 #include <algorithm>
 #include <array>
@@ -55,6 +54,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <opencv2/imgproc.hpp>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -868,6 +868,7 @@ int RunDecodeStream(const DecodeStreamOptions& options, DecodePipelineServices* 
       active_short_reference_frame = frame_index;
       if (header.translation_warp) TraceWarpReferenceState(frame_index, &state);
       ++decoded_frames;
+      if (rtp_receiver) rtp_receiver->ReportDecodedFrame(static_cast<uint32_t>(frame_index));
       const auto progress_now = std::chrono::steady_clock::now();
       if (progress_now - last_progress_time >= std::chrono::seconds(1)) {
         const double interval_seconds =

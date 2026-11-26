@@ -34,6 +34,7 @@ class PreparedFramePacket final : public ulbvc::DataObject {
   const InputFrame& frame() const { return frame_; }
   void Release();
   std::optional<ulbvc::motion::Translation> motion;
+  bool force_random_access = false;
   std::chrono::steady_clock::time_point motion_ready_at{};
   std::shared_future<ulbvc::transport::DetectionFrame> detection;
 

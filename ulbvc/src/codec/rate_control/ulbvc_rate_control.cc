@@ -321,6 +321,15 @@ UlbvcRateController::UlbvcRateController(const UlbvcRateControlOptions& options)
   default_q_index_ = ClampQIndex(default_q_index_, min_q_index_, max_q_index_);
 }
 
+void UlbvcRateController::SetTargetBitrate(double bps) {
+  const double limit = std::min(static_cast<double>(std::numeric_limits<int>::max()) * 0.25,
+                                static_cast<double>(std::numeric_limits<int>::max()) * fps_ / 16.0);
+  Check(std::isfinite(bps) && bps >= 0 && bps <= limit, "invalid runtime target bitrate");
+  target_bitrate_bps_ = bps;
+  enabled_ = bps > 0;
+  if (enabled_) alloc_.Configure(bps, fps_);
+}
+
 int UlbvcRateController::SolveQIndex(double presentation_time, UlbvcFrameType frame_type) {
   Check(std::isfinite(presentation_time) && presentation_time >= 0.0,
         "rate-control presentation time must be finite and non-negative");
@@ -329,7 +338,13 @@ int UlbvcRateController::SolveQIndex(double presentation_time, UlbvcFrameType fr
         "rate-control frame type is invalid");
   presentation_time_ = presentation_time;
   frame_type_ = frame_type;
+  Check(!last_solved_time_ || presentation_time > *last_solved_time_,
+        "rate-control frame time must increase");
+  Check(reservations_.size() < 64, "too many rate-control frames in flight");
+  last_solved_time_ = presentation_time;
   if (!enabled_) {
+    reservations_.emplace(presentation_time, FrameReservation{frame_type, 1.0, 0, false});
+    saturated_ = false;
     return default_q_index_;
   }
 
@@ -354,6 +369,16 @@ int UlbvcRateController::SolveQIndex(double presentation_time, UlbvcFrameType fr
                    static_cast<double>(std::max<int64_t>(pixels, 1)));
   int model_q_index = impl_.SolveQIndex(frame_type, target_bpp);
   model_q_index = ClampQIndex(model_q_index, min_q_index_, max_q_index_);
+  if (prev_res_q_index_ >= 0)
+    model_q_index = std::clamp(model_q_index, std::max(min_q_index_, prev_res_q_index_ - 2),
+                               std::min(max_q_index_, prev_res_q_index_ + 1));
+  saturated_ = model_q_index == min_q_index_;
+  reservations_.emplace(presentation_time, FrameReservation{frame_type, frame_weight_,
+                                                            alloc_result.allocated_bits, true});
+  // Reserve now, settle the same frame later. Later Solve calls cannot spend
+  // the same bits or overwrite the older frame's temporal weight.
+  alloc_.Update(presentation_time, frame_weight_, alloc_result.allocated_bits);
+  prev_frame_weight_ = frame_weight_;
 
   prev_res_q_index_ = model_q_index;
   return model_q_index;
@@ -368,22 +393,29 @@ void UlbvcRateController::Update(double presentation_time, UlbvcFrameType frame_
         "rate-control frame type is invalid");
   Check(q_index >= min_q_index_ && q_index <= max_q_index_,
         "rate-control Q index is outside the configured range");
-  if (!enabled_) {
-    return;
-  }
+  const auto reservation = reservations_.find(presentation_time);
+  Check(reservation != reservations_.end() && reservation == reservations_.begin() &&
+            reservation->second.type == frame_type,
+        "rate-control feedback does not match oldest frame");
   Check(payload_bytes <= std::numeric_limits<std::size_t>::max() - overhead_bytes,
         "rate-control frame byte count overflows");
   const std::size_t frame_bytes = payload_bytes + overhead_bytes;
   Check(frame_bytes <= static_cast<std::size_t>(std::numeric_limits<int>::max() / 8),
         "rate-control frame byte count exceeds integer budget");
   const int actual_frame_bits = static_cast<int>(frame_bytes * 8);
-  alloc_.Update(presentation_time, frame_weight_, actual_frame_bits);
+  if (reservation->second.reserved) {
+    const int64_t difference = int64_t(actual_frame_bits) - reservation->second.bits;
+    alloc_.bucket.fill_bits =
+        std::clamp(alloc_.bucket.fill_bits + difference, 0.0, alloc_.bucket.capacity_bits);
+    const int64_t excess = int64_t(alloc_.accumulated_excess_bits) + difference;
+    const int64_t limit = std::numeric_limits<int>::max() / 4;
+    alloc_.accumulated_excess_bits = static_cast<int>(std::clamp(excess, -limit, limit));
+  }
   const double actual_payload_bpp =
       static_cast<double>(payload_bytes) * 8.0 /
       static_cast<double>(std::max<int64_t>(static_cast<int64_t>(width_) * height_, 1));
   impl_.Update(frame_type, q_index, actual_payload_bpp);
-  prev_frame_weight_ = frame_weight_;
-  prev_res_q_index_ = q_index;
+  reservations_.erase(reservation);
 }
 
 }  // namespace ulbvc::codec

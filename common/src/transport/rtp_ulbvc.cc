@@ -1,7 +1,5 @@
 ﻿#include "ulbvc/transport/rtp_ulbvc.h"
 
-#include "ulbvc/transport/rtcp_session.h"
-
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <sys/socket.h>
@@ -16,12 +14,14 @@
 #include <exception>
 #include <iterator>
 #include <limits>
-#include <mutex>
 #include <map>
-#include <stdexcept>
-#include <thread>
+#include <mutex>
 #include <random>
 #include <set>
+#include <stdexcept>
+#include <thread>
+
+#include "ulbvc/transport/rtcp_session.h"
 #include "ulbvc/transport/ulbvc_media_unit.h"
 namespace ulbvc::transport {
 namespace {
@@ -311,6 +311,7 @@ struct RtpUlbvcSender::Impl {
     // Only the first fragment of a newly queued ULBVC media unit carries this
     // value. Retransmissions leave it at zero so a media unit is counted once.
     std::size_t media_unit_bytes = 0;
+    bool retransmission = false;
   };
   int socket = -1;
   sockaddr_storage address{};
@@ -323,7 +324,8 @@ struct RtpUlbvcSender::Impl {
   std::chrono::milliseconds rtcp_interval{5000};
   std::atomic<bool> rtcp_stopping{false};
   std::thread rtcp_thread;
-  uint64_t pacing_rate_bps = 0;
+  std::atomic<uint64_t> pacing_rate_bps{0};
+  uint64_t applied_pacing_rate = 0;
   std::size_t max_queue_bytes = 0;
   uint64_t max_queue_delay_ms = 0;
   std::size_t queued_bytes = 0;
@@ -334,12 +336,14 @@ struct RtpUlbvcSender::Impl {
   std::exception_ptr send_error;
   bool stopping = false;
   bool sending = false;
+  std::chrono::steady_clock::time_point sending_since{};
   std::thread send_thread;
   uint32_t session_config_id = 0;
   uint32_t pending_random_access_config_id = 0;
   std::vector<uint8_t> session_config;
   uint8_t session_config_flags = 0;
   std::atomic<uint64_t> wire_bytes_sent{0};
+  std::atomic<uint64_t> serialized_wire_bytes{0};
   std::atomic<uint64_t> media_unit_bytes_sent{0};
   std::atomic<uint64_t> packets_sent{0};
   std::atomic<uint64_t> burst_bytes{0};
@@ -352,13 +356,25 @@ struct RtpUlbvcSender::Impl {
   std::atomic<uint32_t> last_rtp_timestamp{0};
   std::atomic<uint64_t> rtcp_packets_sent{0};
   std::atomic<uint64_t> rtcp_packets_received{0};
+  std::atomic<uint64_t> retransmitted_wire_bytes{0};
+  std::atomic<bool> rate_feedback_enabled{false};
+  std::atomic<uint32_t> feedback_interval_ms{500};
+  uint64_t rate_session_id = 0;
+  mutable std::mutex feedback_mutex;
+  RateFeedbackSnapshot feedback_snapshot;
+  std::deque<uint64_t> retired_receiver_instances;
+  std::deque<std::pair<uint32_t, std::chrono::steady_clock::time_point>> sender_report_times;
   std::atomic<uint64_t> random_access_requests{0};
   std::mutex control_mutex;
   std::deque<UlbvcControlMessage> control_queue;
   std::set<uint32_t> seen_control_transactions;
+  std::deque<uint32_t> control_transaction_order;
+  std::map<uint32_t, std::vector<uint8_t>> control_response_cache;
+  std::deque<std::vector<uint8_t>> control_responses;
   std::atomic<uint32_t> remote_control_ssrc{0};
   std::mutex packet_history_mutex;
   std::map<uint16_t, std::vector<uint8_t>> packet_history;
+  std::map<uint16_t, std::chrono::steady_clock::time_point> packet_history_times;
   std::deque<uint16_t> packet_history_order;
   std::map<uint16_t, std::chrono::steady_clock::time_point> last_retransmit_time;
   static constexpr std::size_t kPacketHistoryLimit = 2048;
@@ -382,16 +398,11 @@ struct RtpUlbvcSender::Impl {
 
   void ReserveQueueBytes(std::size_t bytes) {
     if (bytes > max_queue_bytes) throw std::runtime_error("RTP unit exceeds send queue bytes");
-    if (pacing_rate_bps > 0 && max_queue_delay_ms > 0) {
-      const long double unit_delay_us =
-          static_cast<long double>(bytes) * 8000000.0L / pacing_rate_bps;
-      if (unit_delay_us > static_cast<long double>(max_queue_delay_ms) * 1000.0L)
-        throw std::runtime_error("RTP unit exceeds maximum send queue delay");
-    }
     std::unique_lock<std::mutex> lock(queue_mutex);
     queue_cv.wait(lock, [this, bytes] {
       if (send_error != nullptr || stopping) return true;
       if (queued_bytes > max_queue_bytes || bytes > max_queue_bytes - queued_bytes) return false;
+      if (queued_bytes == 0) return true;
       if (max_queue_delay_ms == 0 || pacing_rate_bps == 0) return true;
       const long double estimated_us = static_cast<long double>(queued_bytes + bytes) *
                                        8000000.0L / pacing_rate_bps;
@@ -416,10 +427,12 @@ struct RtpUlbvcSender::Impl {
     const auto existing = packet_history.find(packet_sequence);
     if (existing == packet_history.end()) packet_history_order.push_back(packet_sequence);
     packet_history[packet_sequence] = packet;
+    packet_history_times[packet_sequence] = std::chrono::steady_clock::now();
     while (packet_history_order.size() > kPacketHistoryLimit) {
       const uint16_t expired = packet_history_order.front();
       packet_history_order.pop_front();
       packet_history.erase(expired);
+      packet_history_times.erase(expired);
       last_retransmit_time.erase(expired);
     }
   }
@@ -434,13 +447,18 @@ struct RtpUlbvcSender::Impl {
         if (packets.size() >= 64) break;
         const auto history = packet_history.find(requested);
         if (history == packet_history.end()) continue;
+        const auto original = packet_history_times.find(requested);
+        if (original == packet_history_times.end() ||
+            now - original->second > std::chrono::milliseconds(std::min<uint64_t>(
+                                         2000, std::max<uint64_t>(200, max_queue_delay_ms + 500))))
+          continue;
         const auto last = last_retransmit_time.find(requested);
         if (last != last_retransmit_time.end() &&
             now - last->second < std::chrono::milliseconds(100)) {
           continue;
         }
         last_retransmit_time[requested] = now;
-        packets.push_back(PendingPacket{history->second, now});
+        packets.push_back(PendingPacket{history->second, now, 0, true});
       }
     }
     if (packets.empty()) return;
@@ -473,12 +491,51 @@ struct RtpUlbvcSender::Impl {
     if (receiver_ssrc == 0 && !compound.plis.empty()) receiver_ssrc = compound.plis.front().sender_ssrc;
     if (receiver_ssrc == 0 && !compound.firs.empty()) receiver_ssrc = compound.firs.front().sender_ssrc;
     if (receiver_ssrc == 0) return;
+    if (!rtcp_endpoint->LastPeerMatchesRemoteHost()) return;
+    std::optional<RateFeedback> rate_feedback;
+    for (const auto& control : compound.ulbvc_controls) {
+      if (control.type != UlbvcControlType::kStatus || control.control_ssrc != receiver_ssrc ||
+          control.media_ssrc != ssrc)
+        continue;
+      for (const auto& tlv : control.tlvs) {
+        if (tlv.type != kRateFeedbackTlv) continue;
+        if (rate_feedback) return;
+        auto decoded = DecodeRateFeedback(tlv);
+        if (!rate_feedback_enabled.load() || decoded.session_id != rate_session_id) return;
+        rate_feedback = decoded;
+      }
+    }
     uint32_t expected_receiver_ssrc = remote_control_ssrc.load();
     if (expected_receiver_ssrc == 0) {
       remote_control_ssrc.compare_exchange_strong(expected_receiver_ssrc, receiver_ssrc);
       expected_receiver_ssrc = remote_control_ssrc.load();
     }
-    if (receiver_ssrc == 0 || receiver_ssrc != expected_receiver_ssrc) return;
+    bool changed_instance = false;
+    if (rate_feedback) {
+      std::lock_guard<std::mutex> lock(feedback_mutex);
+      changed_instance =
+          feedback_snapshot.valid &&
+          rate_feedback->receiver_instance != feedback_snapshot.feedback.receiver_instance;
+    }
+    if (receiver_ssrc != expected_receiver_ssrc || changed_instance) {
+      if (!rate_feedback) return;
+      std::lock_guard<std::mutex> lock(feedback_mutex);
+      if (std::find(retired_receiver_instances.begin(), retired_receiver_instances.end(),
+                    rate_feedback->receiver_instance) != retired_receiver_instances.end())
+        return;
+      if (feedback_snapshot.valid) {
+        retired_receiver_instances.push_back(feedback_snapshot.feedback.receiver_instance);
+        while (retired_receiver_instances.size() > 32) retired_receiver_instances.pop_front();
+      }
+      feedback_snapshot = {};
+      remote_control_ssrc.store(receiver_ssrc);
+      std::lock_guard<std::mutex> control_lock(control_mutex);
+      seen_control_transactions.clear();
+      control_transaction_order.clear();
+      control_queue.clear();
+      control_response_cache.clear();
+      control_responses.clear();
+    }
     if (compound.receiver_report.has_value() &&
         std::none_of(compound.receiver_report->reports.begin(),
                      compound.receiver_report->reports.end(), [this](const auto& report) {
@@ -488,13 +545,58 @@ struct RtpUlbvcSender::Impl {
     }
     rtcp_endpoint->AcceptLastPeer();
     ++rtcp_packets_received;
+    if (rate_feedback) {
+      std::lock_guard<std::mutex> lock(feedback_mutex);
+      if (feedback_snapshot.valid) {
+        const auto& previous = feedback_snapshot.feedback;
+        const uint32_t delta = rate_feedback->sequence - previous.sequence;
+        if (rate_feedback->receiver_instance != previous.receiver_instance || !delta ||
+            delta >= 0x80000000u || rate_feedback->sample_time_ms <= previous.sample_time_ms ||
+            rate_feedback->received_packets < previous.received_packets ||
+            rate_feedback->received_wire_bytes < previous.received_wire_bytes ||
+            rate_feedback->missing_packets < previous.missing_packets ||
+            rate_feedback->recovered_packets < previous.recovered_packets)
+          return;
+      }
+      feedback_snapshot.valid = true;
+      feedback_snapshot.feedback = *rate_feedback;
+      feedback_snapshot.received_at = std::chrono::steady_clock::now();
+      if (compound.receiver_report)
+        for (const auto& report : compound.receiver_report->reports) {
+          if (report.source_ssrc != ssrc || !report.last_sender_report) continue;
+          for (const auto& sent : sender_report_times) {
+            if (sent.first != report.last_sender_report) continue;
+            const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+                                     feedback_snapshot.received_at - sent.second)
+                                     .count();
+            const int64_t dlsr_us =
+                int64_t(report.delay_since_last_sender_report) * 1000000 / 65536;
+            if (elapsed >= dlsr_us && elapsed - dlsr_us <= 10000000)
+              feedback_snapshot.rtt_us = static_cast<uint32_t>(elapsed - dlsr_us);
+          }
+        }
+    }
     {
       std::lock_guard<std::mutex> lock(control_mutex);
       for (const auto& control : compound.ulbvc_controls) {
-        if ((control.media_ssrc == 0 || control.media_ssrc == ssrc) &&
+        if (control.type == UlbvcControlType::kCommand && control.control_ssrc == receiver_ssrc &&
+            (control.media_ssrc == 0 || control.media_ssrc == ssrc) &&
             control.transaction_id != 0 &&
-            seen_control_transactions.insert(control.transaction_id).second)
+            seen_control_transactions.insert(control.transaction_id).second) {
           control_queue.push_back(control);
+          control_transaction_order.push_back(control.transaction_id);
+          while (control_transaction_order.size() > 1024) {
+            seen_control_transactions.erase(control_transaction_order.front());
+            control_response_cache.erase(control_transaction_order.front());
+            control_transaction_order.pop_front();
+          }
+        } else if (control.type == UlbvcControlType::kCommand &&
+                   control.control_ssrc == receiver_ssrc &&
+                   (control.media_ssrc == 0 || control.media_ssrc == ssrc)) {
+          const auto cached = control_response_cache.find(control.transaction_id);
+          if (cached != control_response_cache.end() && control_responses.size() < 32)
+            control_responses.push_back(cached->second);
+        }
       }
       while (control_queue.size() > 32) control_queue.pop_front();
     }
@@ -517,14 +619,6 @@ struct RtpUlbvcSender::Impl {
       }
     }
     if (!requested_sequences.empty()) QueueRetransmissions(requested_sequences);
-  }
-
-  void EnqueueReserved(std::vector<PendingPacket> packets) {
-    std::lock_guard<std::mutex> lock(queue_mutex);
-    if (send_error != nullptr) std::rethrow_exception(send_error);
-    if (stopping) throw std::runtime_error("RTP sender is stopping");
-    for (auto& packet : packets) queue.push_back(std::move(packet));
-    queue_cv.notify_one();
   }
 
   void SendUnitLocked(RtpUnitType type, uint8_t flags, uint32_t config_id, uint32_t unit_id,
@@ -569,10 +663,10 @@ struct RtpUlbvcSender::Impl {
     const std::size_t chunk = kRtpPacketBytes - kFragmentHeaderBytes;
     const std::size_t count = std::max<std::size_t>(1, (unit.size() + chunk - 1) / chunk);
     const std::size_t reserved_bytes = unit.size() + count * (36 + kIpv4UdpOverheadBytes);
-    ReserveQueueBytes(reserved_bytes);
+    if (reserved_bytes > max_queue_bytes)
+      throw std::runtime_error("RTP unit exceeds send queue bytes");
     std::vector<PendingPacket> packets;
-    try {
-      packets.reserve(count);
+    packets.reserve(count);
       for (std::size_t i = 0; i < count; ++i) {
         const std::size_t offset = i * chunk;
         const std::size_t size = std::min(chunk, unit.size() - offset);
@@ -606,20 +700,25 @@ struct RtpUlbvcSender::Impl {
         packets.push_back(PendingPacket{std::move(packet), std::chrono::steady_clock::now(),
                                         i == 0 ? unit.size() : 0});
       }
-    } catch (...) {
-      ReleaseQueueReservation(reserved_bytes);
-      throw;
+    // Stream complete units through a bounded packet queue. A large I-frame
+    // can take longer to serialize without allocating an unbounded queue or
+    // failing merely because its full size exceeds the normal delay budget.
+    for (auto& packet : packets) {
+      const auto bytes = packet.bytes.size() + kIpv4UdpOverheadBytes;
+      ReserveQueueBytes(bytes);
+      try {
+        std::lock_guard<std::mutex> lock(queue_mutex);
+        if (send_error) std::rethrow_exception(send_error);
+        if (stopping) throw std::runtime_error("RTP sender stopped during unit admission");
+        packet.enqueued_at = std::chrono::steady_clock::now();
+        queue.push_back(std::move(packet));
+      } catch (...) {
+        ReleaseQueueReservation(bytes);
+        throw;
+      }
+      queue_cv.notify_one();
     }
-    try {
-      EnqueueReserved(std::move(packets));
-    } catch (...) {
-      // ReserveQueueBytes accounts for the complete unit before packet
-      // construction.  If shutdown or a concurrent send failure rejects the
-      // enqueue, return that reservation or future SendUnit calls can block
-      // forever on bytes which are no longer present in the queue.
-      ReleaseQueueReservation(reserved_bytes);
-      throw;
-    }
+    serialized_wire_bytes.fetch_add(reserved_bytes);
     if (pending_random_access_config_id != 0 && type == RtpUnitType::kEfu) {
       pending_random_access_config_id = 0;
     }
@@ -694,19 +793,35 @@ struct RtpUlbvcSender::Impl {
         pending = std::move(queue.front());
         queue.pop_front();
         sending = true;
+        sending_since = pending.enqueued_at;
       }
       queue_cv.notify_all();
       try {
+        const std::size_t estimated_wire_packet_size = pending.bytes.size() + kIpv4UdpOverheadBytes;
+        auto rate = pacing_rate_bps.load();
+        if (rate != applied_pacing_rate) {
+          pacer->UpdateRate(rate);
+          applied_pacing_rate = rate;
+        }
+        auto delay = pacer->ConsumeAndGetDelay(estimated_wire_packet_size);
+        const bool paced = delay.count() > 0;
+        while (delay.count() > 0) {
+          std::unique_lock<std::mutex> lock(queue_mutex);
+          queue_cv.wait_for(lock, delay,
+                            [this, rate] { return stopping || pacing_rate_bps.load() != rate; });
+          if (stopping) return;
+          rate = pacing_rate_bps.load();
+          if (rate != applied_pacing_rate) {
+            pacer->UpdateRate(rate);
+            applied_pacing_rate = rate;
+          }
+          delay = pacer->RemainingDelay();
+        }
         const auto queue_delay = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - pending.enqueued_at);
-        max_queue_delay_us.store(std::max<uint64_t>(max_queue_delay_us.load(),
-                                                    static_cast<uint64_t>(queue_delay.count())));
-        queue_delay_total_us.fetch_add(static_cast<uint64_t>(queue_delay.count()));
+        max_queue_delay_us.store(std::max<uint64_t>(max_queue_delay_us.load(), queue_delay.count()));
+        queue_delay_total_us.fetch_add(queue_delay.count());
         queue_delay_samples.fetch_add(1);
-        const std::size_t estimated_wire_packet_size =
-            pending.bytes.size() + kIpv4UdpOverheadBytes;
-        const auto delay = pacer->ConsumeAndGetDelay(estimated_wire_packet_size);
-        if (delay.count() > 0) std::this_thread::sleep_for(delay);
         const auto send_begin = std::chrono::steady_clock::now();
         if (::sendto(socket, pending.bytes.data(), pending.bytes.size(), 0,
                      reinterpret_cast<const sockaddr*>(&address), address_length) < 0) {
@@ -716,6 +831,7 @@ struct RtpUlbvcSender::Impl {
             std::chrono::steady_clock::now() - send_begin);
         socket_block_us.fetch_add(static_cast<uint64_t>(blocked.count()));
         wire_bytes_sent.fetch_add(estimated_wire_packet_size);
+        if (pending.retransmission) retransmitted_wire_bytes.fetch_add(estimated_wire_packet_size);
         media_unit_bytes_sent.fetch_add(pending.media_unit_bytes);
         packets_sent.fetch_add(1);
         rtp_octets_sent.fetch_add(pending.bytes.size() >= 12 ? pending.bytes.size() - 12 : 0);
@@ -723,12 +839,11 @@ struct RtpUlbvcSender::Impl {
                                  (static_cast<uint32_t>(pending.bytes[5]) << 16) |
                                  (static_cast<uint32_t>(pending.bytes[6]) << 8) |
                                  static_cast<uint32_t>(pending.bytes[7]));
-        RememberRtpPacket(pending.bytes);
-        const uint64_t burst = delay.count() > 0
-                                   ? estimated_wire_packet_size
-                                   : burst_bytes.fetch_add(estimated_wire_packet_size) +
-                                         estimated_wire_packet_size;
-        if (delay.count() > 0) burst_bytes.store(estimated_wire_packet_size);
+        if (!pending.retransmission) RememberRtpPacket(pending.bytes);
+        const uint64_t burst =
+            paced ? estimated_wire_packet_size
+                  : burst_bytes.fetch_add(estimated_wire_packet_size) + estimated_wire_packet_size;
+        if (paced) burst_bytes.store(estimated_wire_packet_size);
         uint64_t previous = max_burst_bytes_observed.load();
         while (burst > previous &&
                !max_burst_bytes_observed.compare_exchange_weak(previous, burst)) {
@@ -754,11 +869,28 @@ struct RtpUlbvcSender::Impl {
 
   void SendRtcpLoop() {
     const auto cname = std::string("ulbvc-") + std::to_string(ssrc);
-    auto next_report = std::chrono::steady_clock::now() + rtcp_interval;
+    auto next_report = std::chrono::steady_clock::now();
     while (!rtcp_stopping.load()) {
       const auto now = std::chrono::steady_clock::now();
       try {
+        std::vector<uint8_t> response;
+        {
+          std::lock_guard<std::mutex> lock(control_mutex);
+          if (!control_responses.empty()) {
+            response = std::move(control_responses.front());
+            control_responses.pop_front();
+          }
+        }
+        if (!response.empty()) {
+          if (rtcp_endpoint->TrySend(response, true))
+            ++rtcp_packets_sent;
+          else {
+            std::lock_guard<std::mutex> lock(control_mutex);
+            if (control_responses.size() < 32) control_responses.push_front(std::move(response));
+          }
+        }
         if (now >= next_report) {
+          bool report_sent = false;
           if (packets_sent.load() != 0) {
             const auto wall_now = std::chrono::system_clock::now().time_since_epoch();
             const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(wall_now);
@@ -774,10 +906,31 @@ struct RtpUlbvcSender::Impl {
             report.rtp_timestamp = last_rtp_timestamp.load();
             report.packet_count = static_cast<uint32_t>(packets_sent.load());
             report.octet_count = static_cast<uint32_t>(rtp_octets_sent.load());
-            rtcp_endpoint->Send(EncodeRtcpSenderReport(report, cname));
-            ++rtcp_packets_sent;
+            std::vector<std::vector<uint8_t>> extra;
+            if (rate_feedback_enabled.load()) {
+              UlbvcControlMessage capabilities;
+              capabilities.type = UlbvcControlType::kCapabilities;
+              capabilities.media_ssrc = ssrc;
+              capabilities.tlvs.push_back(
+                  EncodeRateCapabilities({rate_session_id, feedback_interval_ms.load(),
+                                          static_cast<uint32_t>(std::clamp<uint64_t>(
+                                              pacing_rate_bps.load() / 40, 2048, 2500000))}));
+              extra.push_back(EncodeUlbvcRtcpApp(ssrc, capabilities));
+            }
+            report_sent = rtcp_endpoint->TrySend(EncodeRtcpSenderReport(report, cname, extra));
+            if (report_sent) {
+              const uint32_t compact =
+                  ((report.ntp_seconds & 0xffffu) << 16) | (report.ntp_fraction >> 16);
+              {
+                std::lock_guard<std::mutex> lock(feedback_mutex);
+                sender_report_times.emplace_back(compact, std::chrono::steady_clock::now());
+                while (sender_report_times.size() > 32) sender_report_times.pop_front();
+              }
+              ++rtcp_packets_sent;
+            }
           }
-          next_report = std::chrono::steady_clock::now() + rtcp_interval;
+          next_report = std::chrono::steady_clock::now() +
+                        (report_sent ? rtcp_interval : std::chrono::milliseconds(100));
         }
         const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
             next_report - std::chrono::steady_clock::now());
@@ -812,10 +965,13 @@ RtpUlbvcSender::RtpUlbvcSender(const std::string& host, uint16_t port, uint32_t 
   }
   impl_->sequence = static_cast<uint16_t>(rd());
   impl_->ssrc = ssrc;
+  impl_->rate_session_id = (uint64_t(rd()) << 32) ^ rd();
+  if (!impl_->rate_session_id) impl_->rate_session_id = 1;
   impl_->payload_type = payload_type;
   impl_->rtcp_interval = rtcp_interval;
   impl_->pacer = std::make_unique<UdpPacer>(pacing_rate_bps, max_burst_bytes);
   impl_->pacing_rate_bps = pacing_rate_bps;
+  impl_->applied_pacing_rate = pacing_rate_bps;
   impl_->max_queue_bytes = max_queue_bytes;
   impl_->max_queue_delay_ms = max_queue_delay_ms;
   if (max_queue_bytes == 0) throw std::runtime_error("RTP send queue bytes must be positive");
@@ -906,14 +1062,43 @@ RtpTransportStats RtpUlbvcSender::Stats() const {
   stats.socket_block_us = impl_->socket_block_us.load();
   stats.rtcp_packets_sent = impl_->rtcp_packets_sent.load();
   stats.rtcp_packets_received = impl_->rtcp_packets_received.load();
+  stats.rtcp_wire_bytes = impl_->rtcp_endpoint ? impl_->rtcp_endpoint->sent_wire_bytes() : 0;
+  stats.retransmitted_wire_bytes = impl_->retransmitted_wire_bytes.load();
+  stats.pacing_rate_bps = impl_->pacing_rate_bps.load();
+  stats.serialized_wire_bytes = impl_->serialized_wire_bytes.load();
+  {
+    std::lock_guard<std::mutex> lock(impl_->queue_mutex);
+    stats.queued_wire_bytes = impl_->queued_bytes;
+    const auto oldest = impl_->sending
+                            ? impl_->sending_since
+                            : (!impl_->queue.empty() ? impl_->queue.front().enqueued_at
+                                                     : std::chrono::steady_clock::time_point{});
+    if (oldest != std::chrono::steady_clock::time_point{})
+      stats.oldest_queue_delay_us = std::chrono::duration_cast<std::chrono::microseconds>(
+                                        std::chrono::steady_clock::now() - oldest)
+                                        .count();
+  }
   return stats;
 }
+void RtpUlbvcSender::EnableRateFeedback(uint32_t interval_ms) {
+  (void)EncodeRateCapabilities({impl_->rate_session_id, interval_ms});
+  impl_->feedback_interval_ms.store(interval_ms);
+  impl_->rate_feedback_enabled.store(true);
+  impl_->rtcp_endpoint->SetSendBudget(std::max<uint64_t>(1024, impl_->pacing_rate_bps.load() / 39));
+}
+void RtpUlbvcSender::SetPacingRate(uint64_t wire_bps) {
+  if (!wire_bps || wire_bps > 100000000)
+    throw std::invalid_argument("invalid RTP dynamic pacing rate");
+  impl_->pacing_rate_bps.store(wire_bps);
+  impl_->rtcp_endpoint->SetSendBudget(std::max<uint64_t>(1024, wire_bps / 39));
+  impl_->queue_cv.notify_all();
+}
+RateFeedbackSnapshot RtpUlbvcSender::Feedback() const {
+  std::lock_guard<std::mutex> lock(impl_->feedback_mutex);
+  return impl_->feedback_snapshot;
+}
 bool RtpUlbvcSender::ConsumeRandomAccessRequest() {
-  uint64_t pending = impl_->random_access_requests.load();
-  while (pending != 0 &&
-         !impl_->random_access_requests.compare_exchange_weak(pending, pending - 1)) {
-  }
-  return pending != 0;
+  return impl_->random_access_requests.exchange(0) != 0;
 }
 bool RtpUlbvcSender::PopUlbvcControl(UlbvcControlMessage* message) {
   if (message == nullptr) return false;
@@ -931,13 +1116,17 @@ void RtpUlbvcSender::SendUlbvcControlResponse(const UlbvcControlMessage& request
   UlbvcControlMessage response;
   response.type = accepted ? UlbvcControlType::kAck : UlbvcControlType::kReject;
   response.transaction_id = request.transaction_id;
+  response.apply_after_frame_id = request.apply_after_frame_id;
   response.media_ssrc = impl_->ssrc;
   response.tlvs.push_back(UlbvcControlTlv{1, std::vector<uint8_t>(reason.begin(), reason.end())});
   RtcpReceiverReport report;
   report.sender_ssrc = impl_->ssrc;
   const auto app = EncodeUlbvcRtcpApp(impl_->ssrc, response);
   const auto compound = EncodeRtcpReceiverReport(report, std::string("ulbvc-") + std::to_string(impl_->ssrc), {app});
-  impl_->rtcp_endpoint->SendToLastPeer(compound);
+  std::lock_guard<std::mutex> lock(impl_->control_mutex);
+  if (impl_->seen_control_transactions.count(request.transaction_id))
+    impl_->control_response_cache[request.transaction_id] = compound;
+  if (impl_->control_responses.size() < 32) impl_->control_responses.push_back(compound);
 }
 RtpPacket DecodeRtpPacket(const std::vector<uint8_t>& b, uint8_t expected_payload_type) {
   if (b.size() < 12 || (b[0] >> 6) != 2) throw std::runtime_error("invalid RTP packet");

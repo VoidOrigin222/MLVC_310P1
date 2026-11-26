@@ -1,15 +1,15 @@
-#include "ulbvc/transport/rtp_message_receiver.h"
-#include "ulbvc/transport/rtp_ulbvc.h"
-
-#include <cassert>
 #include <arpa/inet.h>
-#include <chrono>
-#include <cstring>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <cassert>
+#include <chrono>
+#include <cstring>
 #include <thread>
 #include <vector>
+
+#include "ulbvc/transport/rtp_message_receiver.h"
+#include "ulbvc/transport/rtp_ulbvc.h"
 
 using namespace ulbvc::transport;
 
@@ -100,6 +100,47 @@ void TestNackRetransmitsCachedRtpPacket() {
   assert(retransmitted_packet == original_packets[1]);
   sender.Flush();
   assert(sender.Stats().packets == 3);
+
+  UlbvcControlMessage command;
+  command.flags = kUlbvcControlAtomic;
+  command.transaction_id = 7;
+  command.media_ssrc = kMediaSsrc;
+  command.tlvs = {{1, {0, 0, 0, 11}}};
+  const auto command_wire = EncodeRtcpReceiverReport(rr, "rtcp-command-test",
+                                                     {EncodeUlbvcRtcpApp(rr.sender_ssrc, command)});
+  const auto send_command = [&] {
+    assert(::sendto(rtcp_socket, command_wire.data(), command_wire.size(), 0,
+                    reinterpret_cast<const sockaddr*>(&sender_rtcp_address),
+                    sender_address_length) == static_cast<ssize_t>(command_wire.size()));
+  };
+  send_command();
+  UlbvcControlMessage pending;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  bool popped = false;
+  while (!(popped = sender.PopUlbvcControl(&pending)) &&
+         std::chrono::steady_clock::now() < deadline)
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  assert(popped && pending.transaction_id == command.transaction_id);
+  pending.apply_after_frame_id = 25;
+  sender.SendUlbvcControlResponse(pending, true, "applied");
+  const auto receive_ack = [&] {
+    for (int attempt = 0; attempt < 30; ++attempt) {
+      const auto size = ::recv(rtcp_socket, control_data, sizeof(control_data), 0);
+      assert(size > 0);
+      const auto reply =
+          DecodeRtcpCompound(std::vector<uint8_t>(control_data, control_data + size));
+      for (const auto& ack : reply.ulbvc_controls)
+        if (ack.type == UlbvcControlType::kAck && ack.transaction_id == 7) {
+          assert(ack.apply_after_frame_id == 25);
+          return true;
+        }
+    }
+    return false;
+  };
+  assert(receive_ack());
+  send_command();
+  assert(receive_ack());
+  assert(!sender.PopUlbvcControl(&pending));  // Retry returns the cached ACK without reapplying.
 
   ::close(rtcp_socket);
   ::close(rtp_socket);

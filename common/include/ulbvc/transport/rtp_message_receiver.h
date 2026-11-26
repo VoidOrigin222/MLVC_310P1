@@ -5,19 +5,18 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
-#include <map>
 #include <exception>
-#include <deque>
-#include <mutex>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <set>
 #include <string>
 #include <thread>
 #include <utility>
 #include <vector>
 
-#include "ulbvc/transport/rtp_ulbvc.h"
 #include "ulbvc/transport/rtcp_session.h"
+#include "ulbvc/transport/rtp_ulbvc.h"
 
 namespace ulbvc::transport {
 
@@ -41,6 +40,8 @@ class RtpMessageReceiver {
   uint64_t reordered_packets() const { return reordered_packets_; }
   uint64_t rtcp_sender_reports_received() const { return rtcp_sender_reports_received_; }
   uint64_t rtcp_receiver_reports_sent() const { return rtcp_receiver_reports_sent_; }
+  void ReportDecodedFrame(uint32_t frame_id) { last_decoded_frame_.store(frame_id); }
+  void RequestRandomAccess() { random_access_requested_.store(true); }
 
  private:
   void ReceiveLoop();
@@ -64,6 +65,11 @@ class RtpMessageReceiver {
   std::atomic<uint64_t> lost_packets_{0};
   std::atomic<uint64_t> duplicate_packets_{0};
   std::atomic<uint64_t> reordered_packets_{0};
+  std::atomic<uint64_t> first_missing_packets_{0}, recovered_packets_{0};
+  std::atomic<uint64_t> unique_wire_bytes_{0}, unique_packets_{0};
+  std::atomic<uint32_t> last_complete_frame_{0xffffffffu};
+  std::atomic<uint32_t> last_decoded_frame_{0xffffffffu};
+  std::atomic<bool> random_access_requested_{false};
   std::set<uint16_t> seen_sequences_;
   std::deque<uint16_t> seen_sequence_order_;
   std::set<uint16_t> missing_sequences_;

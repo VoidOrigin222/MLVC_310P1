@@ -1,14 +1,14 @@
 #ifndef ULBVC_APPLICATION_STREAM_STREAM_ENCODER_H_
 #define ULBVC_APPLICATION_STREAM_STREAM_ENCODER_H_
 
+#include <ulbvc/detection/yolo_detector.h>
+#include <ulbvc/io/video_io.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
-
-#include <ulbvc/io/video_io.h>
-#include <ulbvc/detection/yolo_detector.h>
 
 namespace ulbvc::codec {
 
@@ -50,6 +50,10 @@ struct EncodeStreamOptions {
   int ltr_period = 64;
   int ltr_qp_shift = 8;
   double target_bitrate_bps = 0.0;
+  std::string rate_control_mode = "fixed_q";
+  uint64_t adaptive_max_bitrate_bps = 2000000;
+  uint32_t adaptive_feedback_timeout_ms = 3000;
+  uint32_t rtcp_feedback_interval_ms = 500;
   int min_qp = 0;
   int max_qp = 63;
   int forced_ltr_recovery_frame = -1;
@@ -62,7 +66,7 @@ struct EncodeStreamOptions {
   uint64_t output_transport_pacing_rate_bps = 0;
   std::size_t output_transport_max_burst_bytes = 4096;
   std::size_t output_transport_max_queue_bytes = 4u * 1024u * 1024u;
-  uint64_t output_transport_max_queue_delay_ms = 1000;
+  uint64_t output_transport_max_queue_delay_ms = 200;
   // Optional UDP JSON telemetry for the UI.  The counters describe the
   // encoded ULBVC RTP stream, not the decoder's H.264 preview stream.
   std::string ulbvc_stats_host;

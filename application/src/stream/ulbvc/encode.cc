@@ -1,3 +1,6 @@
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <sys/socket.h>
 #include <ulbvc/application/input/frame_input_queue.h>
 #include <ulbvc/application/pipeline/codec_frame_pipeline.h>
 #include <ulbvc/application/runtime/ulbvc_codec_runtime.h>
@@ -9,15 +12,17 @@
 #include <ulbvc/application/stream/ulbvc_internal.h>
 #include <ulbvc/application/stream/ulbvc_stream.h>
 #include <ulbvc/codec/detail/stage/stage_runtime_state.h>
+#include <ulbvc/codec/translation_warp.h>
 #include <ulbvc/codec/ulbvc_rate_control.h>
 #include <ulbvc/entropy/ulbvc_official_entropy.h>
 #include <ulbvc/framework/codec_graph_executor.h>
 #include <ulbvc/framework/entropy_worker.h>
 #include <ulbvc/framework/profiler.h>
+#include <ulbvc/io/fp16_yuv444_to_nv12.h>
 #include <ulbvc/runtime/stage_runtime.h>
+#include <unistd.h>
 
 #include <algorithm>
-#include <arpa/inet.h>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -29,15 +34,10 @@
 #include <iostream>
 #include <limits>
 #include <memory>
-#include <netdb.h>
 #include <optional>
 #include <sstream>
-#include <sys/socket.h>
-#include <unistd.h>
 
 #include "ulbvc/core/status.h"
-#include <ulbvc/codec/translation_warp.h>
-#include <ulbvc/io/fp16_yuv444_to_nv12.h>
 
 namespace {
 
@@ -271,11 +271,14 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
     constexpr std::size_t kMaxPendingEntropyJobs = 2;
     uint64_t entropy_ready_retirements = 0;
     const auto retire_ready_entropy = [&] {
-      if (options.motion_prefetch_frames == 0 || output.rate_controller().enabled()) return;
+      if (options.motion_prefetch_frames == 0) return;
       while (!pending_entropy.empty() &&
              ShouldRetireReadyEntropy(options.motion_prefetch_frames,
                  output.rate_controller().enabled(),
-                 pending_entropy.front().payload.wait_for(std::chrono::milliseconds(0)))) {
+                 pending_entropy.front().payload.wait_for(std::chrono::milliseconds(0))) &&
+             (!pending_entropy.front().detection.valid() ||
+              pending_entropy.front().detection.wait_for(std::chrono::milliseconds(0)) ==
+                  std::future_status::ready)) {
         // Only inspect the front: writing a later ready frame would break
         // reference order. Flush may still wait for file/network output.
         output.Flush(std::move(pending_entropy.front()));
@@ -298,21 +301,54 @@ int RunEncodeStream(const EncodeStreamOptions& options, EncodePipelineServices* 
       frame_pipeline.RethrowIfFailed();
       retire_ready_entropy();
       ulbvc::transport::UlbvcControlMessage control;
-      while (output.PopUlbvcControl(&control)) pending_controls.push_back(std::move(control));
+      while (output.PopUlbvcControl(&control)) {
+        try {
+          (void)ulbvc::transport::DecodeRateCommand(control);
+          if (pending_controls.size() >= 64) {
+            output.SendUlbvcControlResponse(control, false, "control-queue-full");
+          } else
+            pending_controls.push_back(std::move(control));
+        } catch (const std::invalid_argument&) {
+          output.SendUlbvcControlResponse(control, false, "unsupported-or-invalid");
+        }
+      }
       for (auto it = pending_controls.begin(); it != pending_controls.end();) {
         const bool due = it->apply_after_frame_id == 0xffffffffu ||
-                         encoded_frames >= static_cast<int>(it->apply_after_frame_id);
+                         uint32_t(encoded_frames) >= it->apply_after_frame_id ||
+                         it->apply_after_frame_id > uint32_t(std::numeric_limits<int>::max());
         if (!due) { ++it; continue; }
-        const bool changes_gop = std::any_of(it->tlvs.begin(), it->tlvs.end(),
-            [](const auto& tlv) { return tlv.type == 3 || tlv.type == 4; });
-        const bool accepted = !(options.translation_warp && changes_gop) &&
-                              state.ApplyControl(*it, encoded_frames);
-        output.SendUlbvcControlResponse(*it, accepted,
-                                        accepted ? "applied" : "unsupported-or-invalid");
+        bool accepted = false, queued_access = false;
+        try {
+          const auto command = ulbvc::transport::DecodeRateCommand(*it);
+          accepted = !(options.translation_warp && command.gop) &&
+                     !(command.random_access && !options.motion_shifts_file.empty()) &&
+                     output.CanApplyRateCommand(command);
+          if (accepted) accepted = state.ApplyControl(*it, encoded_frames, true);
+          if (accepted) {
+            output.ApplyRateCommand(command);
+            if (command.target_bitrate_bps ||
+                (command.mode && *command.mode != ulbvc::transport::RateControlMode::kFixedQ))
+              state.ClearQIndexOverride();
+            if (command.random_access) {
+              frame_processor.RequestRandomAccess();
+              queued_access = true;
+            }
+          }
+        } catch (const std::invalid_argument&) {
+        }
+        auto response = *it;
+        response.apply_after_frame_id =
+            queued_access ? 0xffffffffu : static_cast<uint32_t>(encoded_frames);
+        output.SendUlbvcControlResponse(response, accepted,
+                                        accepted
+                                            ? (queued_access ? "random-access-queued" : "applied")
+                                            : "unsupported-or-invalid");
         it = pending_controls.erase(it);
       }
       const bool random_access_request = output.ConsumeRandomAccessRequest();
-      state.SetForceRandomAccess(random_access_request && !options.translation_warp);
+      if (random_access_request && options.motion_shifts_file.empty())
+        frame_processor.RequestRandomAccess();
+      output.PrepareRateControl();
       PendingEncodedFrame pending = frame_processor.Process(data, encoded_frames);
       if (detection) {
         const auto frame = std::dynamic_pointer_cast<ulbvc::app::PreparedFramePacket>(data);

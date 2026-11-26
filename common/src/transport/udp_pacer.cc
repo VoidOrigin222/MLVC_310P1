@@ -25,6 +25,12 @@ std::chrono::microseconds UdpPacer::ConsumeAndGetDelay(std::size_t bytes_to_send
     throw std::invalid_argument("UDP packet exceeds the configured pacer burst");
   }
 
+  Accrue();
+  tokens_ -= static_cast<double>(bytes_to_send);
+  return RemainingDelay();
+}
+
+void UdpPacer::Accrue() {
   const auto now = std::chrono::steady_clock::now();
   const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - last_update_);
   if (elapsed.count() > 0) {
@@ -37,9 +43,11 @@ std::chrono::microseconds UdpPacer::ConsumeAndGetDelay(std::size_t bytes_to_send
                        static_cast<double>(max_burst_bytes_));
   }
   last_update_ = now;
+}
 
-  if (tokens_ >= static_cast<double>(bytes_to_send)) {
-    tokens_ -= static_cast<double>(bytes_to_send);
+std::chrono::microseconds UdpPacer::RemainingDelay() {
+  Accrue();
+  if (!rate_bps_ || tokens_ >= 0) {
     return std::chrono::microseconds(0);
   }
 
@@ -47,7 +55,7 @@ std::chrono::microseconds UdpPacer::ConsumeAndGetDelay(std::size_t bytes_to_send
   // next call earns tokens against that debt, so elapsed wait time can never
   // be counted once for the current packet and again as free credit for the
   // following packet.
-  const long double deficit = static_cast<long double>(bytes_to_send) - tokens_;
+  const long double deficit = -static_cast<long double>(tokens_);
   const long double delay_value =
       std::ceil(deficit * 8000000.0L / static_cast<long double>(rate_bps_));
   if (!std::isfinite(delay_value) ||
@@ -55,13 +63,12 @@ std::chrono::microseconds UdpPacer::ConsumeAndGetDelay(std::size_t bytes_to_send
     throw std::overflow_error("UDP pacer delay exceeds the clock range");
   }
   const auto delay_us = static_cast<int64_t>(delay_value);
-  tokens_ -= static_cast<double>(bytes_to_send);
   return std::chrono::microseconds(delay_us);
 }
 
 void UdpPacer::UpdateRate(uint64_t new_rate_bps) {
+  Accrue();
   rate_bps_ = new_rate_bps;
-  last_update_ = std::chrono::steady_clock::now();
 }
 
 }  // namespace ulbvc::transport

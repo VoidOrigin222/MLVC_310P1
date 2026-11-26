@@ -11,9 +11,11 @@
 #include <cerrno>
 #include <cstring>
 #include <limits>
-#include <stdexcept>
 #include <random>
+#include <stdexcept>
 #include <utility>
+
+#include "ulbvc/transport/rate_feedback.h"
 
 namespace ulbvc::transport {
 
@@ -37,7 +39,7 @@ std::string CnameForSsrc(uint32_t ssrc) {
 uint32_t CompactNtp(const RtcpSenderReport& report) {
   return ((report.ntp_seconds & 0xffffu) << 16) | (report.ntp_fraction >> 16);
 }
-}
+}  // namespace
 
 RtpMessageReceiver::RtpMessageReceiver(uint16_t port, std::string context, uint8_t payload_type)
     : context_(std::move(context)), payload_type_(payload_type) {
@@ -130,6 +132,7 @@ bool RtpMessageReceiver::TrackSequence(
       if (delta > 1u) {
         const uint16_t gap = static_cast<uint16_t>(delta - 1u);
         lost_packets_ += gap;
+        first_missing_packets_ += gap;
         const uint16_t tracked_gap =
             std::min<uint16_t>(gap, static_cast<uint16_t>(kMaxSequenceHistory));
         for (uint16_t offset = tracked_gap; offset > 0; --offset) {
@@ -149,6 +152,7 @@ bool RtpMessageReceiver::TrackSequence(
       ++reordered_packets_;
       if (missing_sequences_.erase(sequence) != 0 && lost_packets_ > 0) {
         --lost_packets_;
+        ++recovered_packets_;
       }
       missing_sequence_times_.erase(sequence);
     }
@@ -208,6 +212,8 @@ void RtpMessageReceiver::ReceiveLoop() {
       }
       if (TrackSequence(packet.sequence, std::chrono::steady_clock::now())) continue;
       UpdateRtcpReceiveStats(packet);
+      unique_wire_bytes_.fetch_add(static_cast<uint64_t>(received) + 28);
+      ++unique_packets_;
 
       RtpUlbvcFragment fragment = DecodeRtpUlbvcFragment(packet.payload);
       fragment.timestamp = packet.timestamp;
@@ -245,8 +251,11 @@ void RtpMessageReceiver::ReceiveLoop() {
       } catch (const UlbvcEfuCrcError&) {
         // A complete but damaged EFU is a lost frame, not a fatal RTP session
         // error. The frame-level receiver waits for a valid recovery point.
+        RequestRandomAccess();
         continue;
       }
+      if (media_header.unit_type == UlbvcMediaUnitType::kEfu)
+        last_complete_frame_.store(media_header.unit_id);
       if (media_header.unit_type == UlbvcMediaUnitType::kScu) {
         const UlbvcScu scu = ParseScu(unit);
         auto existing = std::find_if(
@@ -388,8 +397,14 @@ std::vector<RtcpNack> RtpMessageReceiver::SnapshotPendingNacks(
 
 void RtpMessageReceiver::RtcpLoop() {
   const uint32_t receiver_ssrc = RandomSsrc();
+  const uint64_t receiver_instance = (uint64_t(RandomSsrc()) << 32) | RandomSsrc();
   const std::string cname = CnameForSsrc(receiver_ssrc);
   bool peer_known = false;
+  RateCapabilities capabilities;
+  uint32_t feedback_sequence = 0;
+  const auto started = std::chrono::steady_clock::now();
+  auto last_feedback = started;
+  auto last_pli = started - std::chrono::seconds(1);
   auto last_nack_sent = std::chrono::steady_clock::now();
   while (!rtcp_stopping_.load()) {
     std::vector<uint8_t> bytes;
@@ -401,6 +416,19 @@ void RtpMessageReceiver::RtcpLoop() {
           const RtcpSenderReport& sender_report = *compound.sender_report;
           const uint32_t expected_ssrc = ssrc_.load();
           if (expected_ssrc != 0 && sender_report.sender_ssrc == expected_ssrc) {
+            for (const auto& control : compound.ulbvc_controls) {
+              if (control.type != UlbvcControlType::kCapabilities ||
+                  control.control_ssrc != expected_ssrc || control.media_ssrc != expected_ssrc)
+                continue;
+              for (const auto& tlv : control.tlvs) {
+                if (tlv.type == kRateCapabilitiesTlv) {
+                  const auto value = DecodeRateCapabilities(tlv);
+                  if (capabilities.session_id != value.session_id) feedback_sequence = 0;
+                  capabilities = value;
+                  rtcp_endpoint_->SetSendBudget(value.feedback_budget_bps);
+                }
+              }
+            }
             rtcp_endpoint_->AcceptLastPeer();
             peer_known = true;
             ++rtcp_sender_reports_received_;
@@ -412,12 +440,64 @@ void RtpMessageReceiver::RtcpLoop() {
             RtcpReceiverReport rr;
             rr.sender_ssrc = receiver_ssrc;
             rr.reports.push_back(SnapshotReportBlock(sender_report.sender_ssrc));
-            rtcp_endpoint_->SendToLastPeer(EncodeRtcpReceiverReport(rr, cname));
-            ++rtcp_receiver_reports_sent_;
+            if (rtcp_endpoint_->TrySend(EncodeRtcpReceiverReport(rr, cname), true))
+              ++rtcp_receiver_reports_sent_;
           }
         }
       }
       const auto now = std::chrono::steady_clock::now();
+      if (peer_known && capabilities.session_id &&
+          now - last_feedback >= std::chrono::milliseconds(capabilities.feedback_interval_ms)) {
+        RtcpReceiverReport rr;
+        rr.sender_ssrc = receiver_ssrc;
+        rr.reports.push_back(SnapshotReportBlock(ssrc_.load()));
+        RateFeedback feedback;
+        feedback.session_id = capabilities.session_id;
+        feedback.receiver_instance = receiver_instance;
+        feedback.sequence = ++feedback_sequence;
+        feedback.interval_ms = static_cast<uint32_t>(std::min<int64_t>(
+            60000,
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - last_feedback).count()));
+        feedback.sample_time_ms = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - started).count());
+        feedback.received_wire_bytes = unique_wire_bytes_.load();
+        feedback.received_packets = unique_packets_.load();
+        {
+          std::lock_guard<std::mutex> lock(sequence_mutex_);
+          feedback.missing_packets = first_missing_packets_.load();
+          feedback.recovered_packets = recovered_packets_.load();
+        }
+        feedback.highest_sequence = rr.reports[0].highest_sequence;
+        feedback.jitter_ticks = rr.reports[0].jitter;
+        feedback.last_complete_frame = last_complete_frame_.load();
+        feedback.last_decoded_frame = last_decoded_frame_.load();
+        {
+          std::lock_guard<std::mutex> lock(queue_mutex_);
+          feedback.queued_units = static_cast<uint32_t>(unit_queue_.size());
+        }
+        UlbvcControlMessage status;
+        status.type = UlbvcControlType::kStatus;
+        status.media_ssrc = ssrc_.load();
+        status.tlvs.push_back(EncodeRateFeedback(feedback));
+        if (rtcp_endpoint_->TrySend(
+                EncodeRtcpReceiverReport(rr, cname, {EncodeUlbvcRtcpApp(receiver_ssrc, status)}),
+                true)) {
+          ++rtcp_receiver_reports_sent_;
+          last_feedback = now;
+        }
+      }
+      if (peer_known && random_access_requested_.load() &&
+          now - last_pli >= std::chrono::seconds(1)) {
+        RtcpReceiverReport rr;
+        rr.sender_ssrc = receiver_ssrc;
+        rr.reports.push_back(SnapshotReportBlock(ssrc_.load()));
+        if (rtcp_endpoint_->TrySend(
+                EncodeRtcpReceiverReport(rr, cname, {EncodeRtcpPli({receiver_ssrc, ssrc_.load()})}),
+                true)) {
+          random_access_requested_.store(false);
+          last_pli = now;
+        }
+      }
       if (peer_known && now - last_nack_sent >= std::chrono::milliseconds(100)) {
         const uint32_t media_ssrc = ssrc_.load();
         if (media_ssrc != 0) {
@@ -425,13 +505,17 @@ void RtpMessageReceiver::RtcpLoop() {
           if (!nacks.empty()) {
             std::vector<std::vector<uint8_t>> extra;
             extra.reserve(nacks.size());
-            for (const auto& nack : nacks) extra.push_back(EncodeRtcpNack(nack));
+            for (const auto& nack : nacks) {
+              if (extra.size() == 32) break;
+              extra.push_back(EncodeRtcpNack(nack));
+            }
             RtcpReceiverReport rr;
             rr.sender_ssrc = receiver_ssrc;
             rr.reports.push_back(SnapshotReportBlock(media_ssrc));
-            rtcp_endpoint_->SendToLastPeer(EncodeRtcpReceiverReport(rr, cname, extra));
-            ++rtcp_receiver_reports_sent_;
-            last_nack_sent = now;
+            if (rtcp_endpoint_->TrySend(EncodeRtcpReceiverReport(rr, cname, extra), true)) {
+              ++rtcp_receiver_reports_sent_;
+              last_nack_sent = now;
+            }
           }
         }
       }

@@ -4,14 +4,15 @@
 #include <ulbvc/application/stream/ulbvc_stream.h>
 #include <ulbvc/codec/detail/frame/reference_state.h>
 #include <ulbvc/codec/detail/stage/stage_runner.h>
-#include <ulbvc/codec/ulbvc_entropy.h>
 #include <ulbvc/codec/tensor_data.h>
+#include <ulbvc/codec/ulbvc_entropy.h>
 #include <ulbvc/framework/profiler.h>
+
+#include <ulbvc/transport/rtcp_session.h>
 
 #include <cstdint>
 #include <map>
 #include <vector>
-#include <ulbvc/transport/rtcp_session.h>
 
 namespace ulbvc::codec {
 
@@ -29,8 +30,11 @@ class EncodeState {
 
   EncodeFrameDecision BeginFrame(int frame_index, const EncodeStreamOptions& options);
   void SetForceRandomAccess(bool requested) { force_random_access_ = requested; }
-  bool ApplyControl(const ulbvc::transport::UlbvcControlMessage& message, int frame_index);
-  int EffectiveQIndex(int fallback) const { return fixed_q_index_ >= 0 ? fixed_q_index_ : fallback; }
+  bool ApplyControl(const ulbvc::transport::UlbvcControlMessage& message, int frame_index,
+                    bool defer_random_access = false);
+  int EffectiveQIndex(int fallback) const { return fixed_q_index_ >= 0 ? fixed_q_index_ : fallback;
+  }
+  void ClearQIndexOverride() { fixed_q_index_ = -1; }
   void PrepareLtrRecovery(int frame_index, const EncodeStreamOptions& options,
                           const EncodeFrameDecision& decision);
   void UpdateAfterEncode(int frame_index, const EncodeFrameDecision& decision,
